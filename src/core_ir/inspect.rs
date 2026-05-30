@@ -3,7 +3,7 @@ use super::{CoreTerm, loader::load_core_bundle};
 pub fn inspect_core_bundle(path: &str) -> Result<String, String> {
     let program = load_core_bundle(path)?;
     Ok(format!(
-        "Core bundle: {}\n  Version: 0.3\n  Root: {}",
+        "Core bundle: {}\n  Version: 0.4\n  Root: {}",
         path,
         summarise(&program.root_term)
     ))

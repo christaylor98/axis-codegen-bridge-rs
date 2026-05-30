@@ -8,6 +8,21 @@ pub use inspect::inspect_core_bundle;
 
 use std::rc::Rc;
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum Provenance {
+    Mechanical,
+    LlmCandidate,
+    BulkCorpus,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum EffectClass {
+    Pure,
+    Reads,
+    Writes,
+    FullIo,
+}
+
 #[derive(Clone, Debug)]
 pub struct Span { pub file: String, pub line: usize, pub column: usize }
 

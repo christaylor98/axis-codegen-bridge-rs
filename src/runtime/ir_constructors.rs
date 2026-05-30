@@ -1,4 +1,4 @@
-use crate::core_ir::{CoreTerm, write_core_bundle_to_file, load_core_bundle};
+use crate::core_ir::{CoreTerm, Provenance, EffectClass, write_core_bundle_to_file, load_core_bundle};
 use crate::runtime::value::{Value, intern_str, intern_tag, get_str, get_tag_name};
 use std::rc::Rc;
 
@@ -103,20 +103,37 @@ pub fn ir_term_kind(v: Value) -> Value {
 
 pub fn ir_write_bundle(v: Value) -> Value {
     match v {
-        Value::Tuple(mut fields) if fields.len() == 2 => {
-            let path_val = fields.pop().unwrap();
-            let term_val = fields.pop().unwrap();
+        Value::Tuple(mut fields) if fields.len() == 4 => {
+            let idempotent_val   = fields.pop().unwrap();
+            let effect_class_val = fields.pop().unwrap();
+            let path_val         = fields.pop().unwrap();
+            let term_val         = fields.pop().unwrap();
             let path = match &path_val {
                 Value::Str(s) => get_str(*s),
                 _ => panic!("ir_write_bundle: expected Str path, got {:?}", path_val),
             };
+            let effect_class_str = match &effect_class_val {
+                Value::Str(s) => get_str(*s),
+                _ => panic!("ir_write_bundle: expected Str effectClass, got {:?}", effect_class_val),
+            };
+            let idempotent = match idempotent_val {
+                Value::Bool(b) => b,
+                _ => panic!("ir_write_bundle: expected Bool idempotent, got {:?}", idempotent_val),
+            };
+            let effect_class = match effect_class_str.as_str() {
+                "pure"    => EffectClass::Pure,
+                "reads"   => EffectClass::Reads,
+                "writes"  => EffectClass::Writes,
+                "full_io" => EffectClass::FullIo,
+                other     => panic!("ir_write_bundle: unknown effectClass {:?}", other),
+            };
             let term = value_to_core_term(&term_val)
                 .unwrap_or_else(|e| panic!("ir_write_bundle: {}", e));
-            write_core_bundle_to_file(&term, "bundle", &path)
+            write_core_bundle_to_file(&term, "bundle", Provenance::Mechanical, effect_class, idempotent, &path)
                 .unwrap_or_else(|e| panic!("ir_write_bundle write failed: {}", e));
             Value::Unit
         }
-        _ => panic!("ir_write_bundle: expected Tuple([term, path]), got {:?}", v),
+        _ => panic!("ir_write_bundle: expected Tuple([term, path, effectClass, idempotent]), got {:?}", v),
     }
 }
 

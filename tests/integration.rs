@@ -5,7 +5,7 @@ use axis_codegen_bridge::runtime::ir_constructors::{
     ir_term_kind, ir_write_bundle, ir_read_bundle,
 };
 use axis_codegen_bridge::runtime::{arith, str_ops, list, option, bool_ops};
-use axis_codegen_bridge::core_ir::{CoreTerm, create_core_bundle, load_core_bundle_from_bytes};
+use axis_codegen_bridge::core_ir::{CoreTerm, Provenance, EffectClass, create_core_bundle, load_core_bundle_from_bytes};
 use axis_codegen_bridge::executor::{execute_core_program, FunctionProvider, Value as ExecValue, RuntimeError};
 use std::rc::Rc;
 
@@ -15,7 +15,13 @@ use axis_codegen_bridge::core_ir::loader::CoreProgram;
 fn setup() { init_runtime(); }
 
 fn make_program(root: CoreTerm) -> CoreProgram {
-    CoreProgram { root_term: root, entrypoint_id: 0 }
+    CoreProgram {
+        root_term: root,
+        entrypoint_id: 0,
+        provenance: Provenance::Mechanical,
+        effect_class: EffectClass::Pure,
+        idempotent: true,
+    }
 }
 
 // ── Value / string interning ─────────────────────────────────────────────────
@@ -227,7 +233,7 @@ fn test_option_some_is_some() {
 // ── Core IR round-trip ───────────────────────────────────────────────────────
 
 fn round_trip(term: CoreTerm) -> CoreTerm {
-    let bytes = create_core_bundle(&term, "test");
+    let bytes = create_core_bundle(&term, "test", Provenance::Mechanical, EffectClass::Pure, true);
     load_core_bundle_from_bytes(&bytes).expect("round-trip load").root_term
 }
 
@@ -288,7 +294,9 @@ fn test_round_trip_call() {
 #[test]
 fn test_round_trip_deterministic() {
     let term = CoreTerm::IntLit(7, None);
-    assert_eq!(create_core_bundle(&term, "test"), create_core_bundle(&term, "test"));
+    let b1 = create_core_bundle(&term, "test", Provenance::Mechanical, EffectClass::Pure, true);
+    let b2 = create_core_bundle(&term, "test", Provenance::Mechanical, EffectClass::Pure, true);
+    assert_eq!(b1, b2);
 }
 
 // ── Executor ─────────────────────────────────────────────────────────────────
@@ -444,9 +452,10 @@ fn test_ir_constructors_round_trip() {
 
     assert_eq!(format!("{}", ir_term_kind(let_t.clone())), "Let");
 
-    let tmp    = NamedTempFile::new().unwrap();
-    let path_h = intern_str(tmp.path().to_str().unwrap());
-    ir_write_bundle(Value::Tuple(vec![let_t.clone(), Value::Str(path_h)]));
+    let tmp      = NamedTempFile::new().unwrap();
+    let path_h   = intern_str(tmp.path().to_str().unwrap());
+    let ec_h     = intern_str("pure");
+    ir_write_bundle(Value::Tuple(vec![let_t.clone(), Value::Str(path_h), Value::Str(ec_h), Value::Bool(true)]));
     let loaded = ir_read_bundle(Value::Str(path_h));
 
     assert_eq!(format!("{}", ir_term_kind(loaded.clone())), "Let");
@@ -468,9 +477,56 @@ fn test_ir_round_trip_nested() {
 
     let tmp    = NamedTempFile::new().unwrap();
     let path_h = intern_str(tmp.path().to_str().unwrap());
-    ir_write_bundle(Value::Tuple(vec![lam.clone(), Value::Str(path_h)]));
+    let ec_h   = intern_str("pure");
+    ir_write_bundle(Value::Tuple(vec![lam.clone(), Value::Str(path_h), Value::Str(ec_h), Value::Bool(true)]));
     let loaded = ir_read_bundle(Value::Str(path_h));
 
     assert_eq!(lam, loaded);
 }
 
+// ── Core IR 0.4 format verification ─────────────────────────────────────────
+
+#[test]
+fn test_core_bundle_v04_round_trip_with_metadata() {
+    // Write a bundle with explicit provenance/effectClass/idempotent, read back and verify.
+    let term  = CoreTerm::IntLit(99, None);
+    let bytes = create_core_bundle(&term, "entry", Provenance::Mechanical, EffectClass::Writes, false);
+    let prog  = load_core_bundle_from_bytes(&bytes).expect("v0.4 round-trip");
+    assert!(matches!(prog.root_term, CoreTerm::IntLit(99, _)));
+    assert_eq!(prog.provenance,   Provenance::Mechanical);
+    assert_eq!(prog.effect_class, EffectClass::Writes);
+    assert!(!prog.idempotent);
+}
+
+#[test]
+fn test_core_bundle_v04_effect_class_reads() {
+    let term  = CoreTerm::BoolLit(true, None);
+    let bytes = create_core_bundle(&term, "e", Provenance::Mechanical, EffectClass::Reads, true);
+    let prog  = load_core_bundle_from_bytes(&bytes).unwrap();
+    assert_eq!(prog.effect_class, EffectClass::Reads);
+    assert!(prog.idempotent);
+}
+
+#[test]
+fn test_ir_write_bundle_v04_verified_by_loader() {
+    setup();
+    use tempfile::NamedTempFile;
+    use axis_codegen_bridge::core_ir::load_core_bundle;
+
+    let x_h   = intern_str("x");
+    let int_t = ir_make_int_lit(Value::Int(7));
+    let var_t = ir_make_var(Value::Str(x_h));
+    let let_t = ir_make_let(Value::Tuple(vec![Value::Str(x_h), int_t, var_t]));
+
+    let tmp    = NamedTempFile::new().unwrap();
+    let path   = tmp.path().to_str().unwrap();
+    let path_h = intern_str(path);
+    let ec_h   = intern_str("writes");
+    ir_write_bundle(Value::Tuple(vec![let_t, Value::Str(path_h), Value::Str(ec_h), Value::Bool(false)]));
+
+    let prog = load_core_bundle(path).expect("load written v0.4 bundle");
+    assert!(matches!(prog.root_term, CoreTerm::Let(..)));
+    assert_eq!(prog.provenance,   Provenance::Mechanical);
+    assert_eq!(prog.effect_class, EffectClass::Writes);
+    assert!(!prog.idempotent);
+}

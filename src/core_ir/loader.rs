@@ -3,11 +3,14 @@ use std::io::BufReader;
 use std::rc::Rc;
 use capnp::message::ReaderOptions;
 use capnp::serialize;
-use super::CoreTerm;
+use super::{CoreTerm, Provenance, EffectClass};
 
 pub struct CoreProgram {
     pub root_term: CoreTerm,
     pub entrypoint_id: usize,
+    pub provenance: Provenance,
+    pub effect_class: EffectClass,
+    pub idempotent: bool,
 }
 
 pub fn load_core_bundle(path: &str) -> Result<CoreProgram, String> {
@@ -30,7 +33,7 @@ fn load_from_reader<R: std::io::Read>(r: &mut R) -> Result<CoreProgram, String> 
         .map_err(|e| format!("Cap'n Proto read failed: {}", e))?;
 
     let bundle = msg
-        .get_root::<crate::axis_core_ir_0_3_capnp::core_bundle::Reader>()
+        .get_root::<crate::axis_core_ir_0_4_capnp::core_bundle::Reader>()
         .map_err(|e| format!("get_root failed: {}", e))?;
 
     let version = bundle.get_version()
@@ -38,41 +41,59 @@ fn load_from_reader<R: std::io::Read>(r: &mut R) -> Result<CoreProgram, String> 
         .to_str()
         .map_err(|e| format!("version utf8: {}", e))?;
 
-    if version != "0.3" {
-        return Err(format!("unsupported Core IR version: {}", version));
-    }
+    let (provenance, effect_class, idempotent) = match version {
+        "0.3" => (Provenance::Mechanical, EffectClass::Pure, true),
+        "0.4" => {
+            let prov = match bundle.get_provenance() {
+                Ok(crate::axis_core_ir_0_4_capnp::Provenance::Mechanical)   => Provenance::Mechanical,
+                Ok(crate::axis_core_ir_0_4_capnp::Provenance::LlmCandidate) => Provenance::LlmCandidate,
+                Ok(crate::axis_core_ir_0_4_capnp::Provenance::BulkCorpus)   => Provenance::BulkCorpus,
+                Err(_) => Provenance::Mechanical,
+            };
+            let ec = match bundle.get_effect_class() {
+                Ok(crate::axis_core_ir_0_4_capnp::EffectClass::Pure)   => EffectClass::Pure,
+                Ok(crate::axis_core_ir_0_4_capnp::EffectClass::Reads)  => EffectClass::Reads,
+                Ok(crate::axis_core_ir_0_4_capnp::EffectClass::Writes) => EffectClass::Writes,
+                Ok(crate::axis_core_ir_0_4_capnp::EffectClass::FullIo) => EffectClass::FullIo,
+                Err(_) => EffectClass::Pure,
+            };
+            let idem = bundle.get_idempotent();
+            (prov, ec, idem)
+        }
+        other => return Err(format!("unsupported Core IR version: {}", other)),
+    };
 
     let entrypoint_id = bundle.get_entrypoint_id() as usize;
     let term_reader   = bundle.get_core_term()
         .map_err(|e| format!("get_core_term failed: {}", e))?;
 
     let root_term = deserialise(term_reader)?;
-    Ok(CoreProgram { root_term, entrypoint_id })
+    Ok(CoreProgram { root_term, entrypoint_id, provenance, effect_class, idempotent })
 }
 
 // ── Iterative deserialiser ───────────────────────────────────────────────────
 
 enum Frame<'a> {
     Leaf(CoreTerm),
-    Lam  { param: String, body: crate::axis_core_ir_0_3_capnp::core_term::Reader<'a>, done: bool },
-    App  { fn_r: crate::axis_core_ir_0_3_capnp::core_term::Reader<'a>,
-           arg_r: crate::axis_core_ir_0_3_capnp::core_term::Reader<'a>,
+    Lam  { param: String, body: crate::axis_core_ir_0_4_capnp::core_term::Reader<'a>, done: bool },
+    App  { fn_r: crate::axis_core_ir_0_4_capnp::core_term::Reader<'a>,
+           arg_r: crate::axis_core_ir_0_4_capnp::core_term::Reader<'a>,
            fn_done: bool, arg_done: bool },
     Let  { name: String,
-           val_r: crate::axis_core_ir_0_3_capnp::core_term::Reader<'a>,
-           body_r: crate::axis_core_ir_0_3_capnp::core_term::Reader<'a>,
+           val_r: crate::axis_core_ir_0_4_capnp::core_term::Reader<'a>,
+           body_r: crate::axis_core_ir_0_4_capnp::core_term::Reader<'a>,
            val_done: bool, body_done: bool },
-    If   { cond_r: crate::axis_core_ir_0_3_capnp::core_term::Reader<'a>,
-           then_r: crate::axis_core_ir_0_3_capnp::core_term::Reader<'a>,
-           else_r: crate::axis_core_ir_0_3_capnp::core_term::Reader<'a>,
+    If   { cond_r: crate::axis_core_ir_0_4_capnp::core_term::Reader<'a>,
+           then_r: crate::axis_core_ir_0_4_capnp::core_term::Reader<'a>,
+           else_r: crate::axis_core_ir_0_4_capnp::core_term::Reader<'a>,
            cond_done: bool, then_done: bool, else_done: bool },
     Call { target: String,
-           readers: Vec<crate::axis_core_ir_0_3_capnp::core_term::Reader<'a>>,
+           readers: Vec<crate::axis_core_ir_0_4_capnp::core_term::Reader<'a>>,
            children: Vec<CoreTerm>, next: usize },
 }
 
-fn to_frame<'a>(r: crate::axis_core_ir_0_3_capnp::core_term::Reader<'a>) -> Result<Frame<'a>, String> {
-    use crate::axis_core_ir_0_3_capnp::core_term::Which;
+fn to_frame<'a>(r: crate::axis_core_ir_0_4_capnp::core_term::Reader<'a>) -> Result<Frame<'a>, String> {
+    use crate::axis_core_ir_0_4_capnp::core_term::Which;
     match r.which() {
         Ok(Which::CIntLit(l))  => Ok(Frame::Leaf(CoreTerm::IntLit(l.map_err(|e| e.to_string())?.get_value(), None))),
         Ok(Which::CBoolLit(l)) => Ok(Frame::Leaf(CoreTerm::BoolLit(l.map_err(|e| e.to_string())?.get_value(), None))),
@@ -111,7 +132,7 @@ fn to_frame<'a>(r: crate::axis_core_ir_0_3_capnp::core_term::Reader<'a>) -> Resu
     }
 }
 
-fn deserialise(root: crate::axis_core_ir_0_3_capnp::core_term::Reader) -> Result<CoreTerm, String> {
+fn deserialise(root: crate::axis_core_ir_0_4_capnp::core_term::Reader) -> Result<CoreTerm, String> {
     let mut work: Vec<Frame>    = vec![to_frame(root)?];
     let mut results: Vec<CoreTerm> = Vec::new();
 
