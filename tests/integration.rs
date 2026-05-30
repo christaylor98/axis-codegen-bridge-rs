@@ -692,3 +692,212 @@ fn test_ir_free_vars_let_binding_not_free_in_body() {
     assert_eq!(fvs, Value::List(vec![Value::Str(yh)]));
     let _ = ilit;
 }
+
+// ── list_head / list_tail / list_is_empty ────────────────────────────────────
+
+#[test]
+fn test_list_head() {
+    let l = Value::List(vec![Value::Int(10), Value::Int(20)]);
+    assert_eq!(list::list_head(l), Value::Int(10));
+}
+
+#[test]
+fn test_list_tail() {
+    let l = Value::List(vec![Value::Int(10), Value::Int(20), Value::Int(30)]);
+    assert_eq!(list::list_tail(l), Value::List(vec![Value::Int(20), Value::Int(30)]));
+}
+
+#[test]
+fn test_list_is_empty_empty() {
+    assert_eq!(list::list_is_empty(Value::List(vec![])), Value::Bool(true));
+}
+
+#[test]
+fn test_list_is_empty_nonempty() {
+    assert_eq!(list::list_is_empty(Value::List(vec![Value::Int(1)])), Value::Bool(false));
+}
+
+// ── str_split / str_starts_with ──────────────────────────────────────────────
+
+#[test]
+fn test_str_split() {
+    setup();
+    let s = intern_str("a,b,c");
+    let d = intern_str(",");
+    let r = str_ops::str_split(Value::Tuple(vec![Value::Str(s), Value::Str(d)]));
+    assert_eq!(r, Value::List(vec![
+        Value::Str(intern_str("a")),
+        Value::Str(intern_str("b")),
+        Value::Str(intern_str("c")),
+    ]));
+}
+
+#[test]
+fn test_str_starts_with_true() {
+    setup();
+    let s = intern_str("hello world");
+    let p = intern_str("hello");
+    assert_eq!(str_ops::str_starts_with(Value::Tuple(vec![Value::Str(s), Value::Str(p)])), Value::Bool(true));
+}
+
+#[test]
+fn test_str_starts_with_false() {
+    setup();
+    let s = intern_str("hello world");
+    let p = intern_str("world");
+    assert_eq!(str_ops::str_starts_with(Value::Tuple(vec![Value::Str(s), Value::Str(p)])), Value::Bool(false));
+}
+
+// ── ir_eval ──────────────────────────────────────────────────────────────────
+
+use axis_codegen_bridge::runtime::ir_eval::{ir_eval, ir_apply};
+
+#[test]
+fn test_ir_eval_let_binding() {
+    setup();
+    let xh   = intern_str("x");
+    let term = ir_make_let(Value::Tuple(vec![
+        Value::Str(xh),
+        ir_make_int_lit(Value::Int(42)),
+        ir_make_var(Value::Str(xh)),
+    ]));
+    let result = ir_eval(Value::Tuple(vec![term, Value::List(vec![])]));
+    assert_eq!(result, Value::Int(42));
+}
+
+#[test]
+fn test_ir_eval_if_true() {
+    setup();
+    let term = ir_make_if(Value::Tuple(vec![
+        ir_make_bool_lit(Value::Bool(true)),
+        ir_make_int_lit(Value::Int(1)),
+        ir_make_int_lit(Value::Int(0)),
+    ]));
+    let result = ir_eval(Value::Tuple(vec![term, Value::List(vec![])]));
+    assert_eq!(result, Value::Int(1));
+}
+
+#[test]
+fn test_ir_apply_identity() {
+    setup();
+    let xh  = intern_str("x");
+    let lam = ir_make_lam(Value::Tuple(vec![
+        Value::Str(xh),
+        ir_make_var(Value::Str(xh)),
+    ]));
+    let result = ir_apply(Value::Tuple(vec![lam, Value::Int(99)]));
+    assert_eq!(result, Value::Int(99));
+}
+
+#[test]
+fn test_ir_eval_ccall_int_add() {
+    setup();
+    let term = ir_make_call(Value::Tuple(vec![
+        Value::Str(intern_str("int_add")),
+        Value::List(vec![ir_make_int_lit(Value::Int(3)), ir_make_int_lit(Value::Int(4))]),
+    ]));
+    let result = ir_eval(Value::Tuple(vec![term, Value::List(vec![])]));
+    assert_eq!(result, Value::Int(7));
+}
+
+/// Recursive self-applying map pattern that doubles each element of [1, 2, 3].
+/// Proves iteration via recursive Core IR without any for_each_* foreign functions.
+///
+/// Structure:
+///   let double = lam(n, call(int_add, [var(n), var(n)])) in
+///   let loop   = lam(self, lam(lst,
+///                  if(call(list_is_empty, [var(lst)]),
+///                     call(list_nil, []),
+///                     call(list_cons, [app(var(double), call(list_head, [var(lst)])),
+///                                      app(app(var(self), var(self)), call(list_tail, [var(lst)]))])))) in
+///   app(app(var(loop), var(loop)), var(input))
+/// with bindings: input = [1, 2, 3]
+#[test]
+fn test_ir_eval_recursive_map_double() {
+    setup();
+    let n_h      = intern_str("n");
+    let self_h   = intern_str("self");
+    let lst_h    = intern_str("lst");
+    let double_h = intern_str("double");
+    let loop_h   = intern_str("loop");
+    let input_h  = intern_str("input");
+
+    // double = lam(n, call(int_add, [var(n), var(n)]))
+    let double_lam = ir_make_lam(Value::Tuple(vec![
+        Value::Str(n_h),
+        ir_make_call(Value::Tuple(vec![
+            Value::Str(intern_str("int_add")),
+            Value::List(vec![ir_make_var(Value::Str(n_h)), ir_make_var(Value::Str(n_h))]),
+        ])),
+    ]));
+
+    // loop_body = if(is_empty(lst), nil,
+    //                cons(app(double, head(lst)), app(app(self, self), tail(lst))))
+    let loop_body = ir_make_if(Value::Tuple(vec![
+        ir_make_call(Value::Tuple(vec![
+            Value::Str(intern_str("list_is_empty")),
+            Value::List(vec![ir_make_var(Value::Str(lst_h))]),
+        ])),
+        ir_make_call(Value::Tuple(vec![
+            Value::Str(intern_str("list_nil")),
+            Value::List(vec![]),
+        ])),
+        ir_make_call(Value::Tuple(vec![
+            Value::Str(intern_str("list_cons")),
+            Value::List(vec![
+                ir_make_app(Value::Tuple(vec![
+                    ir_make_var(Value::Str(double_h)),
+                    ir_make_call(Value::Tuple(vec![
+                        Value::Str(intern_str("list_head")),
+                        Value::List(vec![ir_make_var(Value::Str(lst_h))]),
+                    ])),
+                ])),
+                ir_make_app(Value::Tuple(vec![
+                    ir_make_app(Value::Tuple(vec![
+                        ir_make_var(Value::Str(self_h)),
+                        ir_make_var(Value::Str(self_h)),
+                    ])),
+                    ir_make_call(Value::Tuple(vec![
+                        Value::Str(intern_str("list_tail")),
+                        Value::List(vec![ir_make_var(Value::Str(lst_h))]),
+                    ])),
+                ])),
+            ]),
+        ])),
+    ]));
+
+    // loop = lam(self, lam(lst, loop_body))
+    let loop_lam = ir_make_lam(Value::Tuple(vec![
+        Value::Str(self_h),
+        ir_make_lam(Value::Tuple(vec![Value::Str(lst_h), loop_body])),
+    ]));
+
+    // let double = double_lam in
+    // let loop   = loop_lam   in
+    // app(app(var(loop), var(loop)), var(input))
+    let term = ir_make_let(Value::Tuple(vec![
+        Value::Str(double_h),
+        double_lam,
+        ir_make_let(Value::Tuple(vec![
+            Value::Str(loop_h),
+            loop_lam,
+            ir_make_app(Value::Tuple(vec![
+                ir_make_app(Value::Tuple(vec![
+                    ir_make_var(Value::Str(loop_h)),
+                    ir_make_var(Value::Str(loop_h)),
+                ])),
+                ir_make_var(Value::Str(input_h)),
+            ])),
+        ])),
+    ]));
+
+    let bindings = Value::List(vec![
+        Value::Tuple(vec![
+            Value::Str(input_h),
+            Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)]),
+        ]),
+    ]);
+
+    let result = ir_eval(Value::Tuple(vec![term, bindings]));
+    assert_eq!(result, Value::List(vec![Value::Int(2), Value::Int(4), Value::Int(6)]));
+}

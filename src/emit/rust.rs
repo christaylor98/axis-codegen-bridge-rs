@@ -39,7 +39,13 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("str_char",      "axis_codegen_bridge::runtime::str_ops::str_char");
     m.insert("str_char_at",   "axis_codegen_bridge::runtime::str_ops::str_char_at");
     m.insert("str_char_code", "axis_codegen_bridge::runtime::str_ops::str_char_code");
-    m.insert("str_slice",     "axis_codegen_bridge::runtime::str_ops::str_slice");
+    m.insert("str_slice",       "axis_codegen_bridge::runtime::str_ops::str_slice");
+    m.insert("str_split",       "axis_codegen_bridge::runtime::str_ops::str_split");
+    m.insert("str_starts_with", "axis_codegen_bridge::runtime::str_ops::str_starts_with");
+    m.insert("str_ends_with",   "axis_codegen_bridge::runtime::str_ops::str_ends_with");
+    m.insert("str_trim",        "axis_codegen_bridge::runtime::str_ops::str_trim");
+    m.insert("str_contains",    "axis_codegen_bridge::runtime::str_ops::str_contains");
+    m.insert("str_index_of",    "axis_codegen_bridge::runtime::str_ops::str_index_of");
 
     // List
     m.insert("list_nil",     "axis_codegen_bridge::runtime::list::list_nil");
@@ -49,14 +55,17 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("list_get_at",  "axis_codegen_bridge::runtime::list::list_get_at");
     m.insert("list_append",  "axis_codegen_bridge::runtime::list::list_append");
     m.insert("list_concat",  "axis_codegen_bridge::runtime::list::list_concat");
-    m.insert("list_reverse", "axis_codegen_bridge::runtime::list::list_reverse");
+    m.insert("list_reverse",   "axis_codegen_bridge::runtime::list::list_reverse");
+    m.insert("list_head",      "axis_codegen_bridge::runtime::list::list_head");
+    m.insert("list_tail",      "axis_codegen_bridge::runtime::list::list_tail");
+    m.insert("list_is_empty",  "axis_codegen_bridge::runtime::list::list_is_empty");
 
     // Tuple / constructor
     m.insert("tuple_field", "axis_codegen_bridge::runtime::tuple::tuple_field");
     m.insert("ctor_field",  "axis_codegen_bridge::runtime::tuple::ctor_field");
 
     // Option
-    m.insert("option_none",    "axis_codegen_bridge::runtime::option::option_none");
+    m.insert("option_none",    "axis_codegen_bridge::runtime::option::option_none_fn");
     m.insert("option_some",    "axis_codegen_bridge::runtime::option::option_some");
     m.insert("option_is_none", "axis_codegen_bridge::runtime::option::option_is_none");
     m.insert("option_is_some", "axis_codegen_bridge::runtime::option::option_is_some");
@@ -105,6 +114,8 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("ir_subst",         "axis_codegen_bridge::runtime::ir_constructors::ir_subst");
     m.insert("ir_rename",        "axis_codegen_bridge::runtime::ir_constructors::ir_rename");
     m.insert("ir_free_vars",     "axis_codegen_bridge::runtime::ir_constructors::ir_free_vars");
+    m.insert("ir_eval",          "axis_codegen_bridge::runtime::ir_eval::ir_eval");
+    m.insert("ir_apply",         "axis_codegen_bridge::runtime::ir_eval::ir_apply");
 
     // Registry
     m.insert("registry_has_entry",    "axis_codegen_bridge::runtime::registry::registry_has_entry");

@@ -103,7 +103,7 @@ pub fn ir_term_kind(v: Value) -> Value {
 
 // ── Substitution and renaming ────────────────────────────────────────────────
 
-fn subst_value(name: &str, replacement: &Value, term: Value) -> Value {
+pub(crate) fn subst_value(name: &str, replacement: &Value, term: Value) -> Value {
     match term {
         Value::Ctor { tag, mut fields } => {
             let kind = get_tag_name(tag);

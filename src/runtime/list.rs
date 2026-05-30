@@ -89,3 +89,26 @@ pub fn list_reverse(list: Value) -> Value {
         _ => panic!("list_reverse: expected List"),
     }
 }
+
+pub fn list_head(list: Value) -> Value {
+    match list {
+        Value::List(es) if !es.is_empty() => es[0].clone(),
+        Value::List(_) => panic!("list_head: called on empty list"),
+        _ => panic!("list_head: expected List"),
+    }
+}
+
+pub fn list_tail(list: Value) -> Value {
+    match list {
+        Value::List(es) if !es.is_empty() => Value::List(es[1..].to_vec()),
+        Value::List(_) => panic!("list_tail: called on empty list"),
+        _ => panic!("list_tail: expected List"),
+    }
+}
+
+pub fn list_is_empty(list: Value) -> Value {
+    match list {
+        Value::List(es) => Value::Bool(es.is_empty()),
+        _ => panic!("list_is_empty: expected List"),
+    }
+}

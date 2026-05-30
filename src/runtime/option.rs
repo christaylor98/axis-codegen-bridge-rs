@@ -22,6 +22,10 @@ pub fn option_is_some(opt: Value) -> Value {
     }
 }
 
+/// Unary wrapper for option_none — takes any Value and returns None.
+/// Used in dispatch tables that require fn(Value) -> Value.
+pub fn option_none_fn(_: Value) -> Value { option_none() }
+
 pub fn option_unwrap(opt: Value) -> Value {
     match opt {
         Value::Ctor { tag, fields } if get_tag_name(tag) == "Some" && fields.len() == 1 => fields.into_iter().next().unwrap(),

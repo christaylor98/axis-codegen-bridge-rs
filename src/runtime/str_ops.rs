@@ -76,3 +76,81 @@ pub fn str_slice(args: Value) -> Value {
         _ => panic!("str_slice: expected Tuple(Str, Int, Int)"),
     }
 }
+
+pub fn str_split(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Str(content_h), Value::Str(delim_h)) => {
+                let content = get_str(*content_h);
+                let delim   = get_str(*delim_h);
+                let parts: Vec<Value> = content.split(delim.as_str())
+                    .map(|s| Value::Str(intern_str(s)))
+                    .collect();
+                Value::List(parts)
+            }
+            _ => panic!("str_split: expected two Str values"),
+        },
+        _ => panic!("str_split: expected Tuple(Str, Str)"),
+    }
+}
+
+pub fn str_starts_with(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Str(hay_h), Value::Str(pre_h)) => {
+                Value::Bool(get_str(*hay_h).starts_with(get_str(*pre_h).as_str()))
+            }
+            _ => panic!("str_starts_with: expected two Str values"),
+        },
+        _ => panic!("str_starts_with: expected Tuple(Str, Str)"),
+    }
+}
+
+pub fn str_ends_with(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Str(hay_h), Value::Str(suf_h)) => {
+                Value::Bool(get_str(*hay_h).ends_with(get_str(*suf_h).as_str()))
+            }
+            _ => panic!("str_ends_with: expected two Str values"),
+        },
+        _ => panic!("str_ends_with: expected Tuple(Str, Str)"),
+    }
+}
+
+pub fn str_trim(s: Value) -> Value {
+    match s {
+        Value::Str(h) => Value::Str(intern_str(get_str(h).trim())),
+        _ => panic!("str_trim: expected Str"),
+    }
+}
+
+pub fn str_contains(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Str(hay_h), Value::Str(need_h)) => {
+                Value::Bool(get_str(*hay_h).contains(get_str(*need_h).as_str()))
+            }
+            _ => panic!("str_contains: expected two Str values"),
+        },
+        _ => panic!("str_contains: expected Tuple(Str, Str)"),
+    }
+}
+
+/// Returns the char-index of the first occurrence of needle in haystack, or -1 if not found.
+pub fn str_index_of(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Str(hay_h), Value::Str(need_h)) => {
+                let hay    = get_str(*hay_h);
+                let needle = get_str(*need_h);
+                let idx = hay.find(needle.as_str())
+                    .map(|byte_pos| hay[..byte_pos].chars().count() as i64)
+                    .unwrap_or(-1);
+                Value::Int(idx)
+            }
+            _ => panic!("str_index_of: expected two Str values"),
+        },
+        _ => panic!("str_index_of: expected Tuple(Str, Str)"),
+    }
+}
