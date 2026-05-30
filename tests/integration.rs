@@ -171,12 +171,12 @@ fn test_bool_not_f()  { assert_eq!(bool_ops::bool_not(Value::Bool(false)), Value
 // ── List ops ─────────────────────────────────────────────────────────────────
 
 #[test]
-fn test_list_nil() { assert_eq!(list::list_nil(), Value::List(vec![])); }
+fn test_list_nil() { assert_eq!(list::list_nil(Value::Unit), Value::List(vec![])); }
 
 #[test]
 fn test_list_cons() {
     setup();
-    let r = list::list_cons(Value::Tuple(vec![Value::Int(1), list::list_nil()]));
+    let r = list::list_cons(Value::Tuple(vec![Value::Int(1), list::list_nil(Value::Unit)]));
     assert_eq!(r, Value::List(vec![Value::Int(1)]));
 }
 

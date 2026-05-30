@@ -153,7 +153,7 @@ pub fn emit_rust_from_core(root: &CoreTerm, _source_path: &str, _entrypoint: &st
         out.push_str("    let result = ");
         emit_term(root, &sym, &mut out, 1);
         out.push_str(";\n");
-        out.push_str("    println!(\"{}\", result);\n");
+        out.push_str("    if !matches!(result, Value::Unit) { println!(\"{}\", result); }\n");
     }
     out.push_str("}\n");
 

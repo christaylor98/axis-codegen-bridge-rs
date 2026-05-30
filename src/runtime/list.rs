@@ -1,6 +1,6 @@
 use super::value::Value;
 
-pub fn list_nil() -> Value {
+pub fn list_nil(_: Value) -> Value {
     Value::List(vec![])
 }
 
