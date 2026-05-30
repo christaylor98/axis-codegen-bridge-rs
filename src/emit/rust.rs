@@ -62,6 +62,9 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("option_is_some", "axis_codegen_bridge::runtime::option::option_is_some");
     m.insert("option_unwrap",  "axis_codegen_bridge::runtime::option::option_unwrap");
 
+    // Equality — curried call site: App(App(Var("__eq__"), a), b) → value_eq(Tuple[a,b])
+    m.insert("__eq__",      "axis_codegen_bridge::runtime::arith::value_eq");
+
     // IO
     m.insert("io_print",    "axis_codegen_bridge::runtime::io::io_print");
     m.insert("io_println",  "axis_codegen_bridge::runtime::io::io_println");
@@ -79,6 +82,19 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m
 }
 
+/// Collect all arguments from a nested App chain (uncurrying).
+/// App(App(f, a), b) → (f, [a, b])
+fn collect_app_args<'a>(term: &'a CoreTerm) -> (&'a CoreTerm, Vec<&'a CoreTerm>) {
+    let mut args = Vec::new();
+    let mut current = term;
+    while let CoreTerm::App(func, arg, _) = current {
+        args.push(arg.as_ref());
+        current = func.as_ref();
+    }
+    args.reverse();
+    (current, args)
+}
+
 pub fn emit_rust_from_core(root: &CoreTerm, _source_path: &str, _entrypoint: &str) -> String {
     let sym = symbol_map();
     let mut out = String::new();
@@ -87,10 +103,20 @@ pub fn emit_rust_from_core(root: &CoreTerm, _source_path: &str, _entrypoint: &st
     out.push_str("use axis_codegen_bridge::runtime::value::{Value, init_runtime};\n\n");
     out.push_str("fn main() {\n");
     out.push_str("    init_runtime();\n");
-    out.push_str("    let result = ");
-    emit_term(root, &sym, &mut out, 1);
-    out.push_str(";\n");
-    out.push_str("    println!(\"{}\", result);\n");
+    // Top-level Lam: emit as a closure but don't try to Display it — closures
+    // have no Display impl. Print "<function>" and exit 0, matching the
+    // axis-rust-bridge convention that tests rely on.
+    if matches!(root, CoreTerm::Lam(..)) {
+        out.push_str("    let _closure = ");
+        emit_term(root, &sym, &mut out, 1);
+        out.push_str(";\n");
+        out.push_str("    println!(\"<function>\");\n");
+    } else {
+        out.push_str("    let result = ");
+        emit_term(root, &sym, &mut out, 1);
+        out.push_str(";\n");
+        out.push_str("    println!(\"{}\", result);\n");
+    }
     out.push_str("}\n");
 
     out
@@ -113,17 +139,47 @@ fn emit_term(term: &CoreTerm, sym: &HashMap<&str, &str>, out: &mut String, depth
         }
 
         CoreTerm::Lam(param, body, _) => {
-            out.push_str(&format!("|{}| {{ ", sanitise(param)));
+            out.push_str(&format!("|{}: Value| {{ ", sanitise(param)));
             emit_term(body, sym, out, depth);
             out.push_str(" }");
         }
 
-        CoreTerm::App(f, arg, _) => {
-            out.push('(');
-            emit_term(f, sym, out, depth);
-            out.push_str(")(");
-            emit_term(arg, sym, out, depth);
-            out.push(')');
+        CoreTerm::App(_, _, _) => {
+            // Uncurry nested App chains: App(App(f, a), b) → f(Tuple[a, b])
+            // This is the UNARY INVARIANT: all known runtime functions take exactly
+            // one Value argument; multi-arg calls are packed as Value::Tuple.
+            let (base, all_args) = collect_app_args(term);
+            if let CoreTerm::Var(sym_name, _) = base {
+                if let Some(&path) = sym.get(sym_name.as_str()) {
+                    if all_args.len() > 1 {
+                        // Multi-arg: pack into Tuple
+                        out.push_str(path);
+                        out.push_str("(Value::Tuple(vec![");
+                        for (i, a) in all_args.iter().enumerate() {
+                            if i > 0 { out.push_str(", "); }
+                            emit_term(a, sym, out, depth);
+                            if matches!(a, CoreTerm::Var(..)) { out.push_str(".clone()"); }
+                        }
+                        out.push_str("]))");
+                    } else {
+                        // Single arg: call with full qualified path
+                        out.push_str(path);
+                        out.push('(');
+                        emit_term(all_args[0], sym, out, depth);
+                        if matches!(all_args[0], CoreTerm::Var(..)) { out.push_str(".clone()"); }
+                        out.push(')');
+                    }
+                    return;
+                }
+            }
+            // Fallback: curried emit for local closures and unknown bases
+            if let CoreTerm::App(f, arg, _) = term {
+                out.push('(');
+                emit_term(f, sym, out, depth);
+                out.push_str(")(");
+                emit_term(arg, sym, out, depth);
+                out.push(')');
+            }
         }
 
         CoreTerm::If(cond, then, els, _) => {
