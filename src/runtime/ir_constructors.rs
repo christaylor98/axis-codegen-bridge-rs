@@ -101,6 +101,246 @@ pub fn ir_term_kind(v: Value) -> Value {
     }
 }
 
+// ── Substitution and renaming ────────────────────────────────────────────────
+
+fn subst_value(name: &str, replacement: &Value, term: Value) -> Value {
+    match term {
+        Value::Ctor { tag, mut fields } => {
+            let kind = get_tag_name(tag);
+            match kind.as_str() {
+                "Var" => {
+                    if fields.len() == 1 {
+                        if let Value::Str(n) = &fields[0] {
+                            if get_str(*n) == name {
+                                return replacement.clone();
+                            }
+                        }
+                    }
+                    Value::Ctor { tag, fields }
+                }
+                "Lam" => {
+                    if fields.len() == 2 {
+                        let shadowed = if let Value::Str(p) = &fields[0] {
+                            get_str(*p) == name
+                        } else { false };
+                        if shadowed {
+                            return Value::Ctor { tag, fields };
+                        }
+                        let body      = fields.pop().unwrap();
+                        let param_val = fields.pop().unwrap();
+                        let new_body  = subst_value(name, replacement, body);
+                        make_ctor("Lam", vec![param_val, new_body])
+                    } else {
+                        Value::Ctor { tag, fields }
+                    }
+                }
+                "Let" => {
+                    if fields.len() == 3 {
+                        let shadowed = if let Value::Str(b) = &fields[0] {
+                            get_str(*b) == name
+                        } else { false };
+                        let body  = fields.pop().unwrap();
+                        let val   = fields.pop().unwrap();
+                        let bound = fields.pop().unwrap();
+                        let new_val = subst_value(name, replacement, val);
+                        if shadowed {
+                            make_ctor("Let", vec![bound, new_val, body])
+                        } else {
+                            let new_body = subst_value(name, replacement, body);
+                            make_ctor("Let", vec![bound, new_val, new_body])
+                        }
+                    } else {
+                        Value::Ctor { tag, fields }
+                    }
+                }
+                "App" => {
+                    if fields.len() == 2 {
+                        let arg  = fields.pop().unwrap();
+                        let func = fields.pop().unwrap();
+                        let nf = subst_value(name, replacement, func);
+                        let na = subst_value(name, replacement, arg);
+                        make_ctor("App", vec![nf, na])
+                    } else {
+                        Value::Ctor { tag, fields }
+                    }
+                }
+                "If" => {
+                    if fields.len() == 3 {
+                        let els  = fields.pop().unwrap();
+                        let then = fields.pop().unwrap();
+                        let cond = fields.pop().unwrap();
+                        let nc = subst_value(name, replacement, cond);
+                        let nt = subst_value(name, replacement, then);
+                        let ne = subst_value(name, replacement, els);
+                        make_ctor("If", vec![nc, nt, ne])
+                    } else {
+                        Value::Ctor { tag, fields }
+                    }
+                }
+                "Call" => {
+                    if fields.len() == 2 {
+                        let args_val = fields.pop().unwrap();
+                        let target   = fields.pop().unwrap();
+                        let new_args = match args_val {
+                            Value::List(args) => Value::List(
+                                args.into_iter().map(|a| subst_value(name, replacement, a)).collect()
+                            ),
+                            other => other,
+                        };
+                        make_ctor("Call", vec![target, new_args])
+                    } else {
+                        Value::Ctor { tag, fields }
+                    }
+                }
+                // IntLit, BoolLit, UnitLit — no variable positions
+                _ => Value::Ctor { tag, fields },
+            }
+        }
+        other => other,
+    }
+}
+
+/// ir_subst: takes Tuple([name_str, replacement_term, target_term]).
+/// Substitutes all free occurrences of name in target with replacement.
+/// Respects shadowing: does not descend into Lam/Let that rebind name.
+pub fn ir_subst(v: Value) -> Value {
+    match v {
+        Value::Tuple(mut fields) if fields.len() == 3 => {
+            let target      = fields.pop().unwrap();
+            let replacement = fields.pop().unwrap();
+            let name_val    = fields.pop().unwrap();
+            let name = match &name_val {
+                Value::Str(h) => get_str(*h),
+                _ => panic!("ir_subst: expected Str name, got {:?}", name_val),
+            };
+            subst_value(&name, &replacement, target)
+        }
+        _ => panic!("ir_subst: expected Tuple([name, replacement, target]), got {:?}", v),
+    }
+}
+
+/// ir_rename: takes Tuple([old_name_str, new_name_str, lam_term]).
+/// Replaces the Lam's param with new_name and substitutes old_name → Var(new_name) in body.
+pub fn ir_rename(v: Value) -> Value {
+    match v {
+        Value::Tuple(mut fields) if fields.len() == 3 => {
+            let lam_term = fields.pop().unwrap();
+            let new_name = fields.pop().unwrap();
+            let old_name = fields.pop().unwrap();
+            let old_str = match &old_name {
+                Value::Str(h) => get_str(*h),
+                _ => panic!("ir_rename: expected Str old_name, got {:?}", old_name),
+            };
+            let new_str = match &new_name {
+                Value::Str(h) => get_str(*h),
+                _ => panic!("ir_rename: expected Str new_name, got {:?}", new_name),
+            };
+            match lam_term {
+                Value::Ctor { tag, mut fields } if get_tag_name(tag) == "Lam" && fields.len() == 2 => {
+                    let body   = fields.pop().unwrap();
+                    let _param = fields.pop().unwrap();
+                    let new_name_h = intern_str(&new_str);
+                    let new_var    = make_ctor("Var", vec![Value::Str(new_name_h)]);
+                    let new_body   = subst_value(&old_str, &new_var, body);
+                    make_ctor("Lam", vec![Value::Str(new_name_h), new_body])
+                }
+                other => panic!("ir_rename: expected Ctor(Lam), got {:?}", other),
+            }
+        }
+        _ => panic!("ir_rename: expected Tuple([old_name, new_name, lam_term]), got {:?}", v),
+    }
+}
+
+// ── Free variable analysis ───────────────────────────────────────────────────
+
+fn free_vars_inner(term: &Value, bound: &std::collections::HashSet<String>) -> std::collections::HashSet<String> {
+    match term {
+        Value::Ctor { tag, fields } => {
+            let kind = get_tag_name(*tag);
+            match kind.as_str() {
+                "Var" => {
+                    if let [Value::Str(n)] = fields.as_slice() {
+                        let s = get_str(*n);
+                        if !bound.contains(&s) {
+                            let mut set = std::collections::HashSet::new();
+                            set.insert(s);
+                            set
+                        } else {
+                            std::collections::HashSet::new()
+                        }
+                    } else {
+                        std::collections::HashSet::new()
+                    }
+                }
+                "Lam" => {
+                    if let [Value::Str(param), body] = fields.as_slice() {
+                        let mut new_bound = bound.clone();
+                        new_bound.insert(get_str(*param));
+                        free_vars_inner(body, &new_bound)
+                    } else {
+                        std::collections::HashSet::new()
+                    }
+                }
+                "Let" => {
+                    if let [Value::Str(bound_name), val, body] = fields.as_slice() {
+                        let fv_val = free_vars_inner(val, bound);
+                        let mut new_bound = bound.clone();
+                        new_bound.insert(get_str(*bound_name));
+                        let fv_body = free_vars_inner(body, &new_bound);
+                        fv_val.union(&fv_body).cloned().collect()
+                    } else {
+                        std::collections::HashSet::new()
+                    }
+                }
+                "App" => {
+                    if let [func, arg] = fields.as_slice() {
+                        let fv1 = free_vars_inner(func, bound);
+                        let fv2 = free_vars_inner(arg,  bound);
+                        fv1.union(&fv2).cloned().collect()
+                    } else {
+                        std::collections::HashSet::new()
+                    }
+                }
+                "If" => {
+                    if let [cond, then, els] = fields.as_slice() {
+                        let fc = free_vars_inner(cond, bound);
+                        let ft = free_vars_inner(then, bound);
+                        let fe = free_vars_inner(els,  bound);
+                        let tmp: std::collections::HashSet<_> = fc.union(&ft).cloned().collect();
+                        tmp.union(&fe).cloned().collect()
+                    } else {
+                        std::collections::HashSet::new()
+                    }
+                }
+                "Call" => {
+                    if let [_target, Value::List(args)] = fields.as_slice() {
+                        args.iter().flat_map(|a| free_vars_inner(a, bound)).collect()
+                    } else {
+                        std::collections::HashSet::new()
+                    }
+                }
+                _ => std::collections::HashSet::new(),
+            }
+        }
+        _ => std::collections::HashSet::new(),
+    }
+}
+
+/// ir_free_vars: takes any IR Ctor term.
+/// Returns a sorted List of Str — all free variable names in the term.
+pub fn ir_free_vars(v: Value) -> Value {
+    let fvs = free_vars_inner(&v, &std::collections::HashSet::new());
+    let mut result: Vec<Value> = fvs.into_iter()
+        .map(|s| Value::Str(intern_str(&s)))
+        .collect();
+    result.sort_by(|a, b| {
+        let sa = if let Value::Str(h) = a { get_str(*h) } else { String::new() };
+        let sb = if let Value::Str(h) = b { get_str(*h) } else { String::new() };
+        sa.cmp(&sb)
+    });
+    Value::List(result)
+}
+
 pub fn ir_write_bundle(v: Value) -> Value {
     match v {
         Value::Tuple(mut fields) if fields.len() == 4 => {

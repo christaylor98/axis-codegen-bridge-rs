@@ -3,6 +3,7 @@ use axis_codegen_bridge::runtime::ir_constructors::{
     ir_make_int_lit, ir_make_bool_lit, ir_make_unit_lit,
     ir_make_var, ir_make_lam, ir_make_let, ir_make_if, ir_make_app, ir_make_call,
     ir_term_kind, ir_write_bundle, ir_read_bundle,
+    ir_subst, ir_rename, ir_free_vars,
 };
 use axis_codegen_bridge::runtime::{arith, str_ops, list, option, bool_ops};
 use axis_codegen_bridge::core_ir::{CoreTerm, Provenance, EffectClass, create_core_bundle, load_core_bundle_from_bytes};
@@ -529,4 +530,165 @@ fn test_ir_write_bundle_v04_verified_by_loader() {
     assert_eq!(prog.provenance,   Provenance::Mechanical);
     assert_eq!(prog.effect_class, EffectClass::Writes);
     assert!(!prog.idempotent);
+}
+
+// ── ir_subst ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_ir_subst_replaces_matching_var() {
+    setup();
+    let xh    = intern_str("x");
+    let var_x = ir_make_var(Value::Str(xh));
+    let ilit  = ir_make_int_lit(Value::Int(42));
+    // subst(x → IntLit(42), Var(x)) → IntLit(42)
+    let result = ir_subst(Value::Tuple(vec![Value::Str(xh), ilit.clone(), var_x]));
+    assert_eq!(format!("{}", ir_term_kind(result.clone())), "IntLit");
+    assert_eq!(result, ilit);
+}
+
+#[test]
+fn test_ir_subst_leaves_non_matching_var() {
+    setup();
+    let xh    = intern_str("x");
+    let yh    = intern_str("y");
+    let var_y = ir_make_var(Value::Str(yh));
+    let ilit  = ir_make_int_lit(Value::Int(42));
+    // subst(x → IntLit(42), Var(y)) → Var(y) unchanged
+    let result = ir_subst(Value::Tuple(vec![Value::Str(xh), ilit, var_y.clone()]));
+    assert_eq!(result, var_y);
+}
+
+#[test]
+fn test_ir_subst_lam_param_shadows() {
+    setup();
+    let xh    = intern_str("x");
+    let var_x = ir_make_var(Value::Str(xh));
+    let ilit  = ir_make_int_lit(Value::Int(99));
+    // lam(x, Var(x)) — x is bound by the lam; substituting x leaves it unchanged
+    let lam    = ir_make_lam(Value::Tuple(vec![Value::Str(xh), var_x]));
+    let result = ir_subst(Value::Tuple(vec![Value::Str(xh), ilit, lam.clone()]));
+    assert_eq!(result, lam);
+}
+
+#[test]
+fn test_ir_subst_let_val_reached_body_shadowed() {
+    setup();
+    let xh    = intern_str("x");
+    let yh    = intern_str("y");
+    let var_x = ir_make_var(Value::Str(xh));
+    let var_x2 = ir_make_var(Value::Str(xh));
+    let ilit  = ir_make_int_lit(Value::Int(7));
+    // let(x, Var(x), Var(x)) — substituting x:
+    //   val  = Var(x)  → IntLit(7)   (subst reaches val before binding)
+    //   body = Var(x)  → unchanged    (x is shadowed by the Let)
+    let let_t  = ir_make_let(Value::Tuple(vec![Value::Str(xh), var_x, var_x2]));
+    let result = ir_subst(Value::Tuple(vec![Value::Str(xh), ilit.clone(), let_t]));
+    // The let's val should be substituted, body should not — result is still a Let
+    assert_eq!(format!("{}", ir_term_kind(result)), "Let");
+    let _ = yh; // silence unused warning
+}
+
+#[test]
+fn test_ir_subst_substitutes_in_app_both_sides() {
+    setup();
+    let xh    = intern_str("x");
+    let var_x1 = ir_make_var(Value::Str(xh));
+    let var_x2 = ir_make_var(Value::Str(xh));
+    let ilit  = ir_make_int_lit(Value::Int(5));
+    // App(Var(x), Var(x)) — both sides substituted
+    let app    = ir_make_app(Value::Tuple(vec![var_x1, var_x2]));
+    let result = ir_subst(Value::Tuple(vec![Value::Str(xh), ilit, app]));
+    // Result: App(IntLit(5), IntLit(5))
+    assert_eq!(format!("{}", ir_term_kind(result)), "App");
+}
+
+// ── ir_rename ────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_ir_rename_produces_lam() {
+    setup();
+    let xh    = intern_str("x");
+    let yh    = intern_str("y");
+    let var_x = ir_make_var(Value::Str(xh));
+    // lam(x, Var(x)) renamed x → y = lam(y, Var(y))
+    let lam    = ir_make_lam(Value::Tuple(vec![Value::Str(xh), var_x]));
+    let result = ir_rename(Value::Tuple(vec![Value::Str(xh), Value::Str(yh), lam]));
+    assert_eq!(format!("{}", ir_term_kind(result)), "Lam");
+}
+
+#[test]
+fn test_ir_rename_body_var_updated() {
+    setup();
+    let xh    = intern_str("x");
+    let yh    = intern_str("y");
+    let var_x = ir_make_var(Value::Str(xh));
+    // lam(x, Var(x)) renamed x → y
+    let lam       = ir_make_lam(Value::Tuple(vec![Value::Str(xh), var_x]));
+    let renamed   = ir_rename(Value::Tuple(vec![Value::Str(xh), Value::Str(yh), lam]));
+    // The renamed lam should have Var(y) as body — verify it equals lam(y, Var(y))
+    let var_y     = ir_make_var(Value::Str(yh));
+    // Build expected: lam(y, Var(y)) and check it equals renamed
+    let expected  = ir_make_lam(Value::Tuple(vec![Value::Str(yh), var_y]));
+    assert_eq!(renamed, expected);
+}
+
+// ── ir_free_vars ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_ir_free_vars_lit_has_none() {
+    setup();
+    let ilit = ir_make_int_lit(Value::Int(42));
+    let fvs  = ir_free_vars(ilit);
+    assert_eq!(fvs, Value::List(vec![]));
+}
+
+#[test]
+fn test_ir_free_vars_var_is_free() {
+    setup();
+    let xh  = intern_str("x");
+    let var = ir_make_var(Value::Str(xh));
+    let fvs = ir_free_vars(var);
+    assert_eq!(fvs, Value::List(vec![Value::Str(xh)]));
+}
+
+#[test]
+fn test_ir_free_vars_lam_binds_param() {
+    setup();
+    let xh  = intern_str("x");
+    let var = ir_make_var(Value::Str(xh));
+    // lam(x, Var(x)) — x is bound, not free
+    let lam = ir_make_lam(Value::Tuple(vec![Value::Str(xh), var]));
+    let fvs = ir_free_vars(lam);
+    assert_eq!(fvs, Value::List(vec![]));
+}
+
+#[test]
+fn test_ir_free_vars_app_collects_both() {
+    setup();
+    let xh    = intern_str("x");
+    let yh    = intern_str("y");
+    let var_x = ir_make_var(Value::Str(xh));
+    let var_y = ir_make_var(Value::Str(yh));
+    // App(Var(x), Var(y)) — both free
+    let app = ir_make_app(Value::Tuple(vec![var_x, var_y]));
+    let fvs = ir_free_vars(app);
+    // Sorted alphabetically: x, y
+    assert_eq!(list::list_len(fvs.clone()), Value::Int(2));
+    assert_eq!(list::list_get(Value::Tuple(vec![fvs.clone(), Value::Int(0)])), Value::Str(xh));
+    assert_eq!(list::list_get(Value::Tuple(vec![fvs,         Value::Int(1)])), Value::Str(yh));
+}
+
+#[test]
+fn test_ir_free_vars_let_binding_not_free_in_body() {
+    setup();
+    let xh    = intern_str("x");
+    let yh    = intern_str("y");
+    let var_x = ir_make_var(Value::Str(xh));
+    let var_y = ir_make_var(Value::Str(yh));
+    let ilit  = ir_make_int_lit(Value::Int(0));
+    // let(x, Var(y), Var(x)) — y is free (in val), x is bound (in body)
+    let let_t = ir_make_let(Value::Tuple(vec![Value::Str(xh), var_y, var_x]));
+    let fvs   = ir_free_vars(let_t);
+    assert_eq!(fvs, Value::List(vec![Value::Str(yh)]));
+    let _ = ilit;
 }

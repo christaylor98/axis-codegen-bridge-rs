@@ -102,6 +102,9 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("ir_term_kind",     "axis_codegen_bridge::runtime::ir_constructors::ir_term_kind");
     m.insert("ir_write_bundle",  "axis_codegen_bridge::runtime::ir_constructors::ir_write_bundle");
     m.insert("ir_read_bundle",   "axis_codegen_bridge::runtime::ir_constructors::ir_read_bundle");
+    m.insert("ir_subst",         "axis_codegen_bridge::runtime::ir_constructors::ir_subst");
+    m.insert("ir_rename",        "axis_codegen_bridge::runtime::ir_constructors::ir_rename");
+    m.insert("ir_free_vars",     "axis_codegen_bridge::runtime::ir_constructors::ir_free_vars");
 
     // Registry
     m.insert("registry_has_entry",    "axis_codegen_bridge::runtime::registry::registry_has_entry");
