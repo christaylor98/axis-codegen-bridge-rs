@@ -1,4 +1,9 @@
 use axis_codegen_bridge::runtime::value::{Value, intern_str, get_str, init_runtime};
+use axis_codegen_bridge::runtime::ir_constructors::{
+    ir_make_int_lit, ir_make_bool_lit, ir_make_unit_lit,
+    ir_make_var, ir_make_lam, ir_make_let, ir_make_if, ir_make_app, ir_make_call,
+    ir_term_kind, ir_write_bundle, ir_read_bundle,
+};
 use axis_codegen_bridge::runtime::{arith, str_ops, list, option, bool_ops};
 use axis_codegen_bridge::core_ir::{CoreTerm, create_core_bundle, load_core_bundle_from_bytes};
 use axis_codegen_bridge::executor::{execute_core_program, FunctionProvider, Value as ExecValue, RuntimeError};
@@ -345,5 +350,127 @@ fn test_executor_deterministic() {
     let r1 = execute_core_program(&make_program(term.clone()), &reg).unwrap();
     let r2 = execute_core_program(&make_program(term),          &reg).unwrap();
     assert_eq!(r1, r2);
+}
+
+// ── IR constructor primitives ────────────────────────────────────────────────
+
+#[test]
+fn test_ir_make_int_lit_kind() {
+    setup();
+    let t = ir_make_int_lit(Value::Int(42));
+    assert_eq!(format!("{}", ir_term_kind(t)), "IntLit");
+}
+
+#[test]
+fn test_ir_make_bool_lit_kind() {
+    setup();
+    let t = ir_make_bool_lit(Value::Bool(true));
+    assert_eq!(format!("{}", ir_term_kind(t)), "BoolLit");
+}
+
+#[test]
+fn test_ir_make_unit_lit_kind() {
+    setup();
+    let t = ir_make_unit_lit(Value::Unit);
+    assert_eq!(format!("{}", ir_term_kind(t)), "UnitLit");
+}
+
+#[test]
+fn test_ir_make_var_kind() {
+    setup();
+    let h = intern_str("myvar");
+    let t = ir_make_var(Value::Str(h));
+    assert_eq!(format!("{}", ir_term_kind(t)), "Var");
+}
+
+#[test]
+fn test_ir_make_lam_kind() {
+    setup();
+    let ph = intern_str("p");
+    let body = ir_make_int_lit(Value::Int(0));
+    let t = ir_make_lam(Value::Tuple(vec![Value::Str(ph), body]));
+    assert_eq!(format!("{}", ir_term_kind(t)), "Lam");
+}
+
+#[test]
+fn test_ir_make_let_kind() {
+    setup();
+    let nh  = intern_str("n");
+    let val = ir_make_int_lit(Value::Int(10));
+    let bdy = ir_make_var(Value::Str(nh));
+    let t   = ir_make_let(Value::Tuple(vec![Value::Str(nh), val, bdy]));
+    assert_eq!(format!("{}", ir_term_kind(t)), "Let");
+}
+
+#[test]
+fn test_ir_make_if_kind() {
+    setup();
+    let cond = ir_make_bool_lit(Value::Bool(true));
+    let thn  = ir_make_int_lit(Value::Int(1));
+    let els  = ir_make_int_lit(Value::Int(0));
+    let t    = ir_make_if(Value::Tuple(vec![cond, thn, els]));
+    assert_eq!(format!("{}", ir_term_kind(t)), "If");
+}
+
+#[test]
+fn test_ir_make_app_kind() {
+    setup();
+    let fh  = intern_str("f");
+    let func = ir_make_var(Value::Str(fh));
+    let arg  = ir_make_unit_lit(Value::Unit);
+    let t    = ir_make_app(Value::Tuple(vec![func, arg]));
+    assert_eq!(format!("{}", ir_term_kind(t)), "App");
+}
+
+#[test]
+fn test_ir_make_call_kind() {
+    setup();
+    let th   = intern_str("int_add");
+    let args = Value::List(vec![ir_make_int_lit(Value::Int(1)), ir_make_int_lit(Value::Int(2))]);
+    let t    = ir_make_call(Value::Tuple(vec![Value::Str(th), args]));
+    assert_eq!(format!("{}", ir_term_kind(t)), "Call");
+}
+
+#[test]
+fn test_ir_constructors_round_trip() {
+    setup();
+    use tempfile::NamedTempFile;
+
+    // Build: let x = 42 in x
+    let x_h   = intern_str("x");
+    let int_t = ir_make_int_lit(Value::Int(42));
+    let var_t = ir_make_var(Value::Str(x_h));
+    let let_t = ir_make_let(Value::Tuple(vec![Value::Str(x_h), int_t, var_t]));
+
+    assert_eq!(format!("{}", ir_term_kind(let_t.clone())), "Let");
+
+    let tmp    = NamedTempFile::new().unwrap();
+    let path_h = intern_str(tmp.path().to_str().unwrap());
+    ir_write_bundle(Value::Tuple(vec![let_t.clone(), Value::Str(path_h)]));
+    let loaded = ir_read_bundle(Value::Str(path_h));
+
+    assert_eq!(format!("{}", ir_term_kind(loaded.clone())), "Let");
+    assert_eq!(let_t, loaded);
+}
+
+#[test]
+fn test_ir_round_trip_nested() {
+    setup();
+    use tempfile::NamedTempFile;
+
+    // Build: lam p -> if true then 1 else 0
+    let ph   = intern_str("p");
+    let cond = ir_make_bool_lit(Value::Bool(true));
+    let thn  = ir_make_int_lit(Value::Int(1));
+    let els  = ir_make_int_lit(Value::Int(0));
+    let body = ir_make_if(Value::Tuple(vec![cond, thn, els]));
+    let lam  = ir_make_lam(Value::Tuple(vec![Value::Str(ph), body]));
+
+    let tmp    = NamedTempFile::new().unwrap();
+    let path_h = intern_str(tmp.path().to_str().unwrap());
+    ir_write_bundle(Value::Tuple(vec![lam.clone(), Value::Str(path_h)]));
+    let loaded = ir_read_bundle(Value::Str(path_h));
+
+    assert_eq!(lam, loaded);
 }
 

@@ -9,5 +9,6 @@ pub mod io;
 pub mod process;
 pub mod registry;
 pub mod transitions;
+pub mod ir_constructors;
 
 pub use value::Value;

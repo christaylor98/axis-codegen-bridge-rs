@@ -89,6 +89,20 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("reference_registry_function", "axis_codegen_bridge::runtime::transitions::reference_registry_function");
     m.insert("verify_foreign_reference",    "axis_codegen_bridge::runtime::transitions::verify_foreign_reference");
 
+    // IR constructors
+    m.insert("ir_make_int_lit",  "axis_codegen_bridge::runtime::ir_constructors::ir_make_int_lit");
+    m.insert("ir_make_bool_lit", "axis_codegen_bridge::runtime::ir_constructors::ir_make_bool_lit");
+    m.insert("ir_make_unit_lit", "axis_codegen_bridge::runtime::ir_constructors::ir_make_unit_lit");
+    m.insert("ir_make_var",      "axis_codegen_bridge::runtime::ir_constructors::ir_make_var");
+    m.insert("ir_make_lam",      "axis_codegen_bridge::runtime::ir_constructors::ir_make_lam");
+    m.insert("ir_make_let",      "axis_codegen_bridge::runtime::ir_constructors::ir_make_let");
+    m.insert("ir_make_if",       "axis_codegen_bridge::runtime::ir_constructors::ir_make_if");
+    m.insert("ir_make_app",      "axis_codegen_bridge::runtime::ir_constructors::ir_make_app");
+    m.insert("ir_make_call",     "axis_codegen_bridge::runtime::ir_constructors::ir_make_call");
+    m.insert("ir_term_kind",     "axis_codegen_bridge::runtime::ir_constructors::ir_term_kind");
+    m.insert("ir_write_bundle",  "axis_codegen_bridge::runtime::ir_constructors::ir_write_bundle");
+    m.insert("ir_read_bundle",   "axis_codegen_bridge::runtime::ir_constructors::ir_read_bundle");
+
     // Registry
     m.insert("registry_has_entry",    "axis_codegen_bridge::runtime::registry::registry_has_entry");
     m.insert("registry_lookup",       "axis_codegen_bridge::runtime::registry::registry_lookup");
