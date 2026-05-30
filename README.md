@@ -1,5 +1,7 @@
 # axis-codegen-bridge-rs
 
+> **Part of [axis-lang-lab](https://github.com/christaylor98/axis-lang-lab)** — not a standalone tool.
+
 Rust foreign function bridge for the axis-lang code generation pipeline.
 
 Provides the runtime layer that axis-lang programs call into for IO, arithmetic,
