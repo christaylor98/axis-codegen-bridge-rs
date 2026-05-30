@@ -1,0 +1,66 @@
+registry axis-codegen-bridge 0.1
+
+// ── Arithmetic ────────────────────────────────────────────────────────────────
+fn int_add         arity=1 deterministic=true  profile=pure
+fn int_sub         arity=1 deterministic=true  profile=pure
+fn int_mul         arity=1 deterministic=true  profile=pure
+fn int_div         arity=1 deterministic=true  profile=pure
+fn int_div_checked arity=1 deterministic=true  profile=pure
+fn int_mod         arity=1 deterministic=true  profile=pure
+fn int_to_str      arity=1 deterministic=true  profile=pure
+fn str_to_int      arity=1 deterministic=true  profile=pure
+
+// ── Comparison ───────────────────────────────────────────────────────────────
+fn int_lt          arity=1 deterministic=true  profile=pure
+fn int_lte         arity=1 deterministic=true  profile=pure
+fn int_gt          arity=1 deterministic=true  profile=pure
+fn int_gte         arity=1 deterministic=true  profile=pure
+fn value_eq        arity=1 deterministic=true  profile=pure
+
+// ── Boolean ──────────────────────────────────────────────────────────────────
+fn bool_and        arity=1 deterministic=true  profile=pure
+fn bool_or         arity=1 deterministic=true  profile=pure
+fn bool_not        arity=1 deterministic=true  profile=pure
+
+// ── String ───────────────────────────────────────────────────────────────────
+fn str_len         arity=1 deterministic=true  profile=pure
+fn str_concat      arity=1 deterministic=true  profile=pure
+fn str_char        arity=1 deterministic=true  profile=pure
+fn str_char_at     arity=1 deterministic=true  profile=pure
+fn str_char_code   arity=1 deterministic=true  profile=pure
+fn str_slice       arity=1 deterministic=true  profile=pure
+
+// ── List ─────────────────────────────────────────────────────────────────────
+fn list_nil        arity=1 deterministic=true  profile=pure
+fn list_cons       arity=1 deterministic=true  profile=pure
+fn list_len        arity=1 deterministic=true  profile=pure
+fn list_get        arity=1 deterministic=true  profile=pure
+fn list_get_at     arity=1 deterministic=true  profile=pure
+fn list_append     arity=1 deterministic=true  profile=pure
+fn list_concat     arity=1 deterministic=true  profile=pure
+fn list_reverse    arity=1 deterministic=true  profile=pure
+
+// ── Tuple / Constructor ───────────────────────────────────────────────────────
+fn tuple_field     arity=1 deterministic=true  profile=pure
+fn ctor_field      arity=1 deterministic=true  profile=pure
+
+// ── Option ───────────────────────────────────────────────────────────────────
+fn option_none     arity=1 deterministic=true  profile=pure
+fn option_some     arity=1 deterministic=true  profile=pure
+fn option_is_none  arity=1 deterministic=true  profile=pure
+fn option_is_some  arity=1 deterministic=true  profile=pure
+fn option_unwrap   arity=1 deterministic=true  profile=pure
+
+// ── IO ───────────────────────────────────────────────────────────────────────
+fn io_print        arity=1 deterministic=false profile=writes
+fn io_println      arity=1 deterministic=false profile=writes
+fn io_eprint       arity=1 deterministic=false profile=writes
+fn io_read_line    arity=1 deterministic=false profile=reads
+fn fs_read_text    arity=1 deterministic=false profile=reads
+fn fs_write_text   arity=1 deterministic=false profile=writes
+fn fs_append_text  arity=1 deterministic=false profile=writes
+fn debug_trace     arity=1 deterministic=false profile=writes
+
+// ── Process ──────────────────────────────────────────────────────────────────
+fn proc_args       arity=1 deterministic=false profile=reads
+fn proc_exit       arity=1 deterministic=false profile=full-io

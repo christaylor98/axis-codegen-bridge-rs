@@ -1,0 +1,24 @@
+[package]
+name = "axis-codegen-bridge"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "axis_codegen_bridge"
+path = "src/lib.rs"
+
+[[bin]]
+name = "axis-codegen-bridge"
+path = "src/main.rs"
+
+[dependencies]
+capnp = "0.19"
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+clap = { version = "4.5", features = ["derive"] }
+
+[build-dependencies]
+capnpc = "0.19"
+
+[dev-dependencies]
+tempfile = "3.0"
