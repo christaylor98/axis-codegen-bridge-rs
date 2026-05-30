@@ -79,6 +79,17 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("proc_args", "axis_codegen_bridge::runtime::process::proc_args");
     m.insert("proc_exit", "axis_codegen_bridge::runtime::process::proc_exit");
 
+    // Registry
+    m.insert("registry_has_entry",    "axis_codegen_bridge::runtime::registry::registry_has_entry");
+    m.insert("registry_lookup",       "axis_codegen_bridge::runtime::registry::registry_lookup");
+    m.insert("registry_get_provenance","axis_codegen_bridge::runtime::registry::registry_get_provenance");
+    m.insert("registry_get_contract", "axis_codegen_bridge::runtime::registry::registry_get_contract");
+    m.insert("registry_get_effect_sig","axis_codegen_bridge::runtime::registry::registry_get_effect_sig");
+    m.insert("registry_all_entries",  "axis_codegen_bridge::runtime::registry::registry_all_entries");
+    m.insert("registry_insert",       "axis_codegen_bridge::runtime::registry::registry_insert");
+    m.insert("registry_verify_chain", "axis_codegen_bridge::runtime::registry::registry_verify_chain");
+    m.insert("registry_compound_id",  "axis_codegen_bridge::runtime::registry::registry_compound_id");
+
     m
 }
 

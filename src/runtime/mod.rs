@@ -7,5 +7,6 @@ pub mod option;
 pub mod bool_ops;
 pub mod io;
 pub mod process;
+pub mod registry;
 
 pub use value::Value;
