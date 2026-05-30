@@ -79,6 +79,16 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("proc_args", "axis_codegen_bridge::runtime::process::proc_args");
     m.insert("proc_exit", "axis_codegen_bridge::runtime::process::proc_exit");
 
+    // Transitions (one per catalog entry; stubs matching src/*.ai2 lam bodies)
+    m.insert("introduce_let_binding",       "axis_codegen_bridge::runtime::transitions::introduce_let_binding");
+    m.insert("introduce_lambda",            "axis_codegen_bridge::runtime::transitions::introduce_lambda");
+    m.insert("apply_function",              "axis_codegen_bridge::runtime::transitions::apply_function");
+    m.insert("extract_subterm_to_function", "axis_codegen_bridge::runtime::transitions::extract_subterm_to_function");
+    m.insert("inline_let_binding",          "axis_codegen_bridge::runtime::transitions::inline_let_binding");
+    m.insert("rename_bound_variable",       "axis_codegen_bridge::runtime::transitions::rename_bound_variable");
+    m.insert("reference_registry_function", "axis_codegen_bridge::runtime::transitions::reference_registry_function");
+    m.insert("verify_foreign_reference",    "axis_codegen_bridge::runtime::transitions::verify_foreign_reference");
+
     // Registry
     m.insert("registry_has_entry",    "axis_codegen_bridge::runtime::registry::registry_has_entry");
     m.insert("registry_lookup",       "axis_codegen_bridge::runtime::registry::registry_lookup");

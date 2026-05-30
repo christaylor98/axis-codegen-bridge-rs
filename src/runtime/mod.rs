@@ -8,5 +8,6 @@ pub mod bool_ops;
 pub mod io;
 pub mod process;
 pub mod registry;
+pub mod transitions;
 
 pub use value::Value;
