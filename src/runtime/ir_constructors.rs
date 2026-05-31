@@ -94,6 +94,66 @@ pub fn ir_make_call(v: Value) -> Value {
     }
 }
 
+fn term_to_str(v: &Value) -> String {
+    match v {
+        Value::Ctor { tag, fields } => {
+            let kind = get_tag_name(*tag);
+            match kind.as_str() {
+                "IntLit" => {
+                    if let [Value::Int(n)] = fields.as_slice() {
+                        format!("int(value = {})", n)
+                    } else { kind }
+                }
+                "BoolLit" => {
+                    if let [Value::Bool(b)] = fields.as_slice() {
+                        format!("bool(value = {})", b)
+                    } else { kind }
+                }
+                "UnitLit" => "unit()".to_string(),
+                "Var" => {
+                    if let [Value::Str(s)] = fields.as_slice() {
+                        format!("var(name = {})", get_str(*s))
+                    } else { kind }
+                }
+                "Lam" => {
+                    if let [Value::Str(param), body] = fields.as_slice() {
+                        format!("lam(param = {}, body = {})", get_str(*param), term_to_str(body))
+                    } else { kind }
+                }
+                "Let" => {
+                    if let [Value::Str(name), val, body] = fields.as_slice() {
+                        format!("let(name = {}, value = {},\nbody = {})",
+                            get_str(*name), term_to_str(val), term_to_str(body))
+                    } else { kind }
+                }
+                "If" => {
+                    if let [cond, then, els] = fields.as_slice() {
+                        format!("if(cond = {}, then = {}, else = {})",
+                            term_to_str(cond), term_to_str(then), term_to_str(els))
+                    } else { kind }
+                }
+                "App" => {
+                    if let [func, arg] = fields.as_slice() {
+                        format!("app(fn = {}, arg = {})", term_to_str(func), term_to_str(arg))
+                    } else { kind }
+                }
+                "Call" => {
+                    if let [Value::Str(target), Value::List(args)] = fields.as_slice() {
+                        let args_str: Vec<String> = args.iter().map(term_to_str).collect();
+                        format!("call(target = {}, args = [{}])", get_str(*target), args_str.join(", "))
+                    } else { kind }
+                }
+                other => other.to_string(),
+            }
+        }
+        other => format!("{:?}", other),
+    }
+}
+
+pub fn ir_to_string(v: Value) -> Value {
+    Value::Str(intern_str(&term_to_str(&v)))
+}
+
 pub fn ir_term_kind(v: Value) -> Value {
     match v {
         Value::Ctor { tag, .. } => Value::Str(intern_str(&get_tag_name(tag))),
