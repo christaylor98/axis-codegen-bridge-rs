@@ -229,7 +229,7 @@ pub fn emit_rust_from_core(
         match lib_term {
             CoreTerm::Lam(param, body, _) => {
                 out.push_str(&format!(
-                    "#[allow(dead_code)]\nfn {}({}: Value) -> Value {{\n",
+                    "#[allow(dead_code, unused_variables)]\nfn {}({}: Value) -> Value {{\n",
                     safe_name,
                     sanitise(param)
                 ));

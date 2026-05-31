@@ -119,7 +119,6 @@ fn cmd_build(args: &[String]) {
                 eprintln!("error: library {} has empty entrypointName and no filename stem", lib_path);
                 std::process::exit(1);
             }
-            eprintln!("warning: library {} has empty entrypointName, using stem '{}'", lib_path, stem);
             stem
         };
         if !seen_fn_names.insert(fn_name.clone()) {
