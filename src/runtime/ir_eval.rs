@@ -90,6 +90,10 @@ fn dispatch_table() -> &'static HashMap<&'static str, PrimFn> {
         // Process
         m.insert("proc_args",       super::process::proc_args);
         m.insert("proc_exit",       super::process::proc_exit);
+        m.insert("argv",            super::process::argv);
+        m.insert("argv_int",        super::process::argv_int);
+        m.insert("argv_count",      super::process::argv_count);
+        m.insert("argv_or",         super::process::argv_or);
 
         m
     })
