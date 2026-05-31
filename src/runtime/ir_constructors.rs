@@ -547,6 +547,108 @@ pub fn ir_read_bundle(v: Value) -> Value {
     }
 }
 
+pub fn ir_build_program_from_spec(v: Value) -> Value {
+    let path = match v {
+        Value::Str(s) => get_str(s),
+        _ => panic!("ir_build_program_from_spec: expected Str path, got {:?}", v),
+    };
+
+    let content = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("ir_build_program_from_spec: cannot read '{}': {}", path, e));
+
+    let lines: Vec<&str> = content.lines()
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+
+    if lines.len() < 2 {
+        panic!("ir_build_program_from_spec: spec file too short ({} lines): {}", lines.len(), path);
+    }
+
+    let effect_str = lines[0].trim();
+    match effect_str {
+        "pure" | "reads" | "writes" | "full_io" => {}
+        _ => panic!("ir_build_program_from_spec: invalid effect_class {:?} in {}", effect_str, path),
+    }
+
+    let n: usize = lines[1].trim().parse()
+        .unwrap_or_else(|_| panic!("ir_build_program_from_spec: invalid N {:?} in {}", lines[1].trim(), path));
+    if n < 1 || n > 8 {
+        panic!("ir_build_program_from_spec: N={} out of range (must be 1-8) in {}", n, path);
+    }
+
+    let expected = 2 + n * 7 + 6;
+    if lines.len() != expected {
+        panic!("ir_build_program_from_spec: line count mismatch in {}: expected {}, got {}", path, expected, lines.len());
+    }
+
+    let parse_arg = |typ: &str, val: &str| -> Value {
+        let typ_int: i64 = typ.trim().parse()
+            .unwrap_or_else(|_| panic!("ir_build_program_from_spec: invalid arg_type {:?}", typ));
+        match typ_int {
+            0 => make_ctor("Var", vec![Value::Str(intern_str(val.trim()))]),
+            1 => {
+                let lit_n: i64 = val.trim().parse()
+                    .unwrap_or_else(|_| panic!("ir_build_program_from_spec: invalid int literal {:?}", val));
+                make_ctor("IntLit", vec![Value::Int(lit_n)])
+            }
+            _ => panic!("ir_build_program_from_spec: invalid arg_type {}", typ_int),
+        }
+    };
+
+    // Build step call terms and collect (binding_name, call_term)
+    let mut steps: Vec<(String, Value)> = Vec::with_capacity(n);
+    for k in 0..n {
+        let base = 2 + k * 7;
+        let binding_name = lines[base].trim().to_string();
+        let fn_name      = lines[base + 1].trim();
+        let nargs: i64   = lines[base + 2].trim().parse()
+            .unwrap_or_else(|_| panic!("ir_build_program_from_spec: invalid nargs at step {}", k));
+        if nargs != 1 && nargs != 2 {
+            panic!("ir_build_program_from_spec: nargs={} invalid at step {} (must be 1 or 2)", nargs, k);
+        }
+        let a1 = parse_arg(lines[base + 3], lines[base + 4]);
+        let mut args = vec![a1];
+        if nargs == 2 {
+            args.push(parse_arg(lines[base + 5], lines[base + 6]));
+        }
+        let call = make_ctor("Call", vec![
+            Value::Str(intern_str(fn_name)),
+            Value::List(args),
+        ]);
+        steps.push((binding_name, call));
+    }
+
+    // Build final call term
+    let fb = 2 + n * 7;
+    let final_fn     = lines[fb].trim();
+    let final_nargs: i64 = lines[fb + 1].trim().parse()
+        .unwrap_or_else(|_| panic!("ir_build_program_from_spec: invalid final nargs in {}", path));
+    if final_nargs != 1 && final_nargs != 2 {
+        panic!("ir_build_program_from_spec: final nargs={} invalid (must be 1 or 2) in {}", final_nargs, path);
+    }
+    let fa1 = parse_arg(lines[fb + 2], lines[fb + 3]);
+    let mut final_args = vec![fa1];
+    if final_nargs == 2 {
+        final_args.push(parse_arg(lines[fb + 4], lines[fb + 5]));
+    }
+    let final_call = make_ctor("Call", vec![
+        Value::Str(intern_str(final_fn)),
+        Value::List(final_args),
+    ]);
+
+    // Wrap steps in nested Let nodes, innermost first
+    let mut term = final_call;
+    for (binding_name, call) in steps.into_iter().rev() {
+        term = make_ctor("Let", vec![
+            Value::Str(intern_str(&binding_name)),
+            call,
+            term,
+        ]);
+    }
+
+    Value::Tuple(vec![term, Value::Str(intern_str(effect_str))])
+}
+
 // ── Internal conversions ─────────────────────────────────────────────────────
 
 fn value_to_core_term(v: &Value) -> Result<CoreTerm, String> {
