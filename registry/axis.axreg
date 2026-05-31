@@ -372,6 +372,11 @@ fn ir_to_string
   deterministic true
   profile pure
 end
+fn ir_to_h1_string
+  arity 1
+  deterministic true
+  profile pure
+end
 fn ir_subst
   arity 1
   deterministic true

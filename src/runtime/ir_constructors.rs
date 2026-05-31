@@ -161,6 +161,104 @@ pub fn ir_term_kind(v: Value) -> Value {
     }
 }
 
+// ── H1 resurfacing ───────────────────────────────────────────────────────────
+
+// Flatten a Let chain into `let x = val;\n...rest` — the H1 block body form.
+fn h1_block_body(v: &Value, depth: usize) -> String {
+    let ind = "  ".repeat(depth);
+    if let Value::Ctor { tag, fields } = v {
+        if get_tag_name(*tag) == "Let" {
+            if let [Value::Str(name_h), val, body] = fields.as_slice() {
+                let name = get_str(*name_h);
+                let val_str = h1_expr(val, depth);
+                let rest = h1_block_body(body, depth);
+                return format!("let {} = {};\n{}{}", name, val_str, ind, rest);
+            }
+        }
+    }
+    h1_expr(v, depth)
+}
+
+fn h1_app_collect<'a>(v: &'a Value) -> (Vec<&'a Value>, &'a Value) {
+    if let Value::Ctor { tag, fields } = v {
+        if get_tag_name(*tag) == "App" {
+            if let [func, arg] = fields.as_slice() {
+                let (mut args, base) = h1_app_collect(func);
+                args.push(arg);
+                return (args, base);
+            }
+        }
+    }
+    (vec![], v)
+}
+
+fn h1_app(v: &Value, depth: usize) -> String {
+    let (args, base) = h1_app_collect(v);
+    let func_str = if let Value::Ctor { tag, fields } = base {
+        if get_tag_name(*tag) == "Var" {
+            if let [Value::Str(s)] = fields.as_slice() { get_str(*s) }
+            else { h1_expr(base, depth) }
+        } else {
+            format!("({})", h1_expr(base, depth))
+        }
+    } else {
+        h1_expr(base, depth)
+    };
+    let args_strs: Vec<String> = args.iter().map(|a| h1_expr(a, depth)).collect();
+    format!("{}({})", func_str, args_strs.join(", "))
+}
+
+fn h1_expr(v: &Value, depth: usize) -> String {
+    let ind = "  ".repeat(depth);
+    let ind1 = "  ".repeat(depth + 1);
+    if let Value::Ctor { tag, fields } = v {
+        let kind = get_tag_name(*tag);
+        match kind.as_str() {
+            "IntLit" => {
+                if let [Value::Int(n)] = fields.as_slice() { return format!("{}", n); }
+            }
+            "BoolLit" => {
+                if let [Value::Bool(b)] = fields.as_slice() { return format!("{}", b); }
+            }
+            "UnitLit" => return "()".to_string(),
+            "Var" => {
+                if let [Value::Str(s)] = fields.as_slice() { return get_str(*s); }
+            }
+            "Lam" => {
+                if let [Value::Str(param), body] = fields.as_slice() {
+                    return format!("fn({}) {{\n{}{}\n{}}}",
+                        get_str(*param), ind1, h1_block_body(body, depth + 1), ind);
+                }
+            }
+            "Let" => {
+                // Let used as expression — wrap in a block
+                return format!("{{\n{}{}\n{}}}", ind1, h1_block_body(v, depth + 1), ind);
+            }
+            "If" => {
+                if let [cond, then, els] = fields.as_slice() {
+                    return format!("if {} {{\n{}{}\n{}}} else {{\n{}{}\n{}}}",
+                        h1_expr(cond, depth),
+                        ind1, h1_block_body(then, depth + 1), ind,
+                        ind1, h1_block_body(els, depth + 1), ind);
+                }
+            }
+            "App" => return h1_app(v, depth),
+            "Call" => {
+                if let [Value::Str(target), Value::List(args)] = fields.as_slice() {
+                    let args_strs: Vec<String> = args.iter().map(|a| h1_expr(a, depth)).collect();
+                    return format!("{}({})", get_str(*target), args_strs.join(", "));
+                }
+            }
+            other => return other.to_string(),
+        }
+    }
+    format!("{:?}", v)
+}
+
+pub fn ir_to_h1_string(v: Value) -> Value {
+    Value::Str(intern_str(&h1_block_body(&v, 0)))
+}
+
 // ── Substitution and renaming ────────────────────────────────────────────────
 
 pub(crate) fn subst_value(name: &str, replacement: &Value, term: Value) -> Value {
