@@ -7,6 +7,7 @@ use super::{CoreTerm, Provenance, EffectClass};
 
 pub struct CoreProgram {
     pub root_term: CoreTerm,
+    pub entrypoint_name: String,
     pub entrypoint_id: usize,
     pub provenance: Provenance,
     pub effect_class: EffectClass,
@@ -63,12 +64,17 @@ fn load_from_reader<R: std::io::Read>(r: &mut R) -> Result<CoreProgram, String> 
         other => return Err(format!("unsupported Core IR version: {}", other)),
     };
 
+    let entrypoint_name = bundle.get_entrypoint_name()
+        .map_err(|e| format!("get_entrypoint_name failed: {}", e))?
+        .to_str()
+        .map_err(|e| format!("entrypoint_name utf8: {}", e))?
+        .to_string();
     let entrypoint_id = bundle.get_entrypoint_id() as usize;
     let term_reader   = bundle.get_core_term()
         .map_err(|e| format!("get_core_term failed: {}", e))?;
 
     let root_term = deserialise(term_reader)?;
-    Ok(CoreProgram { root_term, entrypoint_id, provenance, effect_class, idempotent })
+    Ok(CoreProgram { root_term, entrypoint_name, entrypoint_id, provenance, effect_class, idempotent })
 }
 
 // ── Iterative deserialiser ───────────────────────────────────────────────────

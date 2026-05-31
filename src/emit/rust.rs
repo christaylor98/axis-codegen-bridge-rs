@@ -5,7 +5,7 @@
 /// all foreign functions are implemented in the bridge library.
 
 use crate::core_ir::CoreTerm;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Canonical symbol → Rust path in axis_codegen_bridge.
 fn symbol_map() -> HashMap<&'static str, &'static str> {
@@ -46,6 +46,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("str_trim",        "axis_codegen_bridge::runtime::str_ops::str_trim");
     m.insert("str_contains",    "axis_codegen_bridge::runtime::str_ops::str_contains");
     m.insert("str_index_of",    "axis_codegen_bridge::runtime::str_ops::str_index_of");
+    m.insert("str_eq",          "axis_codegen_bridge::runtime::str_ops::str_eq");
 
     // List
     m.insert("list_nil",     "axis_codegen_bridge::runtime::list::list_nil");
@@ -59,6 +60,9 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("list_head",      "axis_codegen_bridge::runtime::list::list_head");
     m.insert("list_tail",      "axis_codegen_bridge::runtime::list::list_tail");
     m.insert("list_is_empty",  "axis_codegen_bridge::runtime::list::list_is_empty");
+    m.insert("list_of_1",      "axis_codegen_bridge::runtime::list::list_of_1");
+    m.insert("list_of_2",      "axis_codegen_bridge::runtime::list::list_of_2");
+    m.insert("list_of_3",      "axis_codegen_bridge::runtime::list::list_of_3");
 
     // Tuple / constructor
     m.insert("tuple_field", "axis_codegen_bridge::runtime::tuple::tuple_field");
@@ -85,8 +89,12 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("debug_trace", "axis_codegen_bridge::runtime::io::debug_trace");
 
     // Process
-    m.insert("proc_args", "axis_codegen_bridge::runtime::process::proc_args");
-    m.insert("proc_exit", "axis_codegen_bridge::runtime::process::proc_exit");
+    m.insert("proc_args",   "axis_codegen_bridge::runtime::process::proc_args");
+    m.insert("proc_exit",   "axis_codegen_bridge::runtime::process::proc_exit");
+    m.insert("argv",        "axis_codegen_bridge::runtime::process::argv");
+    m.insert("argv_int",    "axis_codegen_bridge::runtime::process::argv_int");
+    m.insert("argv_count",  "axis_codegen_bridge::runtime::process::argv_count");
+    m.insert("argv_or",     "axis_codegen_bridge::runtime::process::argv_or");
 
     // Transitions (one per catalog entry; stubs matching src/*.ai2 lam bodies)
     m.insert("introduce_let_binding",       "axis_codegen_bridge::runtime::transitions::introduce_let_binding");
@@ -131,6 +139,31 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m
 }
 
+/// Collect all CCall target names from a term (recursive).
+fn collect_ccall_targets(term: &CoreTerm, out: &mut Vec<String>) {
+    match term {
+        CoreTerm::Call(target, args, _) => {
+            out.push(target.clone());
+            for a in args { collect_ccall_targets(a, out); }
+        }
+        CoreTerm::Let(_, val, body, _) => {
+            collect_ccall_targets(val, out);
+            collect_ccall_targets(body, out);
+        }
+        CoreTerm::Lam(_, body, _) => collect_ccall_targets(body, out),
+        CoreTerm::App(f, a, _) => {
+            collect_ccall_targets(f, out);
+            collect_ccall_targets(a, out);
+        }
+        CoreTerm::If(cond, then, els, _) => {
+            collect_ccall_targets(cond, out);
+            collect_ccall_targets(then, out);
+            collect_ccall_targets(els, out);
+        }
+        _ => {}
+    }
+}
+
 /// Collect all arguments from a nested App chain (uncurrying).
 /// App(App(f, a), b) → (f, [a, b])
 fn collect_app_args<'a>(term: &'a CoreTerm) -> (&'a CoreTerm, Vec<&'a CoreTerm>) {
@@ -144,12 +177,72 @@ fn collect_app_args<'a>(term: &'a CoreTerm) -> (&'a CoreTerm, Vec<&'a CoreTerm>)
     (current, args)
 }
 
-pub fn emit_rust_from_core(root: &CoreTerm, _source_path: &str, _entrypoint: &str) -> String {
+/// Emit Rust source from a Core IR term plus optional library bundles.
+///
+/// Each entry in `libs` is `(fn_name, root_term)` — the entrypoint name and
+/// root term of a library bundle. Library functions are emitted as top-level
+/// Rust functions before `fn main`.
+///
+/// CCall targets are validated against: the bridge symbol map, library
+/// function names, and `registry_names`. An unresolved target is an error.
+pub fn emit_rust_from_core(
+    root: &CoreTerm,
+    _source_path: &str,
+    _entrypoint: &str,
+    libs: &[(String, CoreTerm)],
+    registry_names: &HashSet<String>,
+) -> Result<String, String> {
     let sym = symbol_map();
-    let mut out = String::new();
 
+    // Build the complete set of known CCall targets.
+    let lib_fn_names: HashSet<&str> = libs.iter().map(|(n, _)| n.as_str()).collect();
+    let known: HashSet<&str> = sym.keys().copied()
+        .chain(lib_fn_names.iter().copied())
+        .chain(registry_names.iter().map(|s| s.as_str()))
+        .collect();
+
+    // Validate all CCall targets in main and all libs.
+    let mut targets: Vec<String> = Vec::new();
+    collect_ccall_targets(root, &mut targets);
+    for (_, lib_term) in libs {
+        collect_ccall_targets(lib_term, &mut targets);
+    }
+    for target in &targets {
+        if !known.contains(target.as_str()) {
+            return Err(format!(
+                "unresolved: {} not found in libs, bridge, or registry",
+                target
+            ));
+        }
+    }
+
+    let mut out = String::new();
     out.push_str("extern crate axis_codegen_bridge;\n");
     out.push_str("use axis_codegen_bridge::runtime::value::{Value, init_runtime};\n\n");
+
+    // Emit library functions before main.
+    for (fn_name, lib_term) in libs {
+        let safe_name = sanitise(fn_name);
+        match lib_term {
+            CoreTerm::Lam(param, body, _) => {
+                out.push_str(&format!(
+                    "#[allow(dead_code)]\nfn {}({}: Value) -> Value {{\n",
+                    safe_name,
+                    sanitise(param)
+                ));
+                out.push_str("    ");
+                emit_term(body, &sym, &mut out, 1);
+                out.push_str("\n}\n\n");
+            }
+            _ => {
+                out.push_str(&format!("#[allow(dead_code)]\nfn {}(_: Value) -> Value {{\n", safe_name));
+                out.push_str("    ");
+                emit_term(lib_term, &sym, &mut out, 1);
+                out.push_str("\n}\n\n");
+            }
+        }
+    }
+
     out.push_str("fn main() {\n");
     out.push_str("    init_runtime();\n");
     // Top-level Lam: emit as a closure but don't try to Display it — closures
@@ -168,7 +261,7 @@ pub fn emit_rust_from_core(root: &CoreTerm, _source_path: &str, _entrypoint: &st
     }
     out.push_str("}\n");
 
-    out
+    Ok(out)
 }
 
 fn emit_term(term: &CoreTerm, sym: &HashMap<&str, &str>, out: &mut String, depth: usize) {

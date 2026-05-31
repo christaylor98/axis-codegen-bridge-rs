@@ -5,7 +5,7 @@ use axis_codegen_bridge::runtime::ir_constructors::{
     ir_term_kind, ir_write_bundle, ir_read_bundle,
     ir_subst, ir_rename, ir_free_vars,
 };
-use axis_codegen_bridge::runtime::{arith, str_ops, list, option, bool_ops};
+use axis_codegen_bridge::runtime::{arith, str_ops, list, option, bool_ops, process};
 use axis_codegen_bridge::core_ir::{CoreTerm, Provenance, EffectClass, create_core_bundle, load_core_bundle_from_bytes};
 use axis_codegen_bridge::executor::{execute_core_program, FunctionProvider, Value as ExecValue, RuntimeError};
 use std::rc::Rc;
@@ -18,6 +18,7 @@ fn setup() { init_runtime(); }
 fn make_program(root: CoreTerm) -> CoreProgram {
     CoreProgram {
         root_term: root,
+        entrypoint_name: String::new(),
         entrypoint_id: 0,
         provenance: Provenance::Mechanical,
         effect_class: EffectClass::Pure,
@@ -900,4 +901,90 @@ fn test_ir_eval_recursive_map_double() {
 
     let result = ir_eval(Value::Tuple(vec![term, bindings]));
     assert_eq!(result, Value::List(vec![Value::Int(2), Value::Int(4), Value::Int(6)]));
+}
+
+// ── argv helpers ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_argv_count_matches_env() {
+    setup();
+    // args() includes the binary name at index 0; argv_count excludes it.
+    let expected = std::env::args().count().saturating_sub(1) as i64;
+    assert_eq!(process::argv_count(Value::Unit), Value::Int(expected));
+}
+
+#[test]
+fn test_argv_or_in_range() {
+    setup();
+    // If there is at least one user arg, argv_or(0, "default") returns that arg.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if !args.is_empty() {
+        let expected_h = intern_str(&args[0]);
+        let default_h  = intern_str("default");
+        let result = process::argv_or(Value::Tuple(vec![Value::Int(0), Value::Str(default_h)]));
+        assert_eq!(result, Value::Str(expected_h));
+    }
+}
+
+#[test]
+fn test_argv_or_out_of_range() {
+    setup();
+    let default_h = intern_str("fallback");
+    // Index 9999 is certainly out of range.
+    let result = process::argv_or(Value::Tuple(vec![Value::Int(9999), Value::Str(default_h)]));
+    assert_eq!(result, Value::Str(default_h));
+}
+
+// ── list_of_* helpers ────────────────────────────────────────────────────────
+
+#[test]
+fn test_list_of_1() {
+    let r = list::list_of_1(Value::Int(42));
+    assert_eq!(r, Value::List(vec![Value::Int(42)]));
+}
+
+#[test]
+fn test_list_of_2() {
+    let r = list::list_of_2(Value::Tuple(vec![Value::Int(1), Value::Int(2)]));
+    assert_eq!(r, Value::List(vec![Value::Int(1), Value::Int(2)]));
+}
+
+#[test]
+fn test_list_of_3() {
+    let r = list::list_of_3(Value::Tuple(vec![Value::Int(1), Value::Int(2), Value::Int(3)]));
+    assert_eq!(r, Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)]));
+}
+
+// ── str_eq helper ────────────────────────────────────────────────────────────
+
+#[test]
+fn test_str_eq_same() {
+    setup();
+    let ha = intern_str("hello");
+    let hb = intern_str("hello");
+    assert_eq!(str_ops::str_eq(Value::Tuple(vec![Value::Str(ha), Value::Str(hb)])), Value::Bool(true));
+}
+
+#[test]
+fn test_str_eq_different() {
+    setup();
+    let ha = intern_str("hello");
+    let hb = intern_str("world");
+    assert_eq!(str_ops::str_eq(Value::Tuple(vec![Value::Str(ha), Value::Str(hb)])), Value::Bool(false));
+}
+
+#[test]
+fn test_str_eq_empty_strings() {
+    setup();
+    let ha = intern_str("");
+    let hb = intern_str("");
+    assert_eq!(str_ops::str_eq(Value::Tuple(vec![Value::Str(ha), Value::Str(hb)])), Value::Bool(true));
+}
+
+#[test]
+fn test_str_eq_empty_vs_nonempty() {
+    setup();
+    let ha = intern_str("");
+    let hb = intern_str("x");
+    assert_eq!(str_ops::str_eq(Value::Tuple(vec![Value::Str(ha), Value::Str(hb)])), Value::Bool(false));
 }
