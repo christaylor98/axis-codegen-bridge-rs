@@ -164,3 +164,14 @@ pub fn str_index_of(args: Value) -> Value {
         _ => panic!("str_index_of: expected Tuple(Str, Str)"),
     }
 }
+
+/// chr: takes Int (Unicode code point), returns single-char Str.
+pub fn chr(v: Value) -> Value {
+    match v {
+        Value::Int(n) => {
+            let c = char::from_u32(n as u32).unwrap_or('\0');
+            Value::Str(intern_str(&c.to_string()))
+        }
+        _ => panic!("chr: expected Int, got {:?}", v),
+    }
+}

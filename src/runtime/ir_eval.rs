@@ -52,6 +52,7 @@ fn dispatch_table() -> &'static HashMap<&'static str, PrimFn> {
         m.insert("str_trim",        super::str_ops::str_trim);
         m.insert("str_contains",    super::str_ops::str_contains);
         m.insert("str_index_of",    super::str_ops::str_index_of);
+        m.insert("chr",             super::str_ops::chr);
 
         // List
         m.insert("list_nil",        super::list::list_nil);

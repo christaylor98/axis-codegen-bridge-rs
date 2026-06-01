@@ -47,6 +47,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("str_contains",    "axis_codegen_bridge::runtime::str_ops::str_contains");
     m.insert("str_index_of",    "axis_codegen_bridge::runtime::str_ops::str_index_of");
     m.insert("str_eq",          "axis_codegen_bridge::runtime::str_ops::str_eq");
+    m.insert("chr",             "axis_codegen_bridge::runtime::str_ops::chr");
 
     // List
     m.insert("list_nil",     "axis_codegen_bridge::runtime::list::list_nil");
@@ -127,6 +128,18 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("ir_build_program_from_spec", "axis_codegen_bridge::runtime::ir_constructors::ir_build_program_from_spec");
     m.insert("ir_eval",          "axis_codegen_bridge::runtime::ir_eval::ir_eval");
     m.insert("ir_apply",         "axis_codegen_bridge::runtime::ir_eval::ir_apply");
+
+    // IR Accessors
+    m.insert("ir_get_kind",     "axis_codegen_bridge::runtime::ir_accessors::ir_get_kind");
+    m.insert("ir_get_name",     "axis_codegen_bridge::runtime::ir_accessors::ir_get_name");
+    m.insert("ir_get_int_val",  "axis_codegen_bridge::runtime::ir_accessors::ir_get_int_val");
+    m.insert("ir_get_fn",       "axis_codegen_bridge::runtime::ir_accessors::ir_get_fn");
+    m.insert("ir_get_arg",      "axis_codegen_bridge::runtime::ir_accessors::ir_get_arg");
+    m.insert("ir_get_body",     "axis_codegen_bridge::runtime::ir_accessors::ir_get_body");
+    m.insert("ir_get_value",    "axis_codegen_bridge::runtime::ir_accessors::ir_get_value");
+    m.insert("ir_get_cond",     "axis_codegen_bridge::runtime::ir_accessors::ir_get_cond");
+    m.insert("ir_get_then",     "axis_codegen_bridge::runtime::ir_accessors::ir_get_then");
+    m.insert("ir_get_else",     "axis_codegen_bridge::runtime::ir_accessors::ir_get_else");
 
     // Registry
     m.insert("registry_has_entry",    "axis_codegen_bridge::runtime::registry::registry_has_entry");
