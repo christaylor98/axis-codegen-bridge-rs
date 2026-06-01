@@ -119,7 +119,9 @@ fn cmd_build(args: &[String]) {
             Ok(p)  => p,
             Err(e) => { eprintln!("error: failed to load --lib {}: {}", lib_path, e); std::process::exit(1); }
         };
-        let fn_name = if !prog.entrypoint_name.is_empty() {
+        // Use entrypointName if set and meaningful; 'bundle' is a compiler
+        // placeholder that means "no real name" — fall back to the file stem.
+        let fn_name = if !prog.entrypoint_name.is_empty() && prog.entrypoint_name != "bundle" {
             prog.entrypoint_name.clone()
         } else {
             let stem = std::path::Path::new(lib_path)
