@@ -579,3 +579,15 @@ fn verify_foreign_reference
   deterministic true
   profile pure
 end
+
+fn ir_make_term_from_type_and_str
+  arity 1
+  deterministic true
+  profile pure
+end
+
+fn ir_build_arg_list
+  arity 1
+  deterministic true
+  profile pure
+end
