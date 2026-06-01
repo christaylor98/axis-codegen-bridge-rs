@@ -368,30 +368,29 @@ pub fn sanitise(name: &str) -> String {
     }
 }
 
-/// Emit Rust source in lib mode: a `#[no_mangle] pub extern "C"` function instead of `fn main`.
+/// Emit Rust source in lib mode: one `#[no_mangle] pub extern "C"` function per export.
 ///
-/// Produces a static-library-compatible source file. The entrypoint is named `fn_name`.
-/// If `root` is a `Lam`, its parameter is bound to the `args` argument; otherwise `args`
-/// is ignored and root is evaluated unconditionally.
+/// Each entry in `exports` is `(fn_name, root_term)`. All are compiled into the same
+/// static library source. Library helper functions (from `libs`) are emitted first as
+/// internal (non-exported) Rust fns.
 pub fn emit_rust_lib_from_core(
-    root: &CoreTerm,
-    fn_name: &str,
+    exports: &[(String, CoreTerm)],
     libs: &[(String, CoreTerm)],
     registry_names: &HashSet<String>,
 ) -> Result<String, String> {
     let sym = symbol_map();
 
     let lib_fn_names: HashSet<&str> = libs.iter().map(|(n, _)| n.as_str()).collect();
+    let export_fn_names: HashSet<&str> = exports.iter().map(|(n, _)| n.as_str()).collect();
     let known: HashSet<&str> = sym.keys().copied()
         .chain(lib_fn_names.iter().copied())
+        .chain(export_fn_names.iter().copied())
         .chain(registry_names.iter().map(|s| s.as_str()))
         .collect();
 
     let mut targets: Vec<String> = Vec::new();
-    collect_ccall_targets(root, &mut targets);
-    for (_, lib_term) in libs {
-        collect_ccall_targets(lib_term, &mut targets);
-    }
+    for (_, term) in exports { collect_ccall_targets(term, &mut targets); }
+    for (_, lib_term) in libs  { collect_ccall_targets(lib_term, &mut targets); }
     for target in &targets {
         if !known.contains(target.as_str()) {
             return Err(format!(
@@ -426,25 +425,27 @@ pub fn emit_rust_lib_from_core(
         }
     }
 
-    let safe_fn = sanitise(fn_name);
-    out.push_str("#[allow(improper_ctypes_definitions)]\n");
-    out.push_str("#[no_mangle]\n");
-    out.push_str(&format!("pub extern \"C\" fn {}(args: Value) -> Value {{\n", safe_fn));
-    out.push_str("    init_runtime();\n");
-    match root {
-        CoreTerm::Lam(param, body, _) => {
-            let safe_param = sanitise(param);
-            out.push_str(&format!("    #[allow(unused_variables)] let {} = args;\n    ", safe_param));
-            emit_term(body, &sym, &mut out, 1);
-            out.push('\n');
+    for (fn_name, root) in exports {
+        let safe_fn = sanitise(fn_name);
+        out.push_str("#[allow(improper_ctypes_definitions)]\n");
+        out.push_str("#[no_mangle]\n");
+        out.push_str(&format!("pub extern \"C\" fn {}(args: Value) -> Value {{\n", safe_fn));
+        out.push_str("    init_runtime();\n");
+        match root {
+            CoreTerm::Lam(param, body, _) => {
+                let safe_param = sanitise(param);
+                out.push_str(&format!("    #[allow(unused_variables)] let {} = args;\n    ", safe_param));
+                emit_term(body, &sym, &mut out, 1);
+                out.push('\n');
+            }
+            _ => {
+                out.push_str("    let _args = args;\n    ");
+                emit_term(root, &sym, &mut out, 1);
+                out.push('\n');
+            }
         }
-        _ => {
-            out.push_str("    let _args = args;\n    ");
-            emit_term(root, &sym, &mut out, 1);
-            out.push('\n');
-        }
+        out.push_str("}\n\n");
     }
-    out.push_str("}\n");
 
     Ok(out)
 }

@@ -20,6 +20,12 @@ enum EffectClass {
   fullIo        @3;
 }
 
+struct Export {
+  name      @0 :Text;
+  term      @1 :CoreTerm;
+  effectSig @2 :Text;   # pure | reads | writes | full_io
+}
+
 struct CoreBundle {
   version        @0 :Text;
   coreTerm       @1 :CoreTerm;
@@ -29,6 +35,8 @@ struct CoreBundle {
   provenance     @5 :Provenance;
   effectClass    @6 :EffectClass;
   idempotent     @7 :Bool;
+  # Multi-export: if non-empty, authoritative; fallback to entrypointName+coreTerm if empty.
+  exports        @8 :List(Export);
 }
 
 struct CoreTerm {

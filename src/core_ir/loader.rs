@@ -12,6 +12,7 @@ pub struct CoreProgram {
     pub provenance: Provenance,
     pub effect_class: EffectClass,
     pub idempotent: bool,
+    pub exports: Vec<(String, CoreTerm)>,
 }
 
 pub fn load_core_bundle(path: &str) -> Result<CoreProgram, String> {
@@ -74,7 +75,27 @@ fn load_from_reader<R: std::io::Read>(r: &mut R) -> Result<CoreProgram, String> 
         .map_err(|e| format!("get_core_term failed: {}", e))?;
 
     let root_term = deserialise(term_reader)?;
-    Ok(CoreProgram { root_term, entrypoint_name, entrypoint_id, provenance, effect_class, idempotent })
+
+    // Read exports (field @8); backward-compat: synthesise from entrypointName+coreTerm if empty.
+    let mut exports: Vec<(String, CoreTerm)> = Vec::new();
+    if let Ok(raw) = bundle.get_exports() {
+        for i in 0..raw.len() {
+            let exp = raw.get(i);
+            if let (Ok(name_r), Ok(term_r)) = (exp.get_name(), exp.get_term()) {
+                let name = name_r.to_str().unwrap_or("").to_string();
+                if !name.is_empty() {
+                    if let Ok(t) = deserialise(term_r) {
+                        exports.push((name, t));
+                    }
+                }
+            }
+        }
+    }
+    if exports.is_empty() && !entrypoint_name.is_empty() {
+        exports.push((entrypoint_name.clone(), root_term.clone()));
+    }
+
+    Ok(CoreProgram { root_term, entrypoint_name, entrypoint_id, provenance, effect_class, idempotent, exports })
 }
 
 // ── Iterative deserialiser ───────────────────────────────────────────────────

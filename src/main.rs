@@ -3,10 +3,6 @@ use std::time::Instant;
 use axis_codegen_bridge::core_ir;
 use axis_codegen_bridge::emit::rust::{emit_rust_lib_from_core, sanitise};
 
-mod axis_core_ir_0_3_capnp {
-    include!(concat!(env!("OUT_DIR"), "/core_ir_spec/axis_core_ir_0_3_capnp.rs"));
-}
-
 fn usage() -> ! {
     eprintln!("Usage:");
     eprintln!("  axis-codegen-bridge build <input.coreir> --out <path> [options]");
@@ -151,15 +147,20 @@ fn cmd_build(args: &[String]) {
         Err(e) => { eprintln!("error: failed to load {}: {}", input, e); std::process::exit(1); }
     };
 
-    // Entrypoint name: from bundle metadata, or stem of input filename.
-    let fn_name = if !program.entrypoint_name.is_empty() {
-        program.entrypoint_name.clone()
+    // Exports: use bundle's exports list if non-empty; otherwise single export from metadata.
+    let bundle_exports: Vec<(String, core_ir::CoreTerm)> = if !program.exports.is_empty() {
+        program.exports.clone()
     } else {
-        std::path::Path::new(input)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("main")
-            .to_string()
+        let fn_name = if !program.entrypoint_name.is_empty() {
+            program.entrypoint_name.clone()
+        } else {
+            std::path::Path::new(input)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("main")
+                .to_string()
+        };
+        vec![(fn_name, program.root_term.clone())]
     };
 
     let lib_path = compute_lib_path(&output);
@@ -170,7 +171,7 @@ fn cmd_build(args: &[String]) {
     }
 
     // Generate and compile the static library.
-    let rust_code = match emit_rust_lib_from_core(&program.root_term, &fn_name, &libs, &registry_names) {
+    let rust_code = match emit_rust_lib_from_core(&bundle_exports, &libs, &registry_names) {
         Ok(code) => code,
         Err(e)   => { eprintln!("error: {}", e); std::process::exit(1); }
     };
@@ -210,7 +211,13 @@ fn cmd_build(args: &[String]) {
     if !exe_flag { return; }
 
     // --exe: compile a thin shim binary that calls the entrypoint from the .a.
-    let safe_fn   = sanitise(&fn_name);
+    // Choose: prefer an export named "main", else use the first export.
+    let exe_fn_name = bundle_exports.iter()
+        .find(|(n, _)| n == "main")
+        .or_else(|| bundle_exports.first())
+        .map(|(n, _)| n.clone())
+        .unwrap_or_else(|| "main".to_string());
+    let safe_fn   = sanitise(&exe_fn_name);
     let shim_code = format!(
         "extern crate axis_codegen_bridge;\n\
          use axis_codegen_bridge::runtime::value::{{Value, init_runtime, intern_str}};\n\n\

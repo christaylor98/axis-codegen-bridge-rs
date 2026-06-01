@@ -1,4 +1,4 @@
-use crate::core_ir::{CoreTerm, Provenance, EffectClass, write_core_bundle_to_file, load_core_bundle};
+use crate::core_ir::{CoreTerm, Provenance, EffectClass, write_core_bundle_to_file, write_core_bundle_multi_to_file, load_core_bundle};
 use crate::runtime::value::{Value, intern_str, intern_tag, get_str, get_tag_name};
 use std::rc::Rc;
 
@@ -499,8 +499,59 @@ pub fn ir_free_vars(v: Value) -> Value {
     Value::List(result)
 }
 
+/// Write a Core IR bundle to a file.
+///
+/// Single-export form (backward compatible):
+///   Tuple([term, Str path, Str effectClass, Bool idempotent])
+///
+/// Multi-export form:
+///   Tuple([List(Tuple([Str name, term, Str effectSig])), Str path, Bool idempotent])
 pub fn ir_write_bundle(v: Value) -> Value {
     match v {
+        // Multi-export: Tuple([List(Tuple([name, term, effectSig])), path, idempotent])
+        Value::Tuple(ref fields) if fields.len() == 3 => {
+            let exports_val  = &fields[0];
+            let path_val     = &fields[1];
+            let idempotent_val = &fields[2];
+            let path = match path_val {
+                Value::Str(s) => get_str(*s),
+                _ => panic!("ir_write_bundle(multi): expected Str path, got {:?}", path_val),
+            };
+            let idempotent = match idempotent_val {
+                Value::Bool(b) => *b,
+                _ => panic!("ir_write_bundle(multi): expected Bool idempotent, got {:?}", idempotent_val),
+            };
+            let export_list = match exports_val {
+                Value::List(items) => items,
+                _ => panic!("ir_write_bundle(multi): expected List exports, got {:?}", exports_val),
+            };
+            let mut entries: Vec<(String, CoreTerm, String)> = Vec::new();
+            for item in export_list {
+                match item {
+                    Value::Tuple(parts) if parts.len() == 3 => {
+                        let name = match &parts[0] {
+                            Value::Str(s) => get_str(*s).to_string(),
+                            other => panic!("ir_write_bundle(multi): export name must be Str, got {:?}", other),
+                        };
+                        let term = value_to_core_term(&parts[1])
+                            .unwrap_or_else(|e| panic!("ir_write_bundle(multi): {}", e));
+                        let effect_sig = match &parts[2] {
+                            Value::Str(s) => get_str(*s).to_string(),
+                            other => panic!("ir_write_bundle(multi): effectSig must be Str, got {:?}", other),
+                        };
+                        entries.push((name, term, effect_sig));
+                    }
+                    other => panic!("ir_write_bundle(multi): each export must be Tuple([name,term,effectSig]), got {:?}", other),
+                }
+            }
+            let refs: Vec<(&str, &CoreTerm, &str)> = entries.iter()
+                .map(|(n, t, e)| (n.as_str(), t, e.as_str()))
+                .collect();
+            write_core_bundle_multi_to_file(&refs, Provenance::Mechanical, idempotent, &path)
+                .unwrap_or_else(|e| panic!("ir_write_bundle(multi) write failed: {}", e));
+            Value::Unit
+        }
+        // Single-export: Tuple([term, path, effectClass, idempotent])
         Value::Tuple(mut fields) if fields.len() == 4 => {
             let idempotent_val   = fields.pop().unwrap();
             let effect_class_val = fields.pop().unwrap();
@@ -531,7 +582,7 @@ pub fn ir_write_bundle(v: Value) -> Value {
                 .unwrap_or_else(|e| panic!("ir_write_bundle write failed: {}", e));
             Value::Unit
         }
-        _ => panic!("ir_write_bundle: expected Tuple([term, path, effectClass, idempotent]), got {:?}", v),
+        _ => panic!("ir_write_bundle: expected Tuple([term,path,effect,idem]) or Tuple([exports_list,path,idem]), got {:?}", v),
     }
 }
 

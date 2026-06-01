@@ -1,4 +1,4 @@
-use axis_codegen_bridge::core_ir::{CoreTerm, Provenance, EffectClass, create_core_bundle};
+use axis_codegen_bridge::core_ir::{CoreTerm, Provenance, EffectClass, create_core_bundle, create_core_bundle_multi};
 use std::process::Command;
 use std::rc::Rc;
 use tempfile::TempDir;
@@ -130,4 +130,98 @@ fn test_bundle_merges() {
     let nm_out = String::from_utf8_lossy(&nm.stdout);
     assert!(nm_out.contains("alpha_fn"), "alpha_fn missing from bundle:\n{}", nm_out);
     assert!(nm_out.contains("beta_fn"),  "beta_fn missing from bundle:\n{}", nm_out);
+}
+
+// ── multi-export tests ───────────────────────────────────────────────────────
+
+fn write_multi_fixture(dir: &TempDir, name: &str, exports: &[(&str, CoreTerm, &str)]) -> std::path::PathBuf {
+    let refs: Vec<(&str, &CoreTerm, &str)> = exports.iter().map(|(n, t, e)| (*n, t, *e)).collect();
+    let bytes = create_core_bundle_multi(&refs, Provenance::Mechanical, true);
+    let path = dir.path().join(name);
+    std::fs::write(&path, &bytes).unwrap();
+    path
+}
+
+// (d) multi-export bundle: both symbols appear in the .a
+#[test]
+fn test_multi_export_lib_both_symbols() {
+    let dir = TempDir::new().unwrap();
+
+    // 'add': \x -> int_add(x, x)   (simplified: just returns 42)
+    let add_term = CoreTerm::Lam("x".to_string(), Rc::new(CoreTerm::IntLit(42, None)), None);
+    // 'mul': \x -> 99
+    let mul_term = CoreTerm::Lam("x".to_string(), Rc::new(CoreTerm::IntLit(99, None)), None);
+
+    let fixture = write_multi_fixture(&dir, "multi.coreir", &[
+        ("add", add_term, "pure"),
+        ("mul", mul_term, "pure"),
+    ]);
+    let out = dir.path().join("multi");
+
+    let status = Command::new(bridge())
+        .args(["build", fixture.to_str().unwrap(), "--out", out.to_str().unwrap()])
+        .status()
+        .expect("failed to run bridge");
+
+    assert!(status.success(), "build failed");
+
+    let lib = dir.path().join("libmulti.a");
+    assert!(lib.exists(), "lib archive not produced at {:?}", lib);
+
+    let nm = Command::new("nm").arg(&lib).output().expect("nm failed");
+    let nm_out = String::from_utf8_lossy(&nm.stdout);
+    assert!(nm_out.contains("add"), "symbol 'add' not found in archive:\n{}", nm_out);
+    assert!(nm_out.contains("mul"), "symbol 'mul' not found in archive:\n{}", nm_out);
+}
+
+// (e) multi-export with --exe calls the first export
+#[test]
+fn test_multi_export_exe_calls_first() {
+    let dir = TempDir::new().unwrap();
+
+    // 'add' is first — should be the --exe entrypoint; returns 55
+    let add_term = CoreTerm::Lam("args".to_string(), Rc::new(CoreTerm::IntLit(55, None)), None);
+    let mul_term = CoreTerm::Lam("args".to_string(), Rc::new(CoreTerm::IntLit(77, None)), None);
+
+    let fixture = write_multi_fixture(&dir, "multi_exe.coreir", &[
+        ("add", add_term, "pure"),
+        ("mul", mul_term, "pure"),
+    ]);
+    let out = dir.path().join("multi_exe");
+
+    let status = Command::new(bridge())
+        .args(["build", fixture.to_str().unwrap(), "--out", out.to_str().unwrap(), "--exe"])
+        .status()
+        .expect("failed to run bridge");
+
+    assert!(status.success(), "build failed");
+    assert!(out.exists(), "binary not produced");
+
+    let run = Command::new(&out).output().expect("failed to run binary");
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(stdout.trim() == "55", "expected '55', got {:?}", stdout.trim());
+}
+
+// (f) single-export bundle still works identically (backward compat)
+#[test]
+fn test_single_export_backward_compat() {
+    let dir = TempDir::new().unwrap();
+    let fixture = write_fixture(
+        &dir, "single.coreir",
+        CoreTerm::Lam("args".to_string(), Rc::new(CoreTerm::IntLit(13, None)), None),
+        "single_fn",
+    );
+    let out = dir.path().join("single");
+
+    let status = Command::new(bridge())
+        .args(["build", fixture.to_str().unwrap(), "--out", out.to_str().unwrap(), "--exe"])
+        .status()
+        .expect("failed to run bridge");
+
+    assert!(status.success(), "build failed");
+    assert!(out.exists(), "binary not produced");
+
+    let run = Command::new(&out).output().expect("failed to run binary");
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(stdout.trim() == "13", "expected '13', got {:?}", stdout.trim());
 }

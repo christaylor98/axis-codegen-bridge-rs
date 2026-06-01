@@ -23,6 +23,7 @@ fn make_program(root: CoreTerm) -> CoreProgram {
         provenance: Provenance::Mechanical,
         effect_class: EffectClass::Pure,
         idempotent: true,
+        exports: vec![],
     }
 }
 
