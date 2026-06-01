@@ -219,6 +219,8 @@ fn cmd_build(args: &[String]) {
        .arg("--crate-name=generated")
        .arg("--edition=2021")
        .arg("-o").arg(&lib_path)
+       .arg("-C").arg("embed-bitcode=no")
+       .arg("-C").arg("strip=debuginfo")
        .arg("--extern").arg(format!("axis_codegen_bridge={}/libaxis_codegen_bridge.rlib", exe_dir.display()))
        .arg("-L").arg(format!("dependency={}/deps", exe_dir.display()));
 
