@@ -219,6 +219,15 @@ pub fn emit_rust_from_core(
         }
     }
 
+    // lib_sym: maps lib function names → sanitised Rust identifiers for emit.
+    // Enables multi-arg uncurried calls to lib functions (tuple-packing).
+    let lib_sanitised: Vec<(String, String)> = libs.iter()
+        .map(|(n, _)| (n.clone(), sanitise(n)))
+        .collect();
+    let lib_sym: HashMap<&str, &str> = lib_sanitised.iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+
     let mut out = String::new();
     out.push_str("extern crate axis_codegen_bridge;\n");
     out.push_str("use axis_codegen_bridge::runtime::value::{Value, init_runtime};\n\n");
@@ -234,13 +243,13 @@ pub fn emit_rust_from_core(
                     sanitise(param)
                 ));
                 out.push_str("    ");
-                emit_term(body, &sym, &mut out, 1);
+                emit_term(body, &sym, &lib_sym, &mut out, 1);
                 out.push_str("\n}\n\n");
             }
             _ => {
                 out.push_str(&format!("#[allow(dead_code)]\nfn {}(_: Value) -> Value {{\n", safe_name));
                 out.push_str("    ");
-                emit_term(lib_term, &sym, &mut out, 1);
+                emit_term(lib_term, &sym, &lib_sym, &mut out, 1);
                 out.push_str("\n}\n\n");
             }
         }
@@ -253,12 +262,12 @@ pub fn emit_rust_from_core(
     // axis-rust-bridge convention that tests rely on.
     if matches!(root, CoreTerm::Lam(..)) {
         out.push_str("    let _closure = ");
-        emit_term(root, &sym, &mut out, 1);
+        emit_term(root, &sym, &lib_sym, &mut out, 1);
         out.push_str(";\n");
         out.push_str("    println!(\"<function>\");\n");
     } else {
         out.push_str("    let result = ");
-        emit_term(root, &sym, &mut out, 1);
+        emit_term(root, &sym, &lib_sym, &mut out, 1);
         out.push_str(";\n");
         out.push_str("    if !matches!(result, Value::Unit) { println!(\"{}\", result); }\n");
     }
@@ -267,7 +276,7 @@ pub fn emit_rust_from_core(
     Ok(out)
 }
 
-fn emit_term(term: &CoreTerm, sym: &HashMap<&str, &str>, out: &mut String, depth: usize) {
+fn emit_term(term: &CoreTerm, sym: &HashMap<&str, &str>, lib_sym: &HashMap<&str, &str>, out: &mut String, depth: usize) {
     let indent = "    ".repeat(depth);
     match term {
         CoreTerm::IntLit(n, _)  => out.push_str(&format!("Value::Int({})", n)),
@@ -277,15 +286,15 @@ fn emit_term(term: &CoreTerm, sym: &HashMap<&str, &str>, out: &mut String, depth
 
         CoreTerm::Let(name, val, body, _) => {
             out.push_str(&format!("{{\n{}    let {} = ", indent, sanitise(name)));
-            emit_term(val, sym, out, depth + 1);
+            emit_term(val, sym, lib_sym, out, depth + 1);
             out.push_str(&format!(";\n{}    ", indent));
-            emit_term(body, sym, out, depth + 1);
+            emit_term(body, sym, lib_sym, out, depth + 1);
             out.push_str(&format!("\n{}}}", indent));
         }
 
         CoreTerm::Lam(param, body, _) => {
             out.push_str(&format!("|{}: Value| {{ ", sanitise(param)));
-            emit_term(body, sym, out, depth);
+            emit_term(body, sym, lib_sym, out, depth);
             out.push_str(" }");
         }
 
@@ -293,24 +302,27 @@ fn emit_term(term: &CoreTerm, sym: &HashMap<&str, &str>, out: &mut String, depth
             // Uncurry nested App chains: App(App(f, a), b) → f(Tuple[a, b])
             // This is the UNARY INVARIANT: all known runtime functions take exactly
             // one Value argument; multi-arg calls are packed as Value::Tuple.
+            // Applies to both bridge primitives (sym) and lib functions (lib_sym).
             let (base, all_args) = collect_app_args(term);
             if let CoreTerm::Var(sym_name, _) = base {
-                if let Some(&path) = sym.get(sym_name.as_str()) {
+                let found_path = sym.get(sym_name.as_str()).copied()
+                    .or_else(|| lib_sym.get(sym_name.as_str()).copied());
+                if let Some(path) = found_path {
                     if all_args.len() > 1 {
                         // Multi-arg: pack into Tuple
                         out.push_str(path);
                         out.push_str("(Value::Tuple(vec![");
                         for (i, a) in all_args.iter().enumerate() {
                             if i > 0 { out.push_str(", "); }
-                            emit_term(a, sym, out, depth);
+                            emit_term(a, sym, lib_sym, out, depth);
                             if matches!(a, CoreTerm::Var(..)) { out.push_str(".clone()"); }
                         }
                         out.push_str("]))");
                     } else {
-                        // Single arg: call with full qualified path
+                        // Single arg: call with resolved path
                         out.push_str(path);
                         out.push('(');
-                        emit_term(all_args[0], sym, out, depth);
+                        emit_term(all_args[0], sym, lib_sym, out, depth);
                         if matches!(all_args[0], CoreTerm::Var(..)) { out.push_str(".clone()"); }
                         out.push(')');
                     }
@@ -320,37 +332,39 @@ fn emit_term(term: &CoreTerm, sym: &HashMap<&str, &str>, out: &mut String, depth
             // Fallback: curried emit for local closures and unknown bases
             if let CoreTerm::App(f, arg, _) = term {
                 out.push('(');
-                emit_term(f, sym, out, depth);
+                emit_term(f, sym, lib_sym, out, depth);
                 out.push_str(")(");
-                emit_term(arg, sym, out, depth);
+                emit_term(arg, sym, lib_sym, out, depth);
                 out.push(')');
             }
         }
 
         CoreTerm::If(cond, then, els, _) => {
             out.push_str("if axis_codegen_bridge::runtime::value::truthy(&(");
-            emit_term(cond, sym, out, depth);
+            emit_term(cond, sym, lib_sym, out, depth);
             out.push_str(")) {\n");
             out.push_str(&format!("{}    ", indent));
-            emit_term(then, sym, out, depth + 1);
+            emit_term(then, sym, lib_sym, out, depth + 1);
             out.push_str(&format!("\n{}}} else {{\n{}    ", indent, indent));
-            emit_term(els, sym, out, depth + 1);
+            emit_term(els, sym, lib_sym, out, depth + 1);
             out.push_str(&format!("\n{}}}", indent));
         }
 
         CoreTerm::Call(target, args, _) => {
-            let rust_fn = sym.get(target.as_str()).copied().unwrap_or(target.as_str());
+            let rust_fn = sym.get(target.as_str()).copied()
+                .or_else(|| lib_sym.get(target.as_str()).copied())
+                .unwrap_or(target.as_str());
             if args.is_empty() {
                 out.push_str(&format!("{}(Value::Unit)", rust_fn));
             } else if args.len() == 1 {
                 out.push_str(&format!("{}(", rust_fn));
-                emit_term(&args[0], sym, out, depth);
+                emit_term(&args[0], sym, lib_sym, out, depth);
                 out.push(')');
             } else {
                 out.push_str(&format!("{}(Value::Tuple(vec![", rust_fn));
                 for (i, a) in args.iter().enumerate() {
                     if i > 0 { out.push_str(", "); }
-                    emit_term(a, sym, out, depth);
+                    emit_term(a, sym, lib_sym, out, depth);
                 }
                 out.push_str("]))");
             }
@@ -400,6 +414,15 @@ pub fn emit_rust_lib_from_core(
         }
     }
 
+    // lib_sym: maps lib function names → sanitised Rust identifiers for emit.
+    // Enables multi-arg uncurried calls to lib functions (tuple-packing).
+    let lib_sanitised: Vec<(String, String)> = libs.iter()
+        .map(|(n, _)| (n.clone(), sanitise(n)))
+        .collect();
+    let lib_sym: HashMap<&str, &str> = lib_sanitised.iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+
     let mut out = String::new();
     out.push_str("extern crate axis_codegen_bridge;\n");
     out.push_str("use axis_codegen_bridge::runtime::value::{Value, init_runtime};\n\n");
@@ -413,13 +436,13 @@ pub fn emit_rust_lib_from_core(
                     safe_name, sanitise(param)
                 ));
                 out.push_str("    ");
-                emit_term(body, &sym, &mut out, 1);
+                emit_term(body, &sym, &lib_sym, &mut out, 1);
                 out.push_str("\n}\n\n");
             }
             _ => {
                 out.push_str(&format!("#[allow(dead_code)]\nfn {}(_: Value) -> Value {{\n", safe_name));
                 out.push_str("    ");
-                emit_term(lib_term, &sym, &mut out, 1);
+                emit_term(lib_term, &sym, &lib_sym, &mut out, 1);
                 out.push_str("\n}\n\n");
             }
         }
@@ -435,12 +458,12 @@ pub fn emit_rust_lib_from_core(
             CoreTerm::Lam(param, body, _) => {
                 let safe_param = sanitise(param);
                 out.push_str(&format!("    #[allow(unused_variables)] let {} = args;\n    ", safe_param));
-                emit_term(body, &sym, &mut out, 1);
+                emit_term(body, &sym, &lib_sym, &mut out, 1);
                 out.push('\n');
             }
             _ => {
                 out.push_str("    let _args = args;\n    ");
-                emit_term(root, &sym, &mut out, 1);
+                emit_term(root, &sym, &lib_sym, &mut out, 1);
                 out.push('\n');
             }
         }
