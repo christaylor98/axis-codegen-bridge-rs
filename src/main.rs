@@ -287,6 +287,7 @@ fn cmd_build(args: &[String]) {
     cmd.arg(&shim_rs)
        .arg("--edition=2021")
        .arg("-o").arg(&output)
+       .arg("-C").arg("strip=debuginfo")
        .arg("--extern").arg(format!("axis_codegen_bridge={}/libaxis_codegen_bridge.rlib", exe_dir.display()))
        .arg("-L").arg(format!("dependency={}/deps", exe_dir.display()))
        .arg("-C").arg(format!("link-arg={}", lib_abs.display()));
