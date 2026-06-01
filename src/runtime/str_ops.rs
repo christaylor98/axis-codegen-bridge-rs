@@ -137,6 +137,16 @@ pub fn str_contains(args: Value) -> Value {
     }
 }
 
+pub fn str_eq(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Str(a), Value::Str(b)) => Value::Bool(get_str(*a) == get_str(*b)),
+            _ => panic!("str_eq: expected two Str values"),
+        },
+        _ => panic!("str_eq: expected Tuple(Str, Str)"),
+    }
+}
+
 /// Returns the char-index of the first occurrence of needle in haystack, or -1 if not found.
 pub fn str_index_of(args: Value) -> Value {
     match args {

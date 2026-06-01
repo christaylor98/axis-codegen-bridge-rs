@@ -155,6 +155,11 @@ fn str_index_of
   deterministic true
   profile pure
 end
+fn str_eq
+  arity 1
+  deterministic true
+  profile pure
+end
 
 // ── List ──────────────────────────────────────────────────────────────────────
 fn list_nil
@@ -208,6 +213,21 @@ fn list_concat
   profile pure
 end
 fn list_reverse
+  arity 1
+  deterministic true
+  profile pure
+end
+fn list_of_1
+  arity 1
+  deterministic true
+  profile pure
+end
+fn list_of_2
+  arity 1
+  deterministic true
+  profile pure
+end
+fn list_of_3
   arity 1
   deterministic true
   profile pure
