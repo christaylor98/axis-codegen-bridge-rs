@@ -7,7 +7,7 @@ use axis_codegen_bridge::emit::rust::{emit_rust_lib_from_core, sanitise};
 fn usage() -> ! {
     eprintln!("Usage:");
     eprintln!("  axis-codegen-bridge build <input.coreir> --out <path> [options]");
-    eprintln!("    Produces <dir>/lib<stem>.a (lib-first). Use --out x.a to name verbatim.");
+    eprintln!("    Produces <dir>/lib<stem>.rlib (lib-first). Use --out x.rlib to name verbatim.");
     eprintln!("    --exe                   also compile a runnable binary at <path>");
     eprintln!("    --lib <path.coreir>     link a library bundle (repeatable)");
     eprintln!("    --lib-dir <directory>   link all .coreir in directory (repeatable)");
@@ -88,12 +88,12 @@ fn append_fn_to_registry(reg_path: &str, fn_name: &str, effect_class: &core_ir::
 /// If the arg already ends in ".a", use verbatim; otherwise produce <dir>/lib<stem>.a.
 fn compute_lib_path(out_arg: &str) -> std::path::PathBuf {
     let p = std::path::Path::new(out_arg);
-    if out_arg.ends_with(".a") {
+    if out_arg.ends_with(".rlib") || out_arg.ends_with(".a") {
         p.to_owned()
     } else {
         let dir  = p.parent().unwrap_or(std::path::Path::new("."));
         let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("out");
-        dir.join(format!("lib{}.a", stem))
+        dir.join(format!("lib{}.rlib", stem))
     }
 }
 
@@ -200,7 +200,7 @@ fn cmd_build(args: &[String]) {
         eprintln!("error: cannot create output dir: {}", e); std::process::exit(1);
     }
 
-    // Generate and compile the static library.
+    // Generate and compile the Rust library (rlib — no std bundling).
     let rust_code = match emit_rust_lib_from_core(&bundle_exports, &libs, &registry_names) {
         Ok(code) => code,
         Err(e)   => { eprintln!("error: {}", e); std::process::exit(1); }
@@ -215,7 +215,7 @@ fn cmd_build(args: &[String]) {
 
     let mut cmd = std::process::Command::new("rustc");
     cmd.arg(&generated_rs)
-       .arg("--crate-type=staticlib")
+       .arg("--crate-type=rlib")
        .arg("--crate-name=generated")
        .arg("--edition=2021")
        .arg("-o").arg(&lib_path)
@@ -249,7 +249,7 @@ fn cmd_build(args: &[String]) {
 
     if !exe_flag { return; }
 
-    // --exe: compile a thin shim binary that calls the entrypoint from the .a.
+    // --exe: compile a thin shim binary that calls the entrypoint from the rlib.
     // Choose: prefer an export named "main", else use the first export.
     let exe_fn_name = bundle_exports.iter()
         .find(|(n, _)| n == "main")
