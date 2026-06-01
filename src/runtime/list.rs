@@ -112,3 +112,21 @@ pub fn list_is_empty(list: Value) -> Value {
         _ => panic!("list_is_empty: expected List"),
     }
 }
+
+pub fn list_of_1(v: Value) -> Value {
+    Value::List(vec![v])
+}
+
+pub fn list_of_2(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => Value::List(vec![es[0].clone(), es[1].clone()]),
+        _ => panic!("list_of_2: expected Tuple(a, b)"),
+    }
+}
+
+pub fn list_of_3(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 3 => Value::List(vec![es[0].clone(), es[1].clone(), es[2].clone()]),
+        _ => panic!("list_of_3: expected Tuple(a, b, c)"),
+    }
+}

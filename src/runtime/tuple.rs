@@ -6,6 +6,7 @@ pub fn tuple_field(args: Value) -> Value {
             let idx = match &es[1] { Value::Int(n) => *n as usize, _ => return Value::Unit };
             match &es[0] {
                 Value::Tuple(fields) => fields.get(idx).cloned().unwrap_or(Value::Unit),
+                Value::List(items) => items.get(idx).cloned().unwrap_or(Value::Unit),
                 _ => Value::Unit,
             }
         }
