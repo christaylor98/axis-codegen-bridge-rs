@@ -219,10 +219,11 @@ pub fn emit_rust_from_core(
         }
     }
 
-    // lib_sym: maps lib function names → sanitised Rust identifiers for emit.
-    // Enables multi-arg uncurried calls to lib functions (tuple-packing).
+    // lib_sym: maps lib function names → _lib_-prefixed Rust identifiers for emit.
+    // The _lib_ prefix keeps lib helpers in a separate namespace from export symbols,
+    // preventing collisions when an export shares a name with a lib helper.
     let lib_sanitised: Vec<(String, String)> = libs.iter()
-        .map(|(n, _)| (n.clone(), sanitise(n)))
+        .map(|(n, _)| (n.clone(), format!("_lib_{}", sanitise(n))))
         .collect();
     let lib_sym: HashMap<&str, &str> = lib_sanitised.iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
@@ -234,7 +235,7 @@ pub fn emit_rust_from_core(
 
     // Emit library functions before main.
     for (fn_name, lib_term) in libs {
-        let safe_name = sanitise(fn_name);
+        let safe_name = format!("_lib_{}", sanitise(fn_name));
         match lib_term {
             CoreTerm::Lam(param, body, _) => {
                 out.push_str(&format!(
@@ -414,10 +415,11 @@ pub fn emit_rust_lib_from_core(
         }
     }
 
-    // lib_sym: maps lib function names → sanitised Rust identifiers for emit.
-    // Enables multi-arg uncurried calls to lib functions (tuple-packing).
+    // lib_sym: maps lib function names → _lib_-prefixed Rust identifiers for emit.
+    // The _lib_ prefix keeps lib helpers in a separate namespace from export symbols,
+    // preventing collisions when an export shares a name with a lib helper.
     let lib_sanitised: Vec<(String, String)> = libs.iter()
-        .map(|(n, _)| (n.clone(), sanitise(n)))
+        .map(|(n, _)| (n.clone(), format!("_lib_{}", sanitise(n))))
         .collect();
     let lib_sym: HashMap<&str, &str> = lib_sanitised.iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
@@ -428,7 +430,7 @@ pub fn emit_rust_lib_from_core(
     out.push_str("use axis_codegen_bridge::runtime::value::{Value, init_runtime};\n\n");
 
     for (lib_fn, lib_term) in libs {
-        let safe_name = sanitise(lib_fn);
+        let safe_name = format!("_lib_{}", sanitise(lib_fn));
         match lib_term {
             CoreTerm::Lam(param, body, _) => {
                 out.push_str(&format!(
@@ -468,6 +470,14 @@ pub fn emit_rust_lib_from_core(
             }
         }
         out.push_str("}\n\n");
+        // Shim-callable alias: _ax_exe_<name> avoids C stdlib symbol collisions at link time.
+        let shim_name = format!("_ax_exe_{}", safe_fn);
+        out.push_str("#[allow(improper_ctypes_definitions)]\n");
+        out.push_str("#[no_mangle]\n");
+        out.push_str(&format!(
+            "pub extern \"C\" fn {}(args: Value) -> Value {{ {}(args) }}\n\n",
+            shim_name, safe_fn
+        ));
     }
 
     Ok(out)

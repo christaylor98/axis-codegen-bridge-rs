@@ -485,6 +485,58 @@ fn registry_compound_id
   profile pure
 end
 
+// ── Stdlib (lib/core) ─────────────────────────────────────────────────────────
+fn argv_get
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_make_var_from_int
+  arity 1
+  deterministic true
+  profile pure
+end
+fn celsius_to_fahrenheit
+  arity 1
+  deterministic true
+  profile pure
+end
+fn fahrenheit_to_celsius
+  arity 1
+  deterministic true
+  profile pure
+end
+fn int_abs
+  arity 1
+  deterministic true
+  profile pure
+end
+fn int_min
+  arity 1
+  deterministic true
+  profile pure
+end
+fn int_max
+  arity 1
+  deterministic true
+  profile pure
+end
+fn int_clamp
+  arity 1
+  deterministic true
+  profile pure
+end
+fn str_before
+  arity 1
+  deterministic true
+  profile pure
+end
+fn str_after
+  arity 1
+  deterministic true
+  profile pure
+end
+
 // ── Transitions ───────────────────────────────────────────────────────────────
 // AI2 library functions linked via --lib-dir; not bridge primitives
 fn introduce_let_binding

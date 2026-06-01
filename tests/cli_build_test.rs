@@ -202,6 +202,106 @@ fn test_multi_export_exe_calls_first() {
     assert!(stdout.trim() == "55", "expected '55', got {:?}", stdout.trim());
 }
 
+// (f-regression) stem "abs" with lib function "int_abs": lib helper gets
+// _lib_ prefix so there is no Rust namespace collision, and the binary
+// produces the correct output.  Export is named "take_abs" (not "abs") to
+// avoid shadowing the C stdlib abs(int) symbol at link time.
+#[test]
+fn test_stem_abs_calls_lib_int_abs() {
+    let dir = TempDir::new().unwrap();
+
+    // Build int_abs lib: lam(n, if(n < 0, 0 - n, n))
+    let int_abs_term = CoreTerm::Lam(
+        "n".to_string(),
+        Rc::new(CoreTerm::If(
+            Rc::new(CoreTerm::App(
+                Rc::new(CoreTerm::App(
+                    Rc::new(CoreTerm::Var("int_lt".to_string(), None)),
+                    Rc::new(CoreTerm::Var("n".to_string(), None)),
+                    None,
+                )),
+                Rc::new(CoreTerm::IntLit(0, None)),
+                None,
+            )),
+            Rc::new(CoreTerm::App(
+                Rc::new(CoreTerm::App(
+                    Rc::new(CoreTerm::Var("int_sub".to_string(), None)),
+                    Rc::new(CoreTerm::IntLit(0, None)),
+                    None,
+                )),
+                Rc::new(CoreTerm::Var("n".to_string(), None)),
+                None,
+            )),
+            Rc::new(CoreTerm::Var("n".to_string(), None)),
+            None,
+        )),
+        None,
+    );
+
+    // Write int_abs.coreir into a lib subdirectory.
+    let lib_dir = dir.path().join("lib");
+    std::fs::create_dir_all(&lib_dir).unwrap();
+    let int_abs_bytes = create_core_bundle(
+        &int_abs_term, "int_abs", Provenance::Mechanical, EffectClass::Pure, true,
+    );
+    std::fs::write(lib_dir.join("int_abs.coreir"), &int_abs_bytes).unwrap();
+
+    // Main program: take_abs(n) = int_abs(argv_int(1))
+    // Entrypoint "take_abs" avoids shadowing C stdlib abs(int).
+    // The output path uses stem "abs" to verify the lib .a naming
+    // and that lib helper _lib_int_abs is correctly resolved.
+    let main_term = CoreTerm::Lam(
+        "args".to_string(),
+        Rc::new(CoreTerm::App(
+            Rc::new(CoreTerm::Var("int_abs".to_string(), None)),
+            Rc::new(CoreTerm::App(
+                Rc::new(CoreTerm::Var("argv_int".to_string(), None)),
+                Rc::new(CoreTerm::IntLit(1, None)),
+                None,
+            )),
+            None,
+        )),
+        None,
+    );
+    let main_bytes = create_core_bundle(
+        &main_term, "take_abs", Provenance::Mechanical, EffectClass::Pure, true,
+    );
+    let main_coreir = dir.path().join("abs.coreir");
+    std::fs::write(&main_coreir, &main_bytes).unwrap();
+
+    // --out with stem "abs": produces libabs.a and the exe.
+    let out = dir.path().join("abs");
+
+    let status = Command::new(bridge())
+        .args([
+            "build",
+            main_coreir.to_str().unwrap(),
+            "--out", out.to_str().unwrap(),
+            "--lib-dir", lib_dir.to_str().unwrap(),
+            "--exe",
+        ])
+        .status()
+        .expect("failed to run bridge");
+
+    assert!(status.success(), "build failed (stem=abs, lib=int_abs)");
+    assert!(out.exists(), "binary not produced");
+
+    let lib = dir.path().join("libabs.a");
+    let nm = Command::new("nm").arg(&lib).output().expect("nm failed");
+    let nm_out = String::from_utf8_lossy(&nm.stdout);
+    assert!(nm_out.contains("take_abs"), "export symbol missing: {}", nm_out);
+
+    let run = Command::new(&out)
+        .arg("-42")
+        .output()
+        .expect("binary failed to run");
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert_eq!(stdout.trim(), "42",
+        "expected '42' for int_abs(-42), got {:?}\nstderr: {:?}\nexit: {:?}",
+        stdout, stderr, run.status.code());
+}
+
 // (f) single-export bundle still works identically (backward compat)
 #[test]
 fn test_single_export_backward_compat() {

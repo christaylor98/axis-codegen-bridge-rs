@@ -25,7 +25,7 @@ fn test_emit_lib_defines_rust_fn() {
     let libs = vec![double_lib()];
     let root = CoreTerm::Call("double".to_string(), vec![CoreTerm::IntLit(21, None)], None);
     let code = emit_rust_from_core(&root, "test.coreir", "main", &libs, &no_registry()).unwrap();
-    assert!(code.contains("fn double(x: Value) -> Value"), "lib fn not emitted");
+    assert!(code.contains("fn _lib_double(x: Value) -> Value"), "lib fn not emitted");
     assert!(code.contains("int_mul"), "lib body not emitted");
 }
 
@@ -34,7 +34,7 @@ fn test_emit_lib_call_in_main() {
     let libs = vec![double_lib()];
     let root = CoreTerm::Call("double".to_string(), vec![CoreTerm::IntLit(21, None)], None);
     let code = emit_rust_from_core(&root, "test.coreir", "main", &libs, &no_registry()).unwrap();
-    assert!(code.contains("double(Value::Int(21))"), "call site not emitted");
+    assert!(code.contains("_lib_double(Value::Int(21))"), "call site not emitted");
 }
 
 #[test]
@@ -72,8 +72,8 @@ fn test_emit_duplicate_lib_names_detected_before_emit() {
     let lib2 = ("greet".to_string(), CoreTerm::IntLit(2, None));
     let root = CoreTerm::Call("double".to_string(), vec![], None);
     let code = emit_rust_from_core(&root, "t.coreir", "main", &[lib1, lib2], &no_registry()).unwrap();
-    assert!(code.contains("fn double"), "double not defined");
-    assert!(code.contains("fn greet"), "greet not defined");
+    assert!(code.contains("fn _lib_double"), "double not defined");
+    assert!(code.contains("fn _lib_greet"), "greet not defined");
 }
 
 #[test]
@@ -103,8 +103,8 @@ fn test_emit_lib_ccall_resolved_against_bridge() {
         None,
     );
     let code = emit_rust_from_core(&root, "t.coreir", "main", &libs, &no_registry()).unwrap();
-    assert!(code.contains("fn double"), "double lib missing");
-    assert!(code.contains("fn greet"), "greet lib missing");
+    assert!(code.contains("fn _lib_double"), "double lib missing");
+    assert!(code.contains("fn _lib_greet"), "greet lib missing");
     assert!(code.contains("let d ="), "let binding missing");
 }
 

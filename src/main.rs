@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::io::Write;
 use std::time::Instant;
 use axis_codegen_bridge::core_ir;
 use axis_codegen_bridge::emit::rust::{emit_rust_lib_from_core, sanitise};
@@ -54,6 +55,33 @@ fn load_registry_names(paths: &[String]) -> HashSet<String> {
         }
     }
     names
+}
+
+/// Append a function entry to a registry file, idempotent (skips if already present).
+fn append_fn_to_registry(reg_path: &str, fn_name: &str, effect_class: &core_ir::EffectClass) {
+    let content = std::fs::read_to_string(reg_path).unwrap_or_default();
+    for line in content.lines() {
+        if let Some(rest) = line.trim().strip_prefix("fn ") {
+            if rest.split_whitespace().next().unwrap_or("") == fn_name {
+                return;
+            }
+        }
+    }
+    let deterministic = matches!(effect_class, core_ir::EffectClass::Pure);
+    let profile = match effect_class {
+        core_ir::EffectClass::Pure   => "pure",
+        core_ir::EffectClass::Reads  => "reads",
+        core_ir::EffectClass::Writes => "writes",
+        core_ir::EffectClass::FullIo => "full_io",
+    };
+    let entry = format!(
+        "\nfn {}\n  arity 1\n  deterministic {}\n  profile {}\nend\n",
+        fn_name, deterministic, profile
+    );
+    match std::fs::OpenOptions::new().append(true).open(reg_path) {
+        Ok(mut f) => { let _ = f.write_all(entry.as_bytes()); }
+        Err(e)    => { eprintln!("warning: could not append to registry {}: {}", reg_path, e); }
+    }
 }
 
 /// Compute the .a output path from the --out argument.
@@ -210,6 +238,13 @@ fn cmd_build(args: &[String]) {
         }
     }
 
+    // Auto-register exports into any --reg paths (idempotent).
+    for (fn_name, _) in &bundle_exports {
+        for reg_path in &reg_paths {
+            append_fn_to_registry(reg_path, fn_name, &program.effect_class);
+        }
+    }
+
     if !exe_flag { return; }
 
     // --exe: compile a thin shim binary that calls the entrypoint from the .a.
@@ -219,7 +254,8 @@ fn cmd_build(args: &[String]) {
         .or_else(|| bundle_exports.first())
         .map(|(n, _)| n.clone())
         .unwrap_or_else(|| "main".to_string());
-    let safe_fn   = sanitise(&exe_fn_name);
+    let safe_fn     = sanitise(&exe_fn_name);
+    let shim_fn     = format!("_ax_exe_{}", safe_fn);
     let shim_code = format!(
         "extern crate axis_codegen_bridge;\n\
          use axis_codegen_bridge::runtime::value::{{Value, init_runtime, intern_str}};\n\n\
@@ -235,7 +271,7 @@ fn cmd_build(args: &[String]) {
              let result = unsafe {{ {fn}(Value::List(args)) }};\n\
              if !matches!(result, Value::Unit) {{ println!(\"{{}}\", result); }}\n\
          }}\n",
-        fn = safe_fn
+        fn = shim_fn
     );
 
     let shim_rs = out_dir.join("generated_main.rs");
