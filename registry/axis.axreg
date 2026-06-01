@@ -537,6 +537,58 @@ fn str_after
   profile pure
 end
 
+// ── IR Accessors ──────────────────────────────────────────────────────────────
+fn ir_get_kind
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_get_name
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_get_int_val
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_get_fn
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_get_arg
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_get_body
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_get_value
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_get_cond
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_get_then
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_get_else
+  arity 1
+  deterministic true
+  profile pure
+end
+
 // ── Transitions ───────────────────────────────────────────────────────────────
 // AI2 library functions linked via --lib-dir; not bridge primitives
 fn introduce_let_binding

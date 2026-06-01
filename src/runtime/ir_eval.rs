@@ -95,6 +95,18 @@ fn dispatch_table() -> &'static HashMap<&'static str, PrimFn> {
         m.insert("argv_count",      super::process::argv_count);
         m.insert("argv_or",         super::process::argv_or);
 
+        // IR Accessors
+        m.insert("ir_get_kind",     super::ir_accessors::ir_get_kind);
+        m.insert("ir_get_name",     super::ir_accessors::ir_get_name);
+        m.insert("ir_get_int_val",  super::ir_accessors::ir_get_int_val);
+        m.insert("ir_get_fn",       super::ir_accessors::ir_get_fn);
+        m.insert("ir_get_arg",      super::ir_accessors::ir_get_arg);
+        m.insert("ir_get_body",     super::ir_accessors::ir_get_body);
+        m.insert("ir_get_value",    super::ir_accessors::ir_get_value);
+        m.insert("ir_get_cond",     super::ir_accessors::ir_get_cond);
+        m.insert("ir_get_then",     super::ir_accessors::ir_get_then);
+        m.insert("ir_get_else",     super::ir_accessors::ir_get_else);
+
         m
     })
 }

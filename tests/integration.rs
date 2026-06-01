@@ -5,6 +5,10 @@ use axis_codegen_bridge::runtime::ir_constructors::{
     ir_term_kind, ir_write_bundle, ir_read_bundle,
     ir_subst, ir_rename, ir_free_vars,
 };
+use axis_codegen_bridge::runtime::ir_accessors::{
+    ir_get_kind, ir_get_name, ir_get_int_val, ir_get_fn, ir_get_arg,
+    ir_get_body, ir_get_value, ir_get_cond, ir_get_then, ir_get_else,
+};
 use axis_codegen_bridge::runtime::{arith, str_ops, list, option, bool_ops, process};
 use axis_codegen_bridge::core_ir::{CoreTerm, Provenance, EffectClass, create_core_bundle, load_core_bundle_from_bytes};
 use axis_codegen_bridge::executor::{execute_core_program, FunctionProvider, Value as ExecValue, RuntimeError};
@@ -988,4 +992,190 @@ fn test_str_eq_empty_vs_nonempty() {
     let ha = intern_str("");
     let hb = intern_str("x");
     assert_eq!(str_ops::str_eq(Value::Tuple(vec![Value::Str(ha), Value::Str(hb)])), Value::Bool(false));
+}
+
+// ── IR Accessors ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_ir_get_kind_int_lit() {
+    setup();
+    let term = ir_make_int_lit(Value::Int(42));
+    assert_eq!(ir_get_kind(term), Value::Str(intern_str("int")));
+}
+
+#[test]
+fn test_ir_get_kind_bool_lit() {
+    setup();
+    let term = ir_make_bool_lit(Value::Bool(true));
+    assert_eq!(ir_get_kind(term), Value::Str(intern_str("bool")));
+}
+
+#[test]
+fn test_ir_get_kind_unit_lit() {
+    setup();
+    let term = ir_make_unit_lit(Value::Unit);
+    assert_eq!(ir_get_kind(term), Value::Str(intern_str("unit")));
+}
+
+#[test]
+fn test_ir_get_kind_var() {
+    setup();
+    let h = intern_str("x");
+    let term = ir_make_var(Value::Str(h));
+    assert_eq!(ir_get_kind(term), Value::Str(intern_str("var")));
+}
+
+#[test]
+fn test_ir_get_kind_lam() {
+    setup();
+    let param = intern_str("n");
+    let body = ir_make_int_lit(Value::Int(0));
+    let term = ir_make_lam(Value::Tuple(vec![Value::Str(param), body]));
+    assert_eq!(ir_get_kind(term), Value::Str(intern_str("lam")));
+}
+
+#[test]
+fn test_ir_get_kind_let() {
+    setup();
+    let name = intern_str("x");
+    let val  = ir_make_int_lit(Value::Int(1));
+    let body = ir_make_var(Value::Str(intern_str("x")));
+    let term = ir_make_let(Value::Tuple(vec![Value::Str(name), val, body]));
+    assert_eq!(ir_get_kind(term), Value::Str(intern_str("let")));
+}
+
+#[test]
+fn test_ir_get_kind_if() {
+    setup();
+    let cond = ir_make_bool_lit(Value::Bool(true));
+    let then = ir_make_int_lit(Value::Int(1));
+    let els  = ir_make_int_lit(Value::Int(0));
+    let term = ir_make_if(Value::Tuple(vec![cond, then, els]));
+    assert_eq!(ir_get_kind(term), Value::Str(intern_str("if")));
+}
+
+#[test]
+fn test_ir_get_kind_app() {
+    setup();
+    let param = intern_str("x");
+    let body  = ir_make_var(Value::Str(param));
+    let lam   = ir_make_lam(Value::Tuple(vec![Value::Str(param), body]));
+    let arg   = ir_make_int_lit(Value::Int(5));
+    let term  = ir_make_app(Value::Tuple(vec![lam, arg]));
+    assert_eq!(ir_get_kind(term), Value::Str(intern_str("app")));
+}
+
+#[test]
+fn test_ir_get_name_var() {
+    setup();
+    let h = intern_str("myvar");
+    let term = ir_make_var(Value::Str(h));
+    assert_eq!(ir_get_name(term), Value::Str(intern_str("myvar")));
+}
+
+#[test]
+fn test_ir_get_name_lam() {
+    setup();
+    let param = intern_str("param");
+    let body  = ir_make_int_lit(Value::Int(0));
+    let term  = ir_make_lam(Value::Tuple(vec![Value::Str(param), body]));
+    assert_eq!(ir_get_name(term), Value::Str(intern_str("param")));
+}
+
+#[test]
+fn test_ir_get_name_let() {
+    setup();
+    let name = intern_str("binding");
+    let val  = ir_make_int_lit(Value::Int(7));
+    let body = ir_make_var(Value::Str(intern_str("binding")));
+    let term = ir_make_let(Value::Tuple(vec![Value::Str(name), val, body]));
+    assert_eq!(ir_get_name(term), Value::Str(intern_str("binding")));
+}
+
+#[test]
+fn test_ir_get_int_val() {
+    setup();
+    let term = ir_make_int_lit(Value::Int(99));
+    assert_eq!(ir_get_int_val(term), Value::Int(99));
+}
+
+#[test]
+fn test_ir_get_fn() {
+    setup();
+    let param = intern_str("x");
+    let body  = ir_make_var(Value::Str(param));
+    let lam   = ir_make_lam(Value::Tuple(vec![Value::Str(param), body.clone()]));
+    let arg   = ir_make_int_lit(Value::Int(3));
+    let app   = ir_make_app(Value::Tuple(vec![lam.clone(), arg]));
+    assert_eq!(ir_get_fn(app), lam);
+}
+
+#[test]
+fn test_ir_get_arg() {
+    setup();
+    let param = intern_str("x");
+    let body  = ir_make_var(Value::Str(param));
+    let lam   = ir_make_lam(Value::Tuple(vec![Value::Str(param), body]));
+    let arg   = ir_make_int_lit(Value::Int(7));
+    let app   = ir_make_app(Value::Tuple(vec![lam, arg.clone()]));
+    assert_eq!(ir_get_arg(app), arg);
+}
+
+#[test]
+fn test_ir_get_body_lam() {
+    setup();
+    let param = intern_str("x");
+    let body  = ir_make_int_lit(Value::Int(42));
+    let lam   = ir_make_lam(Value::Tuple(vec![Value::Str(param), body.clone()]));
+    assert_eq!(ir_get_body(lam), body);
+}
+
+#[test]
+fn test_ir_get_body_let() {
+    setup();
+    let name = intern_str("z");
+    let val  = ir_make_int_lit(Value::Int(1));
+    let body = ir_make_int_lit(Value::Int(2));
+    let term = ir_make_let(Value::Tuple(vec![Value::Str(name), val, body.clone()]));
+    assert_eq!(ir_get_body(term), body);
+}
+
+#[test]
+fn test_ir_get_value_let() {
+    setup();
+    let name = intern_str("z");
+    let val  = ir_make_int_lit(Value::Int(55));
+    let body = ir_make_int_lit(Value::Int(0));
+    let term = ir_make_let(Value::Tuple(vec![Value::Str(name), val.clone(), body]));
+    assert_eq!(ir_get_value(term), val);
+}
+
+#[test]
+fn test_ir_get_cond() {
+    setup();
+    let cond = ir_make_bool_lit(Value::Bool(false));
+    let then = ir_make_int_lit(Value::Int(1));
+    let els  = ir_make_int_lit(Value::Int(0));
+    let term = ir_make_if(Value::Tuple(vec![cond.clone(), then, els]));
+    assert_eq!(ir_get_cond(term), cond);
+}
+
+#[test]
+fn test_ir_get_then() {
+    setup();
+    let cond = ir_make_bool_lit(Value::Bool(true));
+    let then = ir_make_int_lit(Value::Int(100));
+    let els  = ir_make_int_lit(Value::Int(0));
+    let term = ir_make_if(Value::Tuple(vec![cond, then.clone(), els]));
+    assert_eq!(ir_get_then(term), then);
+}
+
+#[test]
+fn test_ir_get_else() {
+    setup();
+    let cond = ir_make_bool_lit(Value::Bool(true));
+    let then = ir_make_int_lit(Value::Int(1));
+    let els  = ir_make_int_lit(Value::Int(999));
+    let term = ir_make_if(Value::Tuple(vec![cond, then, els.clone()]));
+    assert_eq!(ir_get_else(term), els);
 }
