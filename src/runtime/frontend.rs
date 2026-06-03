@@ -131,7 +131,10 @@ pub fn frontend_walk(v: Value) -> Value {
 
         match status_hint {
             "REGISTRY_CHECK" => {
-                let check_result = registry_has_entry(Value::Str(intern_str(detail)));
+                // Split detail on '|': first token is the registry key; remaining
+                // tokens (columns 6+) are slot metadata passed through to output.
+                let registry_key = detail.split('|').next().unwrap_or(detail);
+                let check_result = registry_has_entry(Value::Str(intern_str(registry_key)));
                 match check_result {
                     Value::Bool(true) => {
                         resolved_count += 1;
@@ -139,9 +142,14 @@ pub fn frontend_walk(v: Value) -> Value {
                     }
                     _ => {
                         let extends_closure = type_sig.contains("->");
+                        let metadata = if detail.len() > registry_key.len() {
+                            &detail[registry_key.len()..]  // starts with "|"
+                        } else {
+                            ""
+                        };
                         lines.push(format!(
-                            "UNKNOWN|{}|{}|{} not in registry|extends_closure={}",
-                            hole_id, type_sig, detail, extends_closure
+                            "UNKNOWN|{}|{}|{} not in registry|extends_closure={}{}",
+                            hole_id, type_sig, registry_key, extends_closure, metadata
                         ));
                     }
                 }
