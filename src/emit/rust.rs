@@ -93,6 +93,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     // Process
     m.insert("proc_args",   "axis_codegen_bridge::runtime::process::proc_args");
     m.insert("proc_exit",   "axis_codegen_bridge::runtime::process::proc_exit");
+    m.insert("proc_sleep",  "axis_codegen_bridge::runtime::process::proc_sleep");
     m.insert("argv",        "axis_codegen_bridge::runtime::process::argv");
     m.insert("argv_int",    "axis_codegen_bridge::runtime::process::argv_int");
     m.insert("argv_count",  "axis_codegen_bridge::runtime::process::argv_count");
@@ -127,6 +128,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("ir_rename",        "axis_codegen_bridge::runtime::ir_constructors::ir_rename");
     m.insert("ir_free_vars",     "axis_codegen_bridge::runtime::ir_constructors::ir_free_vars");
     m.insert("ir_build_program_from_spec", "axis_codegen_bridge::runtime::ir_constructors::ir_build_program_from_spec");
+    m.insert("ir_build_fold_from_spec",   "axis_codegen_bridge::runtime::ir_constructors::ir_build_fold_from_spec");
     m.insert("ir_eval",          "axis_codegen_bridge::runtime::ir_eval::ir_eval");
     m.insert("ir_apply",         "axis_codegen_bridge::runtime::ir_eval::ir_apply");
 
@@ -378,12 +380,14 @@ fn emit_term(term: &CoreTerm, sym: &HashMap<&str, &str>, lib_sym: &HashMap<&str,
             } else if args.len() == 1 {
                 out.push_str(&format!("{}(", rust_fn));
                 emit_term(&args[0], sym, lib_sym, out, depth);
+                if matches!(&args[0], CoreTerm::Var(..)) { out.push_str(".clone()"); }
                 out.push(')');
             } else {
                 out.push_str(&format!("{}(Value::Tuple(vec![", rust_fn));
                 for (i, a) in args.iter().enumerate() {
                     if i > 0 { out.push_str(", "); }
                     emit_term(a, sym, lib_sym, out, depth);
+                    if matches!(a, CoreTerm::Var(..)) { out.push_str(".clone()"); }
                 }
                 out.push_str("]))");
             }

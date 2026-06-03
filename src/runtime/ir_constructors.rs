@@ -700,6 +700,122 @@ pub fn ir_build_program_from_spec(v: Value) -> Value {
     Value::Tuple(vec![term, Value::Str(intern_str(effect_str))])
 }
 
+/// ir_build_fold_from_spec: takes Str spec_path.
+/// Parses a fold spec (key: value lines) and builds an unrolled forEach IR.
+/// Returns Tuple(term, Str effect_class).
+/// Supports up to 32 list elements (TODO: replace with letrec when recursion lands).
+pub fn ir_build_fold_from_spec(v: Value) -> Value {
+    let path = match v {
+        Value::Str(s) => get_str(s),
+        _ => panic!("ir_build_fold_from_spec: expected Str path, got {:?}", v),
+    };
+
+    let content = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("ir_build_fold_from_spec: cannot read '{}': {}", path, e));
+
+    let mut effect       = String::new();
+    let mut source_fn    = String::new();
+    let mut transform_fn = String::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() { continue; }
+        if let Some((key, val)) = trimmed.split_once(':') {
+            match key.trim() {
+                "effect"       => effect       = val.trim().to_string(),
+                "source_fn"    => source_fn    = val.trim().to_string(),
+                "transform_fn" => transform_fn = val.trim().to_string(),
+                _              => {}
+            }
+        }
+    }
+
+    if effect.is_empty()       { panic!("ir_build_fold_from_spec: missing 'effect' in {}", path); }
+    if source_fn.is_empty()    { panic!("ir_build_fold_from_spec: missing 'source_fn' in {}", path); }
+    if transform_fn.is_empty() { panic!("ir_build_fold_from_spec: missing 'transform_fn' in {}", path); }
+
+    match effect.as_str() {
+        "pure" | "reads" | "writes" | "full_io" => {}
+        _ => panic!("ir_build_fold_from_spec: invalid effect {:?}", effect),
+    }
+
+    const N: usize = 32;
+
+    // Build unrolled forEach: for i in 0..N, if list[i] exists, call transform_fn on it.
+    let mut term = make_ctor("UnitLit", vec![]);
+
+    for i in (0..N).rev() {
+        let opt_name = format!("opt{}", i);
+        let res_name = format!("_res{}", i);
+
+        // if int_gt(n, i) then transform_fn(option_unwrap(opt_i)) else unit
+        let cond = make_ctor("Call", vec![
+            Value::Str(intern_str("int_gt")),
+            Value::List(vec![
+                make_ctor("Var", vec![Value::Str(intern_str("n"))]),
+                make_ctor("IntLit", vec![Value::Int(i as i64)]),
+            ]),
+        ]);
+        let unwrapped = make_ctor("Call", vec![
+            Value::Str(intern_str("option_unwrap")),
+            Value::List(vec![
+                make_ctor("Var", vec![Value::Str(intern_str(&opt_name))]),
+            ]),
+        ]);
+        let then_branch = make_ctor("Call", vec![
+            Value::Str(intern_str(&transform_fn)),
+            Value::List(vec![unwrapped]),
+        ]);
+        let if_expr = make_ctor("If", vec![
+            cond,
+            then_branch,
+            make_ctor("UnitLit", vec![]),
+        ]);
+
+        term = make_ctor("Let", vec![
+            Value::Str(intern_str(&res_name)),
+            if_expr,
+            term,
+        ]);
+        let get_call = make_ctor("Call", vec![
+            Value::Str(intern_str("list_get_at")),
+            Value::List(vec![
+                make_ctor("Var", vec![Value::Str(intern_str("lst"))]),
+                make_ctor("IntLit", vec![Value::Int(i as i64)]),
+            ]),
+        ]);
+        term = make_ctor("Let", vec![
+            Value::Str(intern_str(&opt_name)),
+            get_call,
+            term,
+        ]);
+    }
+
+    let len_call = make_ctor("Call", vec![
+        Value::Str(intern_str("list_len")),
+        Value::List(vec![
+            make_ctor("Var", vec![Value::Str(intern_str("lst"))]),
+        ]),
+    ]);
+    term = make_ctor("Let", vec![
+        Value::Str(intern_str("n")),
+        len_call,
+        term,
+    ]);
+
+    let source_call = make_ctor("Call", vec![
+        Value::Str(intern_str(&source_fn)),
+        Value::List(vec![]),
+    ]);
+    term = make_ctor("Let", vec![
+        Value::Str(intern_str("lst")),
+        source_call,
+        term,
+    ]);
+
+    Value::Tuple(vec![term, Value::Str(intern_str(&effect))])
+}
+
 // ── Internal conversions ─────────────────────────────────────────────────────
 
 fn value_to_core_term(v: &Value) -> Result<CoreTerm, String> {

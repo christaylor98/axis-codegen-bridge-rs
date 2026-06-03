@@ -325,6 +325,11 @@ fn proc_exit
   deterministic false
   profile full_io
 end
+fn proc_sleep
+  arity 1
+  deterministic false
+  profile writes
+end
 fn argv
   arity 1
   deterministic false
@@ -443,6 +448,11 @@ fn ir_read_bundle
   profile reads
 end
 fn ir_build_program_from_spec
+  arity 1
+  deterministic false
+  profile reads
+end
+fn ir_build_fold_from_spec
   arity 1
   deterministic false
   profile reads
