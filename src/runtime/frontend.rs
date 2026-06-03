@@ -138,9 +138,10 @@ pub fn frontend_walk(v: Value) -> Value {
                         lines.push(format!("RESOLVED|{}|{}|{}", hole_id, type_sig, detail));
                     }
                     _ => {
+                        let extends_closure = type_sig.contains("->");
                         lines.push(format!(
-                            "NEED|{}|{}|{} not in registry",
-                            hole_id, type_sig, detail
+                            "UNKNOWN|{}|{}|{} not in registry|extends_closure={}",
+                            hole_id, type_sig, detail, extends_closure
                         ));
                     }
                 }

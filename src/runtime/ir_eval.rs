@@ -70,6 +70,7 @@ fn dispatch_table() -> &'static HashMap<&'static str, PrimFn> {
         // Tuple / Ctor
         m.insert("tuple_field",     super::tuple::tuple_field);
         m.insert("ctor_field",      super::tuple::ctor_field);
+        m.insert("ctor_is_ok",      super::tuple::ctor_is_ok);
 
         // Option
         m.insert("option_none",     super::option::option_none_fn);

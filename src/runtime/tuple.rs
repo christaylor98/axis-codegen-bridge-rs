@@ -1,4 +1,4 @@
-use super::value::Value;
+use super::value::{Value, get_tag_name};
 
 pub fn tuple_field(args: Value) -> Value {
     match args {
@@ -24,5 +24,12 @@ pub fn ctor_field(args: Value) -> Value {
             }
         }
         _ => Value::Unit,
+    }
+}
+
+pub fn ctor_is_ok(v: Value) -> Value {
+    match v {
+        Value::Ctor { tag, .. } if get_tag_name(tag) == "Ok" => Value::Bool(true),
+        _ => Value::Bool(false),
     }
 }
