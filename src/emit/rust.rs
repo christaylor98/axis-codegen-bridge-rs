@@ -68,6 +68,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     // Tuple / constructor
     m.insert("tuple_field", "axis_codegen_bridge::runtime::tuple::tuple_field");
     m.insert("ctor_field",  "axis_codegen_bridge::runtime::tuple::ctor_field");
+    m.insert("ctor_is_ok",  "axis_codegen_bridge::runtime::tuple::ctor_is_ok");
 
     // Option
     m.insert("option_none",    "axis_codegen_bridge::runtime::option::option_none_fn");
@@ -151,6 +152,10 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("registry_insert",       "axis_codegen_bridge::runtime::registry::registry_insert");
     m.insert("registry_verify_chain", "axis_codegen_bridge::runtime::registry::registry_verify_chain");
     m.insert("registry_compound_id",  "axis_codegen_bridge::runtime::registry::registry_compound_id");
+
+    // Frontend
+    m.insert("frontend_lookup_shape", "axis_codegen_bridge::runtime::frontend::frontend_lookup_shape");
+    m.insert("frontend_walk",         "axis_codegen_bridge::runtime::frontend::frontend_walk");
 
     m
 }

@@ -12,5 +12,6 @@ pub mod transitions;
 pub mod ir_constructors;
 pub mod ir_accessors;
 pub mod ir_eval;
+pub mod frontend;
 
 pub use value::Value;

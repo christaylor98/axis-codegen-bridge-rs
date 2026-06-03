@@ -11,6 +11,11 @@ fn ctor_field
   deterministic true
   profile pure
 end
+fn ctor_is_ok
+  arity 1
+  deterministic true
+  profile pure
+end
 
 // ── Math ──────────────────────────────────────────────────────────────────────
 fn int_add
@@ -671,4 +676,22 @@ fn is_positive
   arity 1
   deterministic true
   profile pure
+end
+
+fn boot
+  arity 1
+  deterministic true
+  profile pure
+end
+
+// ── Frontend ──────────────────────────────────────────────────────────────────
+fn frontend_lookup_shape
+  arity 1
+  deterministic false
+  profile io
+end
+fn frontend_walk
+  arity 1
+  deterministic false
+  profile io
 end
