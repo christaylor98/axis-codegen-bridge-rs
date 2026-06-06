@@ -101,3 +101,39 @@ pub fn str_to_int(s: Value) -> Value {
         _ => panic!("str_to_int: expected Str"),
     }
 }
+
+pub fn int_abs(n: Value) -> Value {
+    match n {
+        Value::Int(i) => Value::Int(i.abs()),
+        _ => panic!("int_abs: expected Int"),
+    }
+}
+
+pub fn int_eq(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Int(x), Value::Int(y)) => Value::Bool(x == y),
+            _ => panic!("int_eq: expected two Int values"),
+        },
+        _ => panic!("int_eq: expected Tuple(Int, Int)"),
+    }
+}
+
+/// Identity for unit: discards input, returns Unit.
+pub fn unit_id(_args: Value) -> Value {
+    Value::Unit
+}
+
+/// Sequence two unit-producing computations: takes Tuple(Unit, Unit), returns Unit.
+pub fn seq_unit(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => {
+            match (&es[0], &es[1]) {
+                (Value::Unit, Value::Unit) => Value::Unit,
+                _ => panic!("seq_unit: expected Tuple(Unit, Unit)"),
+            }
+        }
+        Value::Unit => Value::Unit,
+        _ => panic!("seq_unit: expected Tuple(Unit, Unit) or Unit"),
+    }
+}

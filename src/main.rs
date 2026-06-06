@@ -2,7 +2,9 @@ use std::collections::HashSet;
 use std::io::Write;
 use std::time::Instant;
 use axis_codegen_bridge::core_ir;
+use axis_codegen_bridge::core_ir_05;
 use axis_codegen_bridge::emit::rust::{emit_rust_lib_from_core, sanitise};
+use axis_codegen_bridge::emit::rust_05;
 
 fn usage() -> ! {
     eprintln!("Usage:");
@@ -33,6 +35,10 @@ fn main() {
 }
 
 fn cmd_inspect(path: &str) {
+    if let Ok(summary) = core_ir_05::inspect_core_bundle(path) {
+        println!("{}", summary);
+        std::process::exit(0);
+    }
     match core_ir::inspect_core_bundle(path) {
         Ok(summary) => { println!("{}", summary); std::process::exit(0); }
         Err(e)      => { eprintln!("error: {}", e); std::process::exit(1); }
@@ -123,6 +129,97 @@ fn cmd_build(args: &[String]) {
             _ => { i += 1; }
         }
     }
+
+    // Detect 0.5 bundle: try 0.5 loader first; if it parses, use the 0.5 pipeline.
+    if let Ok(bundle) = core_ir_05::load_core_bundle(input) {
+        if !lib_paths.is_empty() || !lib_dirs.is_empty() {
+            eprintln!("warning: --lib and --lib-dir are not supported for 0.5 bundles \
+                       (link pre-compiled rlibs via --link-lib / --link-search instead)");
+        }
+        let fn_name = std::path::Path::new(input)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("main")
+            .to_string();
+        let registry_map = rust_05::load_registry_identity_map(&reg_paths);
+        let rust_code = match rust_05::emit_rust_lib_from_bundle(&bundle, &fn_name, &registry_map) {
+            Ok(code) => code,
+            Err(e)   => { eprintln!("error: {}", e); std::process::exit(1); }
+        };
+        let lib_path = compute_lib_path(&output);
+        let out_dir  = lib_path.parent().unwrap_or(std::path::Path::new("."));
+        if let Err(e) = std::fs::create_dir_all(out_dir) {
+            eprintln!("error: cannot create output dir: {}", e); std::process::exit(1);
+        }
+        let generated_rs = out_dir.join("generated_lib.rs");
+        if let Err(e) = std::fs::write(&generated_rs, &rust_code) {
+            eprintln!("error: cannot write generated_lib.rs: {}", e); std::process::exit(1);
+        }
+        let exe_dir = std::env::current_exe().expect("current exe").parent().expect("exe dir").to_owned();
+        let mut cmd = std::process::Command::new("rustc");
+        cmd.arg(&generated_rs)
+           .arg("--crate-type=rlib")
+           .arg("--crate-name=generated")
+           .arg("--edition=2021")
+           .arg("-o").arg(&lib_path)
+           .arg("-C").arg("embed-bitcode=no")
+           .arg("-C").arg("strip=debuginfo")
+           .arg("--extern").arg(format!("axis_codegen_bridge={}/libaxis_codegen_bridge.rlib", exe_dir.display()))
+           .arg("-L").arg(format!("dependency={}/deps", exe_dir.display()));
+        for path in &link_search { cmd.arg("-L").arg(path); }
+        match cmd.status() {
+            Ok(s) if s.success() => {
+                eprintln!("built {} in {}ms", lib_path.display(), t0.elapsed().as_millis());
+            }
+            Ok(s) => { eprintln!("error: rustc exited {:?}", s.code()); std::process::exit(1); }
+            Err(e) => { eprintln!("error: failed to invoke rustc: {}", e); std::process::exit(1); }
+        }
+        if !exe_flag { return; }
+        let safe_name = rust_05::sanitise(&fn_name);
+        let shim_fn   = format!("_ax_exe_{}", safe_name);
+        let shim_code = format!(
+            "extern crate axis_codegen_bridge;\n\
+             use axis_codegen_bridge::runtime::value::{{Value, init_runtime, intern_str}};\n\n\
+             #[allow(improper_ctypes)]\n\
+             extern \"C\" {{\n\
+                 fn {fn}(args: Value) -> Value;\n\
+             }}\n\n\
+             fn main() {{\n\
+                 init_runtime();\n\
+                 let args: Vec<Value> = std::env::args().skip(1)\n\
+                     .map(|s| Value::Str(intern_str(&s)))\n\
+                     .collect();\n\
+                 let result = unsafe {{ {fn}(Value::List(args)) }};\n\
+                 if !matches!(result, Value::Unit) {{ println!(\"{{}}\", result); }}\n\
+             }}\n",
+            fn = shim_fn
+        );
+        let shim_rs  = out_dir.join("generated_main.rs");
+        if let Err(e) = std::fs::write(&shim_rs, &shim_code) {
+            eprintln!("error: cannot write generated_main.rs: {}", e); std::process::exit(1);
+        }
+        let lib_abs = std::fs::canonicalize(&lib_path).unwrap_or_else(|_| lib_path.clone());
+        let mut cmd = std::process::Command::new("rustc");
+        cmd.arg(&shim_rs)
+           .arg("--edition=2021")
+           .arg("-o").arg(&output)
+           .arg("-C").arg("strip=debuginfo")
+           .arg("--extern").arg(format!("axis_codegen_bridge={}/libaxis_codegen_bridge.rlib", exe_dir.display()))
+           .arg("-L").arg(format!("dependency={}/deps", exe_dir.display()))
+           .arg("-C").arg(format!("link-arg={}", lib_abs.display()));
+        for path in &link_search { cmd.arg("-L").arg(path); }
+        for lib  in &link_libs   { cmd.arg("-l").arg(lib);  }
+        match cmd.status() {
+            Ok(s) if s.success() => {
+                eprintln!("built {} in {}ms", output, t0.elapsed().as_millis());
+            }
+            Ok(s) => { eprintln!("error: rustc (exe) exited {:?}", s.code()); std::process::exit(1); }
+            Err(e) => { eprintln!("error: failed to invoke rustc: {}", e); std::process::exit(1); }
+        }
+        return;
+    }
+
+    // ── 0.4 path ─────────────────────────────────────────────────────────────
 
     // Expand --lib-dir: collect all .coreir files sorted by path.
     for dir in &lib_dirs {
