@@ -29,8 +29,27 @@ fn main() {
     match args[1].as_str() {
         "inspect" if args.len() >= 3 => cmd_inspect(&args[2]),
         "build"   if args.len() >= 3 => cmd_build(&args[2..]),
+        "build05" if args.len() >= 4 => cmd_build05(&args[2], &args[3]),
         "bundle"                      => cmd_bundle(&args[2..]),
         _ => usage(),
+    }
+}
+
+/// Lower a 0.4 Core IR bundle (a generator term) to a flat 0.5 CoreBundle.
+/// This is the term -> 0.5 path the bridge previously lacked, letting the
+/// mechanical generator's output reach the honest 0.5 gate without the compiler.
+fn cmd_build05(input: &str, output: &str) {
+    let prog = match core_ir::load_core_bundle(input) {
+        Ok(p)  => p,
+        Err(e) => { eprintln!("error: load 0.4 bundle {}: {}", input, e); std::process::exit(1); }
+    };
+    let bundle = match core_ir_05::lower_core_term_to_bundle_05(&prog.root_term) {
+        Ok(b)  => b,
+        Err(e) => { eprintln!("error: lower to 0.5: {}", e); std::process::exit(1); }
+    };
+    match core_ir_05::write_core_bundle_05_to_file(&bundle, output) {
+        Ok(())  => { println!("{} -> {} (0.5, {} nodes)", input, output, bundle.nodes.len()); std::process::exit(0); }
+        Err(e)  => { eprintln!("error: write 0.5 {}: {}", output, e); std::process::exit(1); }
     }
 }
 

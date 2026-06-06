@@ -3,10 +3,12 @@ use sha2::{Digest, Sha256};
 pub mod loader;
 pub mod inspect;
 pub mod serialiser;
+pub mod lower;
 
 pub use loader::{load_core_bundle, load_core_bundle_from_bytes};
 pub use inspect::inspect_core_bundle;
 pub use serialiser::{create_core_bundle_05, write_core_bundle_05_to_file};
+pub use lower::lower_core_term_to_bundle_05;
 
 /// A 256-bit hash or identity token: four big-endian u64s packed into 32 bytes.
 pub type Hash256 = [u8; 32];
