@@ -130,3 +130,23 @@ pub fn list_of_3(args: Value) -> Value {
         _ => panic!("list_of_3: expected Tuple(a, b, c)"),
     }
 }
+
+/// Get list[i] and println the value if it exists; return Unit either way.
+/// Used by the unrolled forEach loop in 0.5 bundles where CIf branches are
+/// evaluated eagerly — inlining the None check into Rust avoids option_unwrap(None).
+pub fn list_get_println_if_some(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => {
+            let idx = match &es[1] { Value::Int(n) => *n, _ => panic!("list_get_println_if_some: expected Int index") };
+            if idx < 0 { return Value::Unit; }
+            match &es[0] {
+                Value::List(elems) => match elems.get(idx as usize) {
+                    Some(v) => super::io::io_println(v.clone()),
+                    None    => Value::Unit,
+                },
+                _ => panic!("list_get_println_if_some: expected List"),
+            }
+        }
+        _ => panic!("list_get_println_if_some: expected Tuple(List, Int)"),
+    }
+}

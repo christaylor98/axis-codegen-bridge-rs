@@ -59,8 +59,9 @@ fn dispatch_table() -> &'static HashMap<&'static str, PrimFn> {
         m.insert("list_cons",       super::list::list_cons);
         m.insert("list_len",        super::list::list_len);
         m.insert("list_get",        super::list::list_get);
-        m.insert("list_get_at",     super::list::list_get_at);
-        m.insert("list_append",     super::list::list_append);
+        m.insert("list_get_at",             super::list::list_get_at);
+        m.insert("list_get_println_if_some", super::list::list_get_println_if_some);
+        m.insert("list_append",             super::list::list_append);
         m.insert("list_concat",     super::list::list_concat);
         m.insert("list_reverse",    super::list::list_reverse);
         m.insert("list_head",       super::list::list_head);

@@ -963,42 +963,50 @@ pub fn ir_build_fold_from_spec(v: Value) -> Value {
     for i in (0..N).rev() {
         let res_name = format!("_res{}", i);
 
-        // CIf branches are lazy: inline list_get_at + option_unwrap directly
-        // inside the then arm so they only evaluate when int_gt(n, i) is true.
-        // A pre-guard `let opt_i = list_get_at(...)` would place those nodes
-        // before the CIf in the flat node list, causing option_unwrap(None) to
-        // fire eagerly for every iteration beyond the actual list length.
-        let cond = make_ctor("Call", vec![
-            Value::Str(intern_str("int_gt")),
-            Value::List(vec![
-                make_ctor("Var", vec![Value::Str(intern_str("n"))]),
-                make_ctor("IntLit", vec![Value::Int(i as i64)]),
-            ]),
-        ]);
-        let get_call = make_ctor("Call", vec![
-            Value::Str(intern_str("list_get_at")),
-            Value::List(vec![
-                make_ctor("Var", vec![Value::Str(intern_str("lst"))]),
-                make_ctor("IntLit", vec![Value::Int(i as i64)]),
-            ]),
-        ]);
-        let unwrapped = make_ctor("Call", vec![
-            Value::Str(intern_str("option_unwrap")),
-            Value::List(vec![get_call]),
-        ]);
-        let then_branch = make_ctor("Call", vec![
-            Value::Str(intern_str(&transform_fn)),
-            Value::List(vec![unwrapped]),
-        ]);
-        let if_expr = make_ctor("If", vec![
-            cond,
-            then_branch,
-            make_ctor("UnitLit", vec![]),
-        ]);
+        // When transform_fn is io_println, use list_get_println_if_some which
+        // handles the None case atomically in Rust — no CIf or option_unwrap
+        // needed. This is required for 0.5 bundles where all CCall nodes in the
+        // flat list are evaluated eagerly regardless of CIf control flow.
+        let iter_expr = if transform_fn == "io_println" {
+            make_ctor("Call", vec![
+                Value::Str(intern_str("list_get_println_if_some")),
+                Value::List(vec![
+                    make_ctor("Var", vec![Value::Str(intern_str("lst"))]),
+                    make_ctor("IntLit", vec![Value::Int(i as i64)]),
+                ]),
+            ])
+        } else {
+            // For other transforms: guard with CIf so option_unwrap is only
+            // reached when the index is in-bounds. Works in 0.4 (ir_eval) mode;
+            // 0.5 lowering will still eager-evaluate both branches.
+            let cond = make_ctor("Call", vec![
+                Value::Str(intern_str("int_gt")),
+                Value::List(vec![
+                    make_ctor("Var", vec![Value::Str(intern_str("n"))]),
+                    make_ctor("IntLit", vec![Value::Int(i as i64)]),
+                ]),
+            ]);
+            let get_call = make_ctor("Call", vec![
+                Value::Str(intern_str("list_get_at")),
+                Value::List(vec![
+                    make_ctor("Var", vec![Value::Str(intern_str("lst"))]),
+                    make_ctor("IntLit", vec![Value::Int(i as i64)]),
+                ]),
+            ]);
+            let unwrapped = make_ctor("Call", vec![
+                Value::Str(intern_str("option_unwrap")),
+                Value::List(vec![get_call]),
+            ]);
+            let then_branch = make_ctor("Call", vec![
+                Value::Str(intern_str(&transform_fn)),
+                Value::List(vec![unwrapped]),
+            ]);
+            make_ctor("If", vec![cond, then_branch, make_ctor("UnitLit", vec![])])
+        };
 
         term = make_ctor("Let", vec![
             Value::Str(intern_str(&res_name)),
-            if_expr,
+            iter_expr,
             term,
         ]);
     }

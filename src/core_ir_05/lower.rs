@@ -48,7 +48,8 @@ fn fn_result_type(name: &str) -> Hash256 {
         "io_print" | "io_println" | "io_eprint" | "io_eprint_ln"
         | "fs_write_text" | "fs_append_text" | "debug_trace"
         | "proc_exit" | "proc_sleep"
-        | "unit_id" | "seq_unit"  => unit_type_hash(),
+        | "unit_id" | "seq_unit"
+        | "list_get_println_if_some"  => unit_type_hash(),
         _                       => NO_RESULT_TYPE,
     }
 }

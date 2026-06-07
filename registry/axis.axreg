@@ -212,6 +212,11 @@ fn list_get_at
   deterministic true
   profile pure
 end
+fn list_get_println_if_some
+  arity 1
+  deterministic false
+  profile full_io
+end
 fn list_append
   arity 1
   deterministic true
