@@ -69,6 +69,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("tuple_field", "axis_codegen_bridge::runtime::tuple::tuple_field");
     m.insert("ctor_field",  "axis_codegen_bridge::runtime::tuple::ctor_field");
     m.insert("ctor_is_ok",  "axis_codegen_bridge::runtime::tuple::ctor_is_ok");
+    m.insert("result_text_unwrap", "axis_codegen_bridge::runtime::tuple::result_text_unwrap");
 
     // Option
     m.insert("option_none",    "axis_codegen_bridge::runtime::option::option_none_fn");
