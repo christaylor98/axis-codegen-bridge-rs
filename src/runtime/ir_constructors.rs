@@ -1044,6 +1044,14 @@ pub fn ir_build_fold_from_spec(v: Value) -> Value {
                         .unwrap_or_else(|_| panic!("ir_build_fold_from_spec: invalid int literal {:?} for source_arg{}_val in {}", val_str, i, path));
                     make_ctor("IntLit", vec![Value::Int(n)])
                 }
+                2 => {
+                    let n: i64 = val_str.parse()
+                        .unwrap_or_else(|_| panic!("ir_build_fold_from_spec: source_arg{}_val must be integer for type 2 (Argv), got {:?} in {}", i, val_str, path));
+                    make_ctor("Call", vec![
+                        Value::Str(intern_str("argv")),
+                        Value::List(vec![make_ctor("IntLit", vec![Value::Int(n)])]),
+                    ])
+                }
                 _ => panic!("ir_build_fold_from_spec: invalid source_arg{}_type {} in {}", i, typ_int, path),
             }
         }).collect()
@@ -1316,5 +1324,39 @@ transform_fn: my_t
         assert_eq!(args.len(), 1);
         let lit = unwrap_ctor(&args[0], "IntLit");
         assert!(matches!(lit[0], Value::Int(42)));
+    }
+
+    #[test]
+    fn argv_source_args_emit_argv_calls() {
+        let path = write_spec("argv_args", "\
+effect: full_io
+source_fn: str_split
+source_nargs: 2
+source_arg1_type: 2
+source_arg1_val: 1
+source_arg2_type: 2
+source_arg2_val: 2
+element_var: elem
+transform_fn: io_println
+");
+        let (target, args) = outer_source_call(
+            ir_build_fold_from_spec(Value::Str(intern_str(path.to_str().unwrap())))
+        );
+        assert_eq!(target, "str_split");
+        assert_eq!(args.len(), 2);
+        // Each arg should be Call("argv", [IntLit(n)])
+        let call1 = unwrap_ctor(&args[0], "Call");
+        assert_eq!(expect_str(&call1[0]), "argv");
+        let call1_args = match &call1[1] { Value::List(xs) => xs, other => panic!("{:?}", other) };
+        assert_eq!(call1_args.len(), 1);
+        let lit1 = unwrap_ctor(&call1_args[0], "IntLit");
+        assert!(matches!(lit1[0], Value::Int(1)));
+
+        let call2 = unwrap_ctor(&args[1], "Call");
+        assert_eq!(expect_str(&call2[0]), "argv");
+        let call2_args = match &call2[1] { Value::List(xs) => xs, other => panic!("{:?}", other) };
+        assert_eq!(call2_args.len(), 1);
+        let lit2 = unwrap_ctor(&call2_args[0], "IntLit");
+        assert!(matches!(lit2[0], Value::Int(2)));
     }
 }
