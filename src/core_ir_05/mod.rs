@@ -30,6 +30,9 @@ pub enum Node {
     CCall {
         target_identity: Hash256,
         args: Vec<NodeRef>,
+        /// Output type def_hash. All-zero = not annotated (verifier falls back to
+        /// registry lookup). Set to the function's declared return type hash.
+        result_type: Hash256,
     },
     CIf {
         cond: NodeRef,
@@ -96,6 +99,22 @@ pub fn unit_type_hash() -> Hash256 { primitive_type_hash(0) }
 pub fn bool_type_hash() -> Hash256 { primitive_type_hash(1) }
 pub fn int_type_hash()  -> Hash256 { primitive_type_hash(2) }
 pub fn text_type_hash() -> Hash256 { primitive_type_hash(5) }
+
+/// List type hash: sha256([0x01, 0x03, element_type_hash...]).
+/// shape_kind 0x03 = list.
+pub fn list_type_hash(element: &Hash256) -> Hash256 {
+    let mut buf = vec![0x01u8, 0x03];
+    buf.extend_from_slice(element);
+    sha256_bytes(&buf)
+}
+
+/// TextList = List(Text).
+pub fn text_list_type_hash() -> Hash256 {
+    list_type_hash(&text_type_hash())
+}
+
+/// All-zero hash sentinel meaning "result type not annotated".
+pub const NO_RESULT_TYPE: Hash256 = [0u8; 32];
 
 // ── Payload codecs ────────────────────────────────────────────────────────────
 //

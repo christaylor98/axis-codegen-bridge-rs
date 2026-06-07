@@ -251,7 +251,7 @@ fn emit_node(
     name_to_path: &HashMap<&'static str, &'static str>,
 ) -> Result<String, String> {
     match node {
-        Node::CCall { target_identity, args } => {
+        Node::CCall { target_identity, args, .. } => {
             // Resolve: try builtin map first, then registry → name → builtin map
             let path: String = if let Some(&p) = builtin.get(target_identity) {
                 p.to_string()

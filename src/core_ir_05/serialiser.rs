@@ -2,7 +2,7 @@ use capnp::message::Builder;
 use capnp::serialize;
 use std::fs;
 
-use super::{ConstantPoolEntry, CoreBundle, Hash256, Node, NodeRef};
+use super::{ConstantPoolEntry, CoreBundle, Hash256, Node, NodeRef, NO_RESULT_TYPE};
 use crate::axis_core_ir_0_5_capnp as capnp05;
 
 fn set_hash256(mut b: capnp05::hash256::Builder<'_>, h: &Hash256) {
@@ -49,7 +49,7 @@ pub fn create_core_bundle_05(bundle: &CoreBundle) -> Vec<u8> {
             for (i, node) in bundle.nodes.iter().enumerate() {
                 let node_b = nodes_b.reborrow().get(i as u32);
                 match node {
-                    Node::CCall { target_identity, args } => {
+                    Node::CCall { target_identity, args, result_type } => {
                         let mut ccall = node_b.init_c_call();
                         {
                             let hb = ccall.reborrow().init_target_identity();
@@ -59,6 +59,10 @@ pub fn create_core_bundle_05(bundle: &CoreBundle) -> Vec<u8> {
                         for (j, arg) in args.iter().enumerate() {
                             let ab = args_b.reborrow().get(j as u32);
                             set_noderef(ab, arg);
+                        }
+                        if result_type != &NO_RESULT_TYPE {
+                            let rt_b = ccall.reborrow().init_result_type();
+                            set_hash256(rt_b, result_type);
                         }
                     }
                     Node::CIf { cond, then_, else_ } => {
@@ -133,6 +137,6 @@ pub fn make_ccall_bundle(
     CoreBundle {
         version: "0.5".to_string(),
         constant_pool: pool,
-        nodes: vec![Node::CCall { target_identity, args }],
+        nodes: vec![Node::CCall { target_identity, args, result_type: NO_RESULT_TYPE }],
     }
 }

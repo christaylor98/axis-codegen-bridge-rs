@@ -239,6 +239,16 @@ struct CCall {
   # Mismatch is a hard FAIL — this is the type-check the arity-only
   # registry could not perform.
   args           @1 :List(NodeRef);
+
+  # The type identity of this node's result value — the def_hash the Verifier
+  # should attribute to NodeRef.node(i) when this node is referenced as an
+  # argument to a later node.
+  #
+  # Producers MUST set this to the def_hash declared in the function's frozen
+  # signature. The Verifier reads this field and checks it against the
+  # function's declared output type. An all-zero hash means "not annotated"
+  # and reverts to registry-lookup behaviour.
+  resultType     @2 :Hash256;
 }
 
 

@@ -625,7 +625,7 @@ fn value_from_bundle_05(bundle: &crate::core_ir_05::CoreBundle) -> Value {
 fn walk_node_05(bundle: &crate::core_ir_05::CoreBundle, idx: usize) -> Value {
     use crate::core_ir_05::{hash256_to_hex, Node};
     match &bundle.nodes[idx] {
-        Node::CCall { target_identity, args } => {
+        Node::CCall { target_identity, args, .. } => {
             let hex = hash256_to_hex(target_identity);
             let target = format!("#{}", &hex[..16]);
             let arg_vals: Vec<Value> =
@@ -739,7 +739,7 @@ pub fn ir_bundle_view(v: Value) -> Value {
             use crate::core_ir_05::{hash256_to_hex, Node, NodeRef};
             for (i, node) in bundle.nodes.iter().enumerate() {
                 let desc = match node {
-                    Node::CCall { target_identity, args } => {
+                    Node::CCall { target_identity, args, .. } => {
                         let hex = hash256_to_hex(target_identity);
                         let args_str: Vec<String> = args.iter().map(|r| match r {
                             NodeRef::Node(n) => format!("node[{}]", n),
