@@ -691,6 +691,95 @@ fn walk_ref_05(bundle: &crate::core_ir_05::CoreBundle, r: &crate::core_ir_05::No
     }
 }
 
+/// ir_bundle_view: takes Str path.
+/// Reads a .coreir file in either Core IR 0.4 or 0.5 format and returns a
+/// human-readable string. Never panics — on error, returns the error message.
+pub fn ir_bundle_view(v: Value) -> Value {
+    let path = match v {
+        Value::Str(s) => get_str(s),
+        other => return Value::Str(intern_str(&format!("ir_bundle_view: expected Str path, got {:?}", other))),
+    };
+
+    // Try 0.5 first (ratchet cache stores 0.5 bundles).
+    match crate::core_ir_05::load_core_bundle(&path) {
+        Ok(bundle) => {
+            let mut out = String::from("CoreIR 0.5\n");
+            // Pool entries
+            for (i, entry) in bundle.constant_pool.iter().enumerate() {
+                use crate::core_ir_05::{
+                    bool_type_hash, decode_bool_payload, decode_int_payload,
+                    decode_text_payload, hash256_to_hex, int_type_hash,
+                    text_type_hash, unit_type_hash,
+                };
+                let dh = entry.def_hash;
+                let desc = if dh == unit_type_hash() {
+                    "Unit".to_string()
+                } else if dh == bool_type_hash() {
+                    match decode_bool_payload(&entry.payload) {
+                        Ok(b) => format!("Bool({})", b),
+                        Err(e) => format!("Bool(<err: {}>)", e),
+                    }
+                } else if dh == int_type_hash() {
+                    match decode_int_payload(&entry.payload) {
+                        Ok(n) => format!("Int({})", n),
+                        Err(e) => format!("Int(<err: {}>)", e),
+                    }
+                } else if dh == text_type_hash() {
+                    match decode_text_payload(&entry.payload) {
+                        Ok(s) => format!("Text({:?})", s),
+                        Err(e) => format!("Text(<err: {}>)", e),
+                    }
+                } else {
+                    let hex = hash256_to_hex(&dh);
+                    format!("Unknown(def={})", &hex[..16])
+                };
+                out.push_str(&format!("pool[{}]: {}\n", i, desc));
+            }
+            // Graph nodes
+            use crate::core_ir_05::{hash256_to_hex, Node, NodeRef};
+            for (i, node) in bundle.nodes.iter().enumerate() {
+                let desc = match node {
+                    Node::CCall { target_identity, args } => {
+                        let hex = hash256_to_hex(target_identity);
+                        let args_str: Vec<String> = args.iter().map(|r| match r {
+                            NodeRef::Node(n) => format!("node[{}]", n),
+                            NodeRef::Pool(p) => format!("pool[{}]", p),
+                        }).collect();
+                        format!("CCall(target={}..., args=[{}])", &hex[..16], args_str.join(", "))
+                    }
+                    Node::CIf { cond, then_, else_ } => {
+                        let ref_str = |r: &NodeRef| match r {
+                            NodeRef::Node(n) => format!("node[{}]", n),
+                            NodeRef::Pool(p) => format!("pool[{}]", p),
+                        };
+                        format!("CIf(cond={}, then={}, else={})",
+                            ref_str(cond), ref_str(then_), ref_str(else_))
+                    }
+                };
+                out.push_str(&format!("node[{}]: {}\n", i, desc));
+            }
+            Value::Str(intern_str(&out))
+        }
+        Err(e05) => {
+            // Fall back to 0.4 path and render via ir_to_string.
+            match load_core_bundle(&path) {
+                Ok(prog) => {
+                    let term_val = core_term_to_value(&prog.root_term);
+                    let body = format!("CoreIR 0.4\n{}", term_to_str(&term_val));
+                    Value::Str(intern_str(&body))
+                }
+                Err(e04) => {
+                    let msg = format!(
+                        "ir_bundle_view: failed as 0.5 ({}) and as 0.4 ({})",
+                        e05, e04
+                    );
+                    Value::Str(intern_str(&msg))
+                }
+            }
+        }
+    }
+}
+
 pub fn ir_build_program_from_spec(v: Value) -> Value {
     let path = match v {
         Value::Str(s) => get_str(s),

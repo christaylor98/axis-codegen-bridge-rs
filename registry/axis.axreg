@@ -457,6 +457,11 @@ fn ir_build_fold_from_spec
   deterministic false
   profile reads
 end
+fn ir_bundle_view
+  arity 1
+  deterministic false
+  profile reads
+end
 
 // ── Registry ──────────────────────────────────────────────────────────────────
 fn registry_has_entry

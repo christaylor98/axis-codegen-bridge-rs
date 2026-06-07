@@ -130,6 +130,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("ir_free_vars",     "axis_codegen_bridge::runtime::ir_constructors::ir_free_vars");
     m.insert("ir_build_program_from_spec", "axis_codegen_bridge::runtime::ir_constructors::ir_build_program_from_spec");
     m.insert("ir_build_fold_from_spec",   "axis_codegen_bridge::runtime::ir_constructors::ir_build_fold_from_spec");
+    m.insert("ir_bundle_view",            "axis_codegen_bridge::runtime::ir_constructors::ir_bundle_view");
     m.insert("ir_eval",          "axis_codegen_bridge::runtime::ir_eval::ir_eval");
     m.insert("ir_apply",         "axis_codegen_bridge::runtime::ir_eval::ir_apply");
 
