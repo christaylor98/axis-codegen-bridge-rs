@@ -73,6 +73,11 @@ fn value_eq
   deterministic true
   profile pure
 end
+fn __eq__
+  arity 1
+  deterministic true
+  profile pure
+end
 
 // ── Boolean (bool_ops.rs) ─────────────────────────────────────────────────────
 fn bool_and
@@ -643,4 +648,11 @@ fn frontend_walk
   arity 1
   deterministic false
   profile io
+end
+
+// ── Composites ────────────────────────────────────────────────────────────────
+fn composite_io_passthrough
+  arity 1
+  deterministic false
+  profile full_io
 end
