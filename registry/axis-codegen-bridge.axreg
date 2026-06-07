@@ -7,6 +7,7 @@ fn int_add
   profile pure
   in (Int, Int)
   out Int
+  effect fullIo
 end
 fn int_sub
   arity 1
@@ -14,6 +15,7 @@ fn int_sub
   profile pure
   in (Int, Int)
   out Int
+  effect fullIo
 end
 fn int_mul
   arity 1
@@ -21,6 +23,7 @@ fn int_mul
   profile pure
   in (Int, Int)
   out Int
+  effect fullIo
 end
 fn int_div
   arity 1
@@ -28,6 +31,7 @@ fn int_div
   profile pure
   in (Int, Int)
   out Int
+  effect fullIo
 end
 fn int_div_checked
   arity 1
@@ -35,6 +39,7 @@ fn int_div_checked
   profile pure
   in (Int, Int)
   out Value
+  effect pure
 end
 fn int_mod
   arity 1
@@ -42,6 +47,7 @@ fn int_mod
   profile pure
   in (Int, Int)
   out Int
+  effect fullIo
 end
 fn int_to_str
   arity 1
@@ -49,6 +55,7 @@ fn int_to_str
   profile pure
   in (Int)
   out Text
+  effect fullIo
 end
 fn str_to_int
   arity 1
@@ -56,6 +63,7 @@ fn str_to_int
   profile pure
   in (Text)
   out Int
+  effect fullIo
 end
 fn int_abs
   arity 1
@@ -63,6 +71,7 @@ fn int_abs
   profile pure
   in (Int)
   out Int
+  effect pure
 end
 
 // ── Comparison (arith.rs) ─────────────────────────────────────────────────────
@@ -72,6 +81,7 @@ fn int_lt
   profile pure
   in (Int, Int)
   out Bool
+  effect fullIo
 end
 fn int_lte
   arity 1
@@ -79,6 +89,7 @@ fn int_lte
   profile pure
   in (Int, Int)
   out Bool
+  effect fullIo
 end
 fn int_gt
   arity 1
@@ -86,6 +97,7 @@ fn int_gt
   profile pure
   in (Int, Int)
   out Bool
+  effect fullIo
 end
 fn int_gte
   arity 1
@@ -93,6 +105,7 @@ fn int_gte
   profile pure
   in (Int, Int)
   out Bool
+  effect fullIo
 end
 fn value_eq
   arity 1
@@ -100,6 +113,7 @@ fn value_eq
   profile pure
   in (Value, Value)
   out Bool
+  effect fullIo
 end
 fn __eq__
   arity 1
@@ -107,6 +121,7 @@ fn __eq__
   profile pure
   in (Value, Value)
   out Bool
+  effect fullIo
 end
 
 // ── Boolean (bool_ops.rs) ─────────────────────────────────────────────────────
@@ -116,6 +131,7 @@ fn bool_and
   profile pure
   in (Value, Value)
   out Bool
+  effect fullIo
 end
 fn bool_or
   arity 1
@@ -123,6 +139,7 @@ fn bool_or
   profile pure
   in (Value, Value)
   out Bool
+  effect fullIo
 end
 fn bool_not
   arity 1
@@ -130,6 +147,7 @@ fn bool_not
   profile pure
   in (Value)
   out Bool
+  effect fullIo
 end
 
 // ── String (str_ops.rs) ───────────────────────────────────────────────────────
@@ -139,6 +157,7 @@ fn str_len
   profile pure
   in (Text)
   out Int
+  effect fullIo
 end
 fn str_concat
   arity 1
@@ -146,6 +165,7 @@ fn str_concat
   profile pure
   in (Text, Text)
   out Text
+  effect fullIo
 end
 fn str_char
   arity 1
@@ -153,6 +173,7 @@ fn str_char
   profile pure
   in (Text, Int)
   out Text
+  effect fullIo
 end
 fn str_char_at
   arity 1
@@ -160,6 +181,7 @@ fn str_char_at
   profile pure
   in (Text, Int)
   out Value
+  effect fullIo
 end
 fn str_char_code
   arity 1
@@ -167,6 +189,7 @@ fn str_char_code
   profile pure
   in (Text, Int)
   out Int
+  effect fullIo
 end
 fn str_slice
   arity 1
@@ -174,6 +197,7 @@ fn str_slice
   profile pure
   in (Text, Int, Int)
   out Text
+  effect fullIo
 end
 fn str_split
   arity 1
@@ -181,6 +205,7 @@ fn str_split
   profile pure
   in (Text, Text)
   out TextList
+  effect fullIo
 end
 fn str_starts_with
   arity 1
@@ -188,6 +213,7 @@ fn str_starts_with
   profile pure
   in (Text, Text)
   out Bool
+  effect fullIo
 end
 fn str_ends_with
   arity 1
@@ -195,6 +221,7 @@ fn str_ends_with
   profile pure
   in (Text, Text)
   out Bool
+  effect fullIo
 end
 fn str_trim
   arity 1
@@ -202,6 +229,7 @@ fn str_trim
   profile pure
   in (Text)
   out Text
+  effect fullIo
 end
 fn str_contains
   arity 1
@@ -209,6 +237,7 @@ fn str_contains
   profile pure
   in (Text, Text)
   out Bool
+  effect fullIo
 end
 fn str_index_of
   arity 1
@@ -216,6 +245,7 @@ fn str_index_of
   profile pure
   in (Text, Text)
   out Int
+  effect fullIo
 end
 fn str_eq
   arity 1
@@ -223,6 +253,7 @@ fn str_eq
   profile pure
   in (Text, Text)
   out Bool
+  effect fullIo
 end
 fn chr
   arity 1
@@ -230,6 +261,7 @@ fn chr
   profile pure
   in (Int)
   out Text
+  effect pure
 end
 
 // ── List (list.rs) ────────────────────────────────────────────────────────────
@@ -239,6 +271,7 @@ fn list_nil
   profile pure
   in (Unit)
   out Value
+  effect fullIo
 end
 fn list_cons
   arity 1
@@ -246,6 +279,7 @@ fn list_cons
   profile pure
   in (Value, Value)
   out Value
+  effect fullIo
 end
 fn list_len
   arity 1
@@ -253,6 +287,7 @@ fn list_len
   profile pure
   in (Value)
   out Int
+  effect fullIo
 end
 fn list_get
   arity 1
@@ -260,6 +295,7 @@ fn list_get
   profile pure
   in (Value, Int)
   out Value
+  effect fullIo
 end
 fn list_get_at
   arity 1
@@ -267,6 +303,7 @@ fn list_get_at
   profile pure
   in (Value, Int)
   out Value
+  effect fullIo
 end
 fn list_head
   arity 1
@@ -274,6 +311,7 @@ fn list_head
   profile pure
   in (Value)
   out Value
+  effect fullIo
 end
 fn list_tail
   arity 1
@@ -281,6 +319,7 @@ fn list_tail
   profile pure
   in (Value)
   out Value
+  effect fullIo
 end
 fn list_is_empty
   arity 1
@@ -288,6 +327,7 @@ fn list_is_empty
   profile pure
   in (Value)
   out Bool
+  effect fullIo
 end
 fn list_append
   arity 1
@@ -295,6 +335,7 @@ fn list_append
   profile pure
   in (Value, Value)
   out Value
+  effect fullIo
 end
 fn list_concat
   arity 1
@@ -302,6 +343,7 @@ fn list_concat
   profile pure
   in (Value, Value)
   out Value
+  effect fullIo
 end
 fn list_reverse
   arity 1
@@ -309,6 +351,7 @@ fn list_reverse
   profile pure
   in (Value)
   out Value
+  effect fullIo
 end
 fn list_of_1
   arity 1
@@ -316,6 +359,7 @@ fn list_of_1
   profile pure
   in (Value)
   out Value
+  effect fullIo
 end
 fn list_of_2
   arity 1
@@ -323,6 +367,7 @@ fn list_of_2
   profile pure
   in (Value, Value)
   out Value
+  effect fullIo
 end
 fn list_of_3
   arity 1
@@ -330,6 +375,7 @@ fn list_of_3
   profile pure
   in (Value, Value, Value)
   out Value
+  effect fullIo
 end
 fn list_str_len_lte_if_some
   arity 1
@@ -337,6 +383,7 @@ fn list_str_len_lte_if_some
   profile pure
   in (Value, Int, Int)
   out Int
+  effect fullIo
 end
 fn list_get_println_if_some
   arity 1
@@ -344,6 +391,7 @@ fn list_get_println_if_some
   profile full_io
   in (Value, Int)
   out Unit
+  effect fullIo
 end
 
 // ── Tuple / Constructor (tuple.rs) ────────────────────────────────────────────
@@ -353,6 +401,7 @@ fn tuple_field
   profile pure
   in (Value, Int)
   out Value
+  effect fullIo
 end
 fn ctor_field
   arity 1
@@ -360,6 +409,7 @@ fn ctor_field
   profile pure
   in (Value, Int)
   out Value
+  effect fullIo
 end
 fn ctor_is_ok
   arity 1
@@ -367,6 +417,7 @@ fn ctor_is_ok
   profile pure
   in (Value)
   out Bool
+  effect pure
 end
 fn result_text_unwrap
   arity 1
@@ -374,6 +425,7 @@ fn result_text_unwrap
   profile pure
   in (Value)
   out Text
+  effect pure
 end
 
 // ── Option (option.rs) ────────────────────────────────────────────────────────
@@ -383,6 +435,7 @@ fn option_none
   profile pure
   in (Unit)
   out Value
+  effect fullIo
 end
 fn option_some
   arity 1
@@ -390,6 +443,7 @@ fn option_some
   profile pure
   in (Value)
   out Value
+  effect fullIo
 end
 fn option_is_none
   arity 1
@@ -397,6 +451,7 @@ fn option_is_none
   profile pure
   in (Value)
   out Bool
+  effect fullIo
 end
 fn option_is_some
   arity 1
@@ -404,6 +459,7 @@ fn option_is_some
   profile pure
   in (Value)
   out Bool
+  effect fullIo
 end
 fn option_unwrap
   arity 1
@@ -411,6 +467,7 @@ fn option_unwrap
   profile pure
   in (Value)
   out Value
+  effect fullIo
 end
 
 // ── IO (io.rs) ────────────────────────────────────────────────────────────────
@@ -420,6 +477,7 @@ fn io_print
   profile writes
   in (Value)
   out Unit
+  effect fullIo
 end
 fn io_println
   arity 1
@@ -427,6 +485,7 @@ fn io_println
   profile writes
   in (Value)
   out Unit
+  effect fullIo
 end
 fn io_eprint
   arity 1
@@ -434,6 +493,7 @@ fn io_eprint
   profile writes
   in (Value)
   out Unit
+  effect fullIo
 end
 fn io_read_line
   arity 1
@@ -441,6 +501,7 @@ fn io_read_line
   profile reads
   in (Unit)
   out Text
+  effect fullIo
 end
 fn fs_read_text
   arity 1
@@ -448,6 +509,7 @@ fn fs_read_text
   profile reads
   in (Text)
   out Value
+  effect fullIo
 end
 fn fs_write_text
   arity 1
@@ -455,6 +517,7 @@ fn fs_write_text
   profile writes
   in (Text, Text)
   out Value
+  effect fullIo
 end
 fn fs_append_text
   arity 1
@@ -462,6 +525,7 @@ fn fs_append_text
   profile writes
   in (Text, Text)
   out Value
+  effect fullIo
 end
 fn debug_trace
   arity 1
@@ -469,6 +533,7 @@ fn debug_trace
   profile writes
   in (Value)
   out Unit
+  effect fullIo
 end
 
 // ── Process (process.rs) ──────────────────────────────────────────────────────
@@ -478,6 +543,7 @@ fn proc_args
   profile reads
   in (Unit)
   out TextList
+  effect fullIo
 end
 fn proc_exit
   arity 1
@@ -485,6 +551,7 @@ fn proc_exit
   profile full_io
   in (Unit)
   out Unit
+  effect fullIo
 end
 fn proc_sleep
   arity 1
@@ -492,6 +559,7 @@ fn proc_sleep
   profile writes
   in (Int)
   out Unit
+  effect writes
 end
 fn sleep
   arity 1
@@ -499,6 +567,7 @@ fn sleep
   profile writes
   in (Int)
   out Unit
+  effect fullIo
 end
 fn argv
   arity 1
@@ -506,6 +575,7 @@ fn argv
   profile reads
   in (Int)
   out Text
+  effect fullIo
 end
 fn argv_int
   arity 1
@@ -513,6 +583,7 @@ fn argv_int
   profile reads
   in (Int)
   out Int
+  effect fullIo
 end
 fn argv_count
   arity 1
@@ -520,6 +591,7 @@ fn argv_count
   profile reads
   in (Unit)
   out Int
+  effect fullIo
 end
 fn argv_or
   arity 1
@@ -527,6 +599,7 @@ fn argv_or
   profile reads
   in (Int, Text)
   out Text
+  effect fullIo
 end
 
 // ── IR Constructors (ir_constructors.rs) ──────────────────────────────────────
@@ -536,6 +609,7 @@ fn ir_make_int_lit
   profile pure
   in (Int)
   out Value
+  effect fullIo
 end
 fn ir_make_bool_lit
   arity 1
@@ -543,6 +617,7 @@ fn ir_make_bool_lit
   profile pure
   in (Bool)
   out Value
+  effect fullIo
 end
 fn ir_make_unit_lit
   arity 1
@@ -550,6 +625,7 @@ fn ir_make_unit_lit
   profile pure
   in (Unit)
   out Value
+  effect fullIo
 end
 fn ir_make_var
   arity 1
@@ -557,6 +633,7 @@ fn ir_make_var
   profile pure
   in (Text)
   out Value
+  effect fullIo
 end
 fn ir_make_lam
   arity 1
@@ -564,6 +641,7 @@ fn ir_make_lam
   profile pure
   in (Text, Value)
   out Value
+  effect fullIo
 end
 fn ir_make_let
   arity 1
@@ -571,6 +649,7 @@ fn ir_make_let
   profile pure
   in (Text, Value, Value)
   out Value
+  effect fullIo
 end
 fn ir_make_if
   arity 1
@@ -578,6 +657,7 @@ fn ir_make_if
   profile pure
   in (Value, Value, Value)
   out Value
+  effect fullIo
 end
 fn ir_make_app
   arity 1
@@ -585,6 +665,7 @@ fn ir_make_app
   profile pure
   in (Value, Value)
   out Value
+  effect fullIo
 end
 fn ir_make_call
   arity 1
@@ -592,6 +673,7 @@ fn ir_make_call
   profile pure
   in (Text, Value)
   out Value
+  effect fullIo
 end
 fn ir_term_kind
   arity 1
@@ -599,6 +681,7 @@ fn ir_term_kind
   profile pure
   in (Value)
   out Text
+  effect fullIo
 end
 fn ir_to_string
   arity 1
@@ -606,6 +689,7 @@ fn ir_to_string
   profile pure
   in (Value)
   out Text
+  effect fullIo
 end
 fn ir_to_h1_string
   arity 1
@@ -613,6 +697,7 @@ fn ir_to_h1_string
   profile pure
   in (Value)
   out Text
+  effect fullIo
 end
 fn ir_subst
   arity 1
@@ -620,6 +705,7 @@ fn ir_subst
   profile pure
   in (Text, Value, Value)
   out Value
+  effect fullIo
 end
 fn ir_rename
   arity 1
@@ -627,6 +713,7 @@ fn ir_rename
   profile pure
   in (Text, Text, Value)
   out Value
+  effect fullIo
 end
 fn ir_free_vars
   arity 1
@@ -634,6 +721,7 @@ fn ir_free_vars
   profile pure
   in (Value)
   out TextList
+  effect fullIo
 end
 fn ir_write_bundle
   arity 1
@@ -641,6 +729,7 @@ fn ir_write_bundle
   profile writes
   in (Unit)
   out Unit
+  effect fullIo
 end
 fn ir_read_bundle
   arity 1
@@ -648,6 +737,7 @@ fn ir_read_bundle
   profile reads
   in (Text)
   out Value
+  effect fullIo
 end
 fn ir_build_program_from_spec
   arity 1
@@ -655,6 +745,7 @@ fn ir_build_program_from_spec
   profile reads
   in (Text)
   out Value
+  effect fullIo
 end
 fn ir_build_fold_from_spec
   arity 1
@@ -662,6 +753,7 @@ fn ir_build_fold_from_spec
   profile reads
   in (Text)
   out Value
+  effect reads
 end
 fn ir_bundle_view
   arity 1
@@ -669,6 +761,7 @@ fn ir_bundle_view
   profile reads
   in (Text)
   out Text
+  effect fullIo
 end
 
 // ── IR Eval (ir_eval.rs) ──────────────────────────────────────────────────────
@@ -678,6 +771,7 @@ fn ir_eval
   profile pure
   in (Value, Value)
   out Value
+  effect fullIo
 end
 fn ir_apply
   arity 1
@@ -685,6 +779,7 @@ fn ir_apply
   profile pure
   in (Value, Value)
   out Value
+  effect fullIo
 end
 
 // ── IR Accessors (ir_accessors.rs) ────────────────────────────────────────────
@@ -694,6 +789,7 @@ fn ir_get_kind
   profile pure
   in (Value)
   out Text
+  effect pure
 end
 fn ir_get_name
   arity 1
@@ -701,6 +797,7 @@ fn ir_get_name
   profile pure
   in (Value)
   out Text
+  effect pure
 end
 fn ir_get_int_val
   arity 1
@@ -708,6 +805,7 @@ fn ir_get_int_val
   profile pure
   in (Value)
   out Int
+  effect pure
 end
 fn ir_get_fn
   arity 1
@@ -715,6 +813,7 @@ fn ir_get_fn
   profile pure
   in (Value)
   out Value
+  effect pure
 end
 fn ir_get_arg
   arity 1
@@ -722,6 +821,7 @@ fn ir_get_arg
   profile pure
   in (Value)
   out Value
+  effect pure
 end
 fn ir_get_body
   arity 1
@@ -729,6 +829,7 @@ fn ir_get_body
   profile pure
   in (Value)
   out Value
+  effect pure
 end
 fn ir_get_value
   arity 1
@@ -736,6 +837,7 @@ fn ir_get_value
   profile pure
   in (Value)
   out Value
+  effect pure
 end
 fn ir_get_cond
   arity 1
@@ -743,6 +845,7 @@ fn ir_get_cond
   profile pure
   in (Value)
   out Value
+  effect pure
 end
 fn ir_get_then
   arity 1
@@ -750,6 +853,7 @@ fn ir_get_then
   profile pure
   in (Value)
   out Value
+  effect pure
 end
 fn ir_get_else
   arity 1
@@ -757,6 +861,7 @@ fn ir_get_else
   profile pure
   in (Value)
   out Value
+  effect pure
 end
 
 // ── Registry (registry.rs) ────────────────────────────────────────────────────
@@ -766,6 +871,7 @@ fn registry_has_entry
   profile reads
   in (Text)
   out Bool
+  effect fullIo
 end
 fn registry_lookup
   arity 1
@@ -773,6 +879,7 @@ fn registry_lookup
   profile reads
   in (Text)
   out Value
+  effect fullIo
 end
 fn registry_get_provenance
   arity 1
@@ -780,6 +887,7 @@ fn registry_get_provenance
   profile reads
   in (Text)
   out Value
+  effect fullIo
 end
 fn registry_get_contract
   arity 1
@@ -787,6 +895,7 @@ fn registry_get_contract
   profile reads
   in (Text)
   out Value
+  effect fullIo
 end
 fn registry_get_effect_sig
   arity 1
@@ -794,6 +903,7 @@ fn registry_get_effect_sig
   profile reads
   in (Text)
   out Value
+  effect fullIo
 end
 fn registry_all_entries
   arity 1
@@ -801,6 +911,7 @@ fn registry_all_entries
   profile reads
   in (Unit)
   out Value
+  effect fullIo
 end
 fn registry_insert
   arity 1
@@ -808,6 +919,7 @@ fn registry_insert
   profile writes
   in (Text, Text, Text)
   out Value
+  effect fullIo
 end
 fn registry_verify_chain
   arity 1
@@ -815,6 +927,7 @@ fn registry_verify_chain
   profile reads
   in (Unit)
   out Bool
+  effect fullIo
 end
 fn registry_compound_id
   arity 1
@@ -822,6 +935,7 @@ fn registry_compound_id
   profile pure
   in (Text, Text)
   out Text
+  effect fullIo
 end
 
 // ── Transitions (transitions.rs) ──────────────────────────────────────────────
@@ -831,6 +945,7 @@ fn introduce_let_binding
   profile pure
   in (Value)
   out Value
+  effect pure
 end
 fn introduce_lambda
   arity 1
@@ -838,6 +953,7 @@ fn introduce_lambda
   profile pure
   in (Value)
   out Value
+  effect pure
 end
 fn apply_function
   arity 1
@@ -845,6 +961,7 @@ fn apply_function
   profile pure
   in (Value)
   out Value
+  effect pure
 end
 fn extract_subterm_to_function
   arity 1
@@ -852,6 +969,7 @@ fn extract_subterm_to_function
   profile pure
   in (Value)
   out Value
+  effect pure
 end
 fn inline_let_binding
   arity 1
@@ -859,6 +977,7 @@ fn inline_let_binding
   profile pure
   in (Value)
   out Value
+  effect pure
 end
 fn rename_bound_variable
   arity 1
@@ -866,6 +985,7 @@ fn rename_bound_variable
   profile pure
   in (Value)
   out Value
+  effect pure
 end
 fn reference_registry_function
   arity 1
@@ -873,6 +993,7 @@ fn reference_registry_function
   profile pure
   in (Value)
   out Value
+  effect pure
 end
 fn verify_foreign_reference
   arity 1
@@ -880,6 +1001,7 @@ fn verify_foreign_reference
   profile pure
   in (Value)
   out Value
+  effect pure
 end
 
 // ── Frontend (frontend.rs) ────────────────────────────────────────────────────
@@ -889,6 +1011,7 @@ fn frontend_lookup_shape
   profile io
   in (Text, Text)
   out Text
+  effect fullIo
 end
 fn frontend_walk
   arity 1
@@ -896,6 +1019,7 @@ fn frontend_walk
   profile io
   in (Text, Text, Text)
   out Text
+  effect fullIo
 end
 
 // ── Composites ────────────────────────────────────────────────────────────────
@@ -905,4 +1029,5 @@ fn composite_io_passthrough
   profile full_io
   in (Unit)
   out Unit
+  effect fullIo
 end
