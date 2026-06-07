@@ -627,11 +627,8 @@ pub fn ir_build_program_from_spec(v: Value) -> Value {
         panic!("ir_build_program_from_spec: N={} out of range (must be 1-8) in {}", n, path);
     }
 
-    let expected = 2 + n * 7 + 6;
-    if lines.len() != expected {
-        panic!("ir_build_program_from_spec: line count mismatch in {}: expected {}, got {}", path, expected, lines.len());
-    }
-
+    // Variable-arity, cursor-based parse. Per step: name, fn, nargs, then nargs
+    // (arg_type, arg_val) pairs. Final: fn, nargs, then nargs pairs. No arity cap.
     let parse_arg = |typ: &str, val: &str| -> Value {
         let typ_int: i64 = typ.trim().parse()
             .unwrap_or_else(|_| panic!("ir_build_program_from_spec: invalid arg_type {:?}", typ));
@@ -646,44 +643,58 @@ pub fn ir_build_program_from_spec(v: Value) -> Value {
         }
     };
 
+    let mut idx = 2usize; // cursor past effect + N
+    let read_args = |idx: &mut usize, nargs: usize, where_: &str| -> Vec<Value> {
+        if *idx + nargs * 2 > lines.len() {
+            panic!("ir_build_program_from_spec: spec too short for {} args at {} in {}", nargs, where_, path);
+        }
+        let mut args = Vec::with_capacity(nargs);
+        for _ in 0..nargs {
+            args.push(parse_arg(lines[*idx], lines[*idx + 1]));
+            *idx += 2;
+        }
+        args
+    };
+
     // Build step call terms and collect (binding_name, call_term)
     let mut steps: Vec<(String, Value)> = Vec::with_capacity(n);
     for k in 0..n {
-        let base = 2 + k * 7;
-        let binding_name = lines[base].trim().to_string();
-        let fn_name      = lines[base + 1].trim();
-        let nargs: i64   = lines[base + 2].trim().parse()
+        if idx + 3 > lines.len() {
+            panic!("ir_build_program_from_spec: spec too short at step {} in {}", k, path);
+        }
+        let binding_name = lines[idx].trim().to_string();
+        let fn_name      = lines[idx + 1].trim().to_string();
+        let nargs: usize = lines[idx + 2].trim().parse()
             .unwrap_or_else(|_| panic!("ir_build_program_from_spec: invalid nargs at step {}", k));
-        if nargs != 1 && nargs != 2 {
-            panic!("ir_build_program_from_spec: nargs={} invalid at step {} (must be 1 or 2)", nargs, k);
+        if nargs < 1 {
+            panic!("ir_build_program_from_spec: nargs={} invalid at step {} (must be >= 1)", nargs, k);
         }
-        let a1 = parse_arg(lines[base + 3], lines[base + 4]);
-        let mut args = vec![a1];
-        if nargs == 2 {
-            args.push(parse_arg(lines[base + 5], lines[base + 6]));
-        }
+        idx += 3;
+        let args = read_args(&mut idx, nargs, &format!("step {}", k));
         let call = make_ctor("Call", vec![
-            Value::Str(intern_str(fn_name)),
+            Value::Str(intern_str(&fn_name)),
             Value::List(args),
         ]);
         steps.push((binding_name, call));
     }
 
     // Build final call term
-    let fb = 2 + n * 7;
-    let final_fn     = lines[fb].trim();
-    let final_nargs: i64 = lines[fb + 1].trim().parse()
-        .unwrap_or_else(|_| panic!("ir_build_program_from_spec: invalid final nargs in {}", path));
-    if final_nargs != 1 && final_nargs != 2 {
-        panic!("ir_build_program_from_spec: final nargs={} invalid (must be 1 or 2) in {}", final_nargs, path);
+    if idx + 2 > lines.len() {
+        panic!("ir_build_program_from_spec: spec missing final call in {}", path);
     }
-    let fa1 = parse_arg(lines[fb + 2], lines[fb + 3]);
-    let mut final_args = vec![fa1];
-    if final_nargs == 2 {
-        final_args.push(parse_arg(lines[fb + 4], lines[fb + 5]));
+    let final_fn     = lines[idx].trim().to_string();
+    let final_nargs: usize = lines[idx + 1].trim().parse()
+        .unwrap_or_else(|_| panic!("ir_build_program_from_spec: invalid final nargs in {}", path));
+    if final_nargs < 1 {
+        panic!("ir_build_program_from_spec: final nargs={} invalid (must be >= 1) in {}", final_nargs, path);
+    }
+    idx += 2;
+    let final_args = read_args(&mut idx, final_nargs, "final");
+    if idx != lines.len() {
+        panic!("ir_build_program_from_spec: {} trailing line(s) in {}", lines.len() - idx, path);
     }
     let final_call = make_ctor("Call", vec![
-        Value::Str(intern_str(final_fn)),
+        Value::Str(intern_str(&final_fn)),
         Value::List(final_args),
     ]);
 
