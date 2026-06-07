@@ -1,6 +1,6 @@
 registry axis-codegen-bridge 0.1
 
-// ── Arithmetic ────────────────────────────────────────────────────────────────
+// ── Arithmetic (arith.rs) ─────────────────────────────────────────────────────
 fn int_add
   arity 1
   deterministic true
@@ -41,8 +41,13 @@ fn str_to_int
   deterministic true
   profile pure
 end
+fn int_abs
+  arity 1
+  deterministic true
+  profile pure
+end
 
-// ── Comparison ───────────────────────────────────────────────────────────────
+// ── Comparison (arith.rs) ─────────────────────────────────────────────────────
 fn int_lt
   arity 1
   deterministic true
@@ -69,7 +74,7 @@ fn value_eq
   profile pure
 end
 
-// ── Boolean ──────────────────────────────────────────────────────────────────
+// ── Boolean (bool_ops.rs) ─────────────────────────────────────────────────────
 fn bool_and
   arity 1
   deterministic true
@@ -86,7 +91,7 @@ fn bool_not
   profile pure
 end
 
-// ── String ───────────────────────────────────────────────────────────────────
+// ── String (str_ops.rs) ───────────────────────────────────────────────────────
 fn str_len
   arity 1
   deterministic true
@@ -117,8 +122,48 @@ fn str_slice
   deterministic true
   profile pure
 end
+fn str_split
+  arity 1
+  deterministic true
+  profile pure
+end
+fn str_starts_with
+  arity 1
+  deterministic true
+  profile pure
+end
+fn str_ends_with
+  arity 1
+  deterministic true
+  profile pure
+end
+fn str_trim
+  arity 1
+  deterministic true
+  profile pure
+end
+fn str_contains
+  arity 1
+  deterministic true
+  profile pure
+end
+fn str_index_of
+  arity 1
+  deterministic true
+  profile pure
+end
+fn str_eq
+  arity 1
+  deterministic true
+  profile pure
+end
+fn chr
+  arity 1
+  deterministic true
+  profile pure
+end
 
-// ── List ─────────────────────────────────────────────────────────────────────
+// ── List (list.rs) ────────────────────────────────────────────────────────────
 fn list_nil
   arity 1
   deterministic true
@@ -144,6 +189,21 @@ fn list_get_at
   deterministic true
   profile pure
 end
+fn list_head
+  arity 1
+  deterministic true
+  profile pure
+end
+fn list_tail
+  arity 1
+  deterministic true
+  profile pure
+end
+fn list_is_empty
+  arity 1
+  deterministic true
+  profile pure
+end
 fn list_append
   arity 1
   deterministic true
@@ -159,8 +219,33 @@ fn list_reverse
   deterministic true
   profile pure
 end
+fn list_of_1
+  arity 1
+  deterministic true
+  profile pure
+end
+fn list_of_2
+  arity 1
+  deterministic true
+  profile pure
+end
+fn list_of_3
+  arity 1
+  deterministic true
+  profile pure
+end
+fn list_str_len_lte_if_some
+  arity 1
+  deterministic true
+  profile pure
+end
+fn list_get_println_if_some
+  arity 1
+  deterministic false
+  profile full_io
+end
 
-// ── Tuple / Constructor ───────────────────────────────────────────────────────
+// ── Tuple / Constructor (tuple.rs) ────────────────────────────────────────────
 fn tuple_field
   arity 1
   deterministic true
@@ -171,8 +256,18 @@ fn ctor_field
   deterministic true
   profile pure
 end
+fn ctor_is_ok
+  arity 1
+  deterministic true
+  profile pure
+end
+fn result_text_unwrap
+  arity 1
+  deterministic true
+  profile pure
+end
 
-// ── Option ───────────────────────────────────────────────────────────────────
+// ── Option (option.rs) ────────────────────────────────────────────────────────
 fn option_none
   arity 1
   deterministic true
@@ -199,7 +294,7 @@ fn option_unwrap
   profile pure
 end
 
-// ── IO ───────────────────────────────────────────────────────────────────────
+// ── IO (io.rs) ────────────────────────────────────────────────────────────────
 fn io_print
   arity 1
   deterministic false
@@ -241,7 +336,7 @@ fn debug_trace
   profile writes
 end
 
-// ── Process ──────────────────────────────────────────────────────────────────
+// ── Process (process.rs) ──────────────────────────────────────────────────────
 fn proc_args
   arity 1
   deterministic false
@@ -252,8 +347,300 @@ fn proc_exit
   deterministic false
   profile full_io
 end
+fn proc_sleep
+  arity 1
+  deterministic false
+  profile writes
+end
 fn sleep
   arity 1
   deterministic false
   profile writes
+end
+fn argv
+  arity 1
+  deterministic false
+  profile reads
+end
+fn argv_int
+  arity 1
+  deterministic false
+  profile reads
+end
+fn argv_count
+  arity 1
+  deterministic false
+  profile reads
+end
+fn argv_or
+  arity 1
+  deterministic false
+  profile reads
+end
+
+// ── IR Constructors (ir_constructors.rs) ──────────────────────────────────────
+fn ir_make_int_lit
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_make_bool_lit
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_make_unit_lit
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_make_var
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_make_lam
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_make_let
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_make_if
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_make_app
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_make_call
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_term_kind
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_to_string
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_to_h1_string
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_subst
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_rename
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_free_vars
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_write_bundle
+  arity 1
+  deterministic false
+  profile writes
+end
+fn ir_read_bundle
+  arity 1
+  deterministic false
+  profile reads
+end
+fn ir_build_program_from_spec
+  arity 1
+  deterministic false
+  profile reads
+end
+fn ir_build_fold_from_spec
+  arity 1
+  deterministic false
+  profile reads
+end
+fn ir_bundle_view
+  arity 1
+  deterministic false
+  profile reads
+end
+
+// ── IR Eval (ir_eval.rs) ──────────────────────────────────────────────────────
+fn ir_eval
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_apply
+  arity 1
+  deterministic true
+  profile pure
+end
+
+// ── IR Accessors (ir_accessors.rs) ────────────────────────────────────────────
+fn ir_get_kind
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_get_name
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_get_int_val
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_get_fn
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_get_arg
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_get_body
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_get_value
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_get_cond
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_get_then
+  arity 1
+  deterministic true
+  profile pure
+end
+fn ir_get_else
+  arity 1
+  deterministic true
+  profile pure
+end
+
+// ── Registry (registry.rs) ────────────────────────────────────────────────────
+fn registry_has_entry
+  arity 1
+  deterministic true
+  profile reads
+end
+fn registry_lookup
+  arity 1
+  deterministic true
+  profile reads
+end
+fn registry_get_provenance
+  arity 1
+  deterministic true
+  profile reads
+end
+fn registry_get_contract
+  arity 1
+  deterministic true
+  profile reads
+end
+fn registry_get_effect_sig
+  arity 1
+  deterministic true
+  profile reads
+end
+fn registry_all_entries
+  arity 1
+  deterministic true
+  profile reads
+end
+fn registry_insert
+  arity 1
+  deterministic false
+  profile writes
+end
+fn registry_verify_chain
+  arity 1
+  deterministic true
+  profile reads
+end
+fn registry_compound_id
+  arity 1
+  deterministic true
+  profile pure
+end
+
+// ── Transitions (transitions.rs) ──────────────────────────────────────────────
+fn introduce_let_binding
+  arity 1
+  deterministic true
+  profile pure
+end
+fn introduce_lambda
+  arity 1
+  deterministic true
+  profile pure
+end
+fn apply_function
+  arity 1
+  deterministic true
+  profile pure
+end
+fn extract_subterm_to_function
+  arity 1
+  deterministic true
+  profile pure
+end
+fn inline_let_binding
+  arity 1
+  deterministic true
+  profile pure
+end
+fn rename_bound_variable
+  arity 1
+  deterministic true
+  profile pure
+end
+fn reference_registry_function
+  arity 1
+  deterministic true
+  profile pure
+end
+fn verify_foreign_reference
+  arity 1
+  deterministic true
+  profile pure
+end
+
+// ── Frontend (frontend.rs) ────────────────────────────────────────────────────
+fn frontend_lookup_shape
+  arity 1
+  deterministic false
+  profile io
+end
+fn frontend_walk
+  arity 1
+  deterministic false
+  profile io
 end
