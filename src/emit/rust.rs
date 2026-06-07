@@ -99,6 +99,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("proc_sleep",  "axis_codegen_bridge::runtime::process::proc_sleep");
     m.insert("sleep",       "axis_codegen_bridge::runtime::process::sleep");
     m.insert("argv",        "axis_codegen_bridge::runtime::process::argv");
+    m.insert("argv_get",    "axis_codegen_bridge::runtime::process::argv_get");
     m.insert("argv_int",    "axis_codegen_bridge::runtime::process::argv_int");
     m.insert("argv_count",  "axis_codegen_bridge::runtime::process::argv_count");
     m.insert("argv_or",     "axis_codegen_bridge::runtime::process::argv_or");

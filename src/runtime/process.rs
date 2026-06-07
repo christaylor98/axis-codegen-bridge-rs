@@ -42,6 +42,15 @@ pub fn argv(idx: Value) -> Value {
     }
 }
 
+pub fn argv_get(idx: Value) -> Value {
+    let i = match idx { Value::Int(n) => n as usize, _ => 0 };
+    let args = get_process_args();
+    match args.get(i) {
+        Some(s) => Value::Str(intern_str(s)),
+        None => Value::Str(intern_str("")),
+    }
+}
+
 pub fn argv_int(idx: Value) -> Value {
     let i = match idx { Value::Int(n) => n as usize, _ => 0 };
     let args = get_process_args();

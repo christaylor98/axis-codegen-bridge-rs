@@ -41,7 +41,7 @@ fn fn_result_type(name: &str) -> Hash256 {
         | "ctor_is_ok"          => bool_type_hash(),
         // Text-returning
         "int_to_str" | "str_concat" | "str_slice" | "str_trim" | "str_char"
-        | "chr" | "argv" | "argv_or"
+        | "chr" | "argv" | "argv_get" | "argv_or"
         | "io_read_line" | "fs_read_text"
         | "option_unwrap"       => text_type_hash(),
         // Unit-returning

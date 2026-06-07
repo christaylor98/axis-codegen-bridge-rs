@@ -1,7 +1,7 @@
 /// Integration tests for the Core IR 0.5 build pipeline.
 ///
 /// Each test creates a 0.5 bundle using the serialiser, writes it to a temp
-/// file, then invokes the bridge CLI and checks that the resulting rlib is
+/// file, then invokes the bridge CLI and checks that the resulting .a archive is
 /// produced with the expected symbols.
 
 use axis_codegen_bridge::core_ir_05::{
@@ -26,7 +26,7 @@ fn write_05_bundle(dir: &TempDir, name: &str, bundle: &CoreBundle) -> std::path:
 }
 
 fn rlib_path(dir: &TempDir, stem: &str) -> std::path::PathBuf {
-    dir.path().join(format!("lib{}.rlib", stem))
+    dir.path().join(format!("lib{}.a", stem))
 }
 
 // ── (1) constant pool only — unit ────────────────────────────────────────────

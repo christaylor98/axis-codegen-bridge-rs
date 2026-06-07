@@ -9,7 +9,7 @@ use axis_codegen_bridge::emit::rust_05;
 fn usage() -> ! {
     eprintln!("Usage:");
     eprintln!("  axis-codegen-bridge build <input.coreir> --out <path> [options]");
-    eprintln!("    Produces <dir>/lib<stem>.rlib (lib-first). Use --out x.rlib to name verbatim.");
+    eprintln!("    Produces <dir>/lib<stem>.a (lib-first). Use --out x.a to name verbatim.");
     eprintln!("    --exe                   also compile a runnable binary at <path>");
     eprintln!("    --lib <path.coreir>     link a library bundle (repeatable)");
     eprintln!("    --lib-dir <directory>   link all .coreir in directory (repeatable)");
@@ -118,7 +118,7 @@ fn compute_lib_path(out_arg: &str) -> std::path::PathBuf {
     } else {
         let dir  = p.parent().unwrap_or(std::path::Path::new("."));
         let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("out");
-        dir.join(format!("lib{}.rlib", stem))
+        dir.join(format!("lib{}.a", stem))
     }
 }
 

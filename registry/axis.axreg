@@ -5,6 +5,8 @@ fn argv_get
   arity 1
   deterministic true
   profile pure
+  in (Int)
+  out Text
 end
 fn ir_make_var_from_int
   arity 1
