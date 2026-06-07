@@ -1,135 +1,13 @@
 registry axis 0.1
 
 // ── Core ──────────────────────────────────────────────────────────────────────
-fn tuple_field
-  arity 1
-  deterministic true
-  profile pure
-end
-fn ctor_field
-  arity 1
-  deterministic true
-  profile pure
-end
 fn ctor_is_ok
   arity 1
   deterministic true
   profile pure
 end
 
-// ── Math ──────────────────────────────────────────────────────────────────────
-fn int_add
-  arity 1
-  deterministic true
-  profile pure
-end
-fn int_sub
-  arity 1
-  deterministic true
-  profile pure
-end
-fn int_mul
-  arity 1
-  deterministic true
-  profile pure
-end
-fn int_div
-  arity 1
-  deterministic true
-  profile pure
-end
-fn int_div_checked
-  arity 1
-  deterministic true
-  profile pure
-end
-fn int_mod
-  arity 1
-  deterministic true
-  profile pure
-end
-fn int_to_str
-  arity 1
-  deterministic true
-  profile pure
-end
-fn str_to_int
-  arity 1
-  deterministic true
-  profile pure
-end
-fn int_lt
-  arity 1
-  deterministic true
-  profile pure
-end
-fn int_lte
-  arity 1
-  deterministic true
-  profile pure
-end
-fn int_gt
-  arity 1
-  deterministic true
-  profile pure
-end
-fn int_gte
-  arity 1
-  deterministic true
-  profile pure
-end
-fn value_eq
-  arity 1
-  deterministic true
-  profile pure
-end
-fn bool_and
-  arity 1
-  deterministic true
-  profile pure
-end
-fn bool_or
-  arity 1
-  deterministic true
-  profile pure
-end
-fn bool_not
-  arity 1
-  deterministic true
-  profile pure
-end
-
 // ── String ────────────────────────────────────────────────────────────────────
-fn str_len
-  arity 1
-  deterministic true
-  profile pure
-end
-fn str_concat
-  arity 1
-  deterministic true
-  profile pure
-end
-fn str_char
-  arity 1
-  deterministic true
-  profile pure
-end
-fn str_char_at
-  arity 1
-  deterministic true
-  profile pure
-end
-fn str_char_code
-  arity 1
-  deterministic true
-  profile pure
-end
-fn str_slice
-  arity 1
-  deterministic true
-  profile pure
-end
 fn str_split
   arity 1
   deterministic true
@@ -172,16 +50,6 @@ fn chr
 end
 
 // ── List ──────────────────────────────────────────────────────────────────────
-fn list_nil
-  arity 1
-  deterministic true
-  profile pure
-end
-fn list_cons
-  arity 1
-  deterministic true
-  profile pure
-end
 fn list_head
   arity 1
   deterministic true
@@ -197,42 +65,12 @@ fn list_is_empty
   deterministic true
   profile pure
 end
-fn list_len
-  arity 1
-  deterministic true
-  profile pure
-end
-fn list_get
-  arity 1
-  deterministic true
-  profile pure
-end
-fn list_get_at
-  arity 1
-  deterministic true
-  profile pure
-end
 fn list_get_println_if_some
   arity 1
   deterministic false
   profile full_io
 end
 fn list_str_len_lte_if_some
-  arity 1
-  deterministic true
-  profile pure
-end
-fn list_append
-  arity 1
-  deterministic true
-  profile pure
-end
-fn list_concat
-  arity 1
-  deterministic true
-  profile pure
-end
-fn list_reverse
   arity 1
   deterministic true
   profile pure
@@ -253,94 +91,8 @@ fn list_of_3
   profile pure
 end
 
-// ── Option ────────────────────────────────────────────────────────────────────
-fn option_none
-  arity 1
-  deterministic true
-  profile pure
-end
-fn option_some
-  arity 1
-  deterministic true
-  profile pure
-end
-fn option_is_none
-  arity 1
-  deterministic true
-  profile pure
-end
-fn option_is_some
-  arity 1
-  deterministic true
-  profile pure
-end
-fn option_unwrap
-  arity 1
-  deterministic true
-  profile pure
-end
-
-// ── IO ────────────────────────────────────────────────────────────────────────
-fn io_print
-  arity 1
-  deterministic false
-  profile writes
-end
-fn io_println
-  arity 1
-  deterministic false
-  profile writes
-end
-fn io_eprint
-  arity 1
-  deterministic false
-  profile writes
-end
-fn io_read_line
-  arity 1
-  deterministic false
-  profile reads
-end
-fn debug_trace
-  arity 1
-  deterministic false
-  profile writes
-end
-
-// ── File ──────────────────────────────────────────────────────────────────────
-fn fs_read_text
-  arity 1
-  deterministic false
-  profile reads
-end
-fn fs_write_text
-  arity 1
-  deterministic false
-  profile writes
-end
-fn fs_append_text
-  arity 1
-  deterministic false
-  profile writes
-end
-
 // ── Process ───────────────────────────────────────────────────────────────────
-fn proc_args
-  arity 1
-  deterministic false
-  profile reads
-end
-fn proc_exit
-  arity 1
-  deterministic false
-  profile full_io
-end
 fn proc_sleep
-  arity 1
-  deterministic false
-  profile writes
-end
-fn sleep
   arity 1
   deterministic false
   profile writes
