@@ -587,14 +587,107 @@ pub fn ir_write_bundle(v: Value) -> Value {
 }
 
 pub fn ir_read_bundle(v: Value) -> Value {
-    match v {
-        Value::Str(s) => {
-            let path = get_str(s);
-            let prog = load_core_bundle(&path)
-                .unwrap_or_else(|e| panic!("ir_read_bundle: {}", e));
-            core_term_to_value(&prog.root_term)
-        }
+    let path = match v {
+        Value::Str(s) => get_str(s),
         _ => panic!("ir_read_bundle: expected Str path, got {:?}", v),
+    };
+
+    // Try 0.4 first to preserve existing semantics on 0.3/0.4 bundles.
+    // On failure (including version mismatch), fall back to the 0.5 loader and
+    // lift its flat node graph into the CoreTerm-shaped Value tree that
+    // ir_to_string/ir_to_h1_string expect.
+    match load_core_bundle(&path) {
+        Ok(prog) => core_term_to_value(&prog.root_term),
+        Err(e04) => match crate::core_ir_05::load_core_bundle(&path) {
+            Ok(bundle) => value_from_bundle_05(&bundle),
+            Err(e05) => panic!(
+                "ir_read_bundle: failed as 0.4 ({}) and as 0.5 ({})",
+                e04, e05
+            ),
+        },
+    }
+}
+
+fn value_from_bundle_05(bundle: &crate::core_ir_05::CoreBundle) -> Value {
+    // 0.5 convention: program result is the last node. When there are no nodes
+    // (e.g. a bundle that resolves to a single pool literal), the result is the
+    // last pool entry.
+    use crate::core_ir_05::NodeRef;
+    if !bundle.nodes.is_empty() {
+        return walk_node_05(bundle, bundle.nodes.len() - 1);
+    }
+    if !bundle.constant_pool.is_empty() {
+        return walk_ref_05(bundle, &NodeRef::Pool((bundle.constant_pool.len() - 1) as u32));
+    }
+    make_ctor("UnitLit", vec![])
+}
+
+fn walk_node_05(bundle: &crate::core_ir_05::CoreBundle, idx: usize) -> Value {
+    use crate::core_ir_05::{hash256_to_hex, Node};
+    match &bundle.nodes[idx] {
+        Node::CCall { target_identity, args } => {
+            let hex = hash256_to_hex(target_identity);
+            let target = format!("#{}", &hex[..16]);
+            let arg_vals: Vec<Value> =
+                args.iter().map(|r| walk_ref_05(bundle, r)).collect();
+            make_ctor("Call", vec![
+                Value::Str(intern_str(&target)),
+                Value::List(arg_vals),
+            ])
+        }
+        Node::CIf { cond, then_, else_ } => make_ctor("If", vec![
+            walk_ref_05(bundle, cond),
+            walk_ref_05(bundle, then_),
+            walk_ref_05(bundle, else_),
+        ]),
+    }
+}
+
+fn walk_ref_05(bundle: &crate::core_ir_05::CoreBundle, r: &crate::core_ir_05::NodeRef) -> Value {
+    use crate::core_ir_05::{
+        bool_type_hash, decode_bool_payload, decode_int_payload, decode_text_payload,
+        hash256_to_hex, int_type_hash, text_type_hash, unit_type_hash, NodeRef,
+    };
+    match r {
+        NodeRef::Node(i) => walk_node_05(bundle, *i as usize),
+        NodeRef::Pool(i) => {
+            let entry = match bundle.constant_pool.get(*i as usize) {
+                Some(e) => e,
+                None => return make_ctor("Var", vec![Value::Str(
+                    intern_str(&format!("<pool#{} oob>", i))
+                )]),
+            };
+            let dh = entry.def_hash;
+            if dh == unit_type_hash() {
+                make_ctor("UnitLit", vec![])
+            } else if dh == bool_type_hash() {
+                match decode_bool_payload(&entry.payload) {
+                    Ok(b) => make_ctor("BoolLit", vec![Value::Bool(b)]),
+                    Err(_) => make_ctor("Var", vec![Value::Str(intern_str("<bad-bool>"))]),
+                }
+            } else if dh == int_type_hash() {
+                match decode_int_payload(&entry.payload) {
+                    Ok(n) => make_ctor("IntLit", vec![Value::Int(n)]),
+                    Err(_) => make_ctor("Var", vec![Value::Str(intern_str("<bad-int>"))]),
+                }
+            } else if dh == text_type_hash() {
+                match decode_text_payload(&entry.payload) {
+                    // No CoreTerm text literal — represent as a Call("text", [Var(s)])
+                    // so term_to_str renders the contents instead of dropping them.
+                    Ok(s) => make_ctor("Call", vec![
+                        Value::Str(intern_str("text")),
+                        Value::List(vec![
+                            make_ctor("Var", vec![Value::Str(intern_str(&s))]),
+                        ]),
+                    ]),
+                    Err(_) => make_ctor("Var", vec![Value::Str(intern_str("<bad-text>"))]),
+                }
+            } else {
+                let hex = hash256_to_hex(&dh);
+                let name = format!("<pool#{}@{}>", i, &hex[..16]);
+                make_ctor("Var", vec![Value::Str(intern_str(&name))])
+            }
+        }
     }
 }
 
@@ -724,19 +817,42 @@ pub fn ir_build_fold_from_spec(v: Value) -> Value {
     let content = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("ir_build_fold_from_spec: cannot read '{}': {}", path, e));
 
-    let mut effect       = String::new();
-    let mut source_fn    = String::new();
-    let mut transform_fn = String::new();
+    let mut effect         = String::new();
+    let mut source_fn      = String::new();
+    let mut source_nargs   = 0usize;
+    let mut transform_fn   = String::new();
+    // Collect source_arg{i}_type and source_arg{i}_val keyed by 1-based index.
+    let mut source_arg_types: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
+    let mut source_arg_vals:  std::collections::HashMap<usize, String> = std::collections::HashMap::new();
 
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() { continue; }
         if let Some((key, val)) = trimmed.split_once(':') {
-            match key.trim() {
-                "effect"       => effect       = val.trim().to_string(),
-                "source_fn"    => source_fn    = val.trim().to_string(),
-                "transform_fn" => transform_fn = val.trim().to_string(),
-                _              => {}
+            let k = key.trim();
+            let v = val.trim().to_string();
+            match k {
+                "effect"       => effect       = v,
+                "source_fn"    => source_fn    = v,
+                "source_nargs" => {
+                    source_nargs = v.parse()
+                        .unwrap_or_else(|_| panic!("ir_build_fold_from_spec: invalid source_nargs {:?} in {}", v, path));
+                }
+                "transform_fn" => transform_fn = v,
+                _ => {
+                    // source_arg{i}_type  and  source_arg{i}_val
+                    if let Some(rest) = k.strip_prefix("source_arg") {
+                        if let Some(idx_str) = rest.strip_suffix("_type") {
+                            if let Ok(idx) = idx_str.parse::<usize>() {
+                                source_arg_types.insert(idx, v);
+                            }
+                        } else if let Some(idx_str) = rest.strip_suffix("_val") {
+                            if let Ok(idx) = idx_str.parse::<usize>() {
+                                source_arg_vals.insert(idx, v);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -814,9 +930,34 @@ pub fn ir_build_fold_from_spec(v: Value) -> Value {
         term,
     ]);
 
+    // Build the source call argument list.
+    // - source_nargs == 0 (or absent): arity-1 unit function (e.g. proc_args, io_read_line)
+    //   → call with a single UnitLit so the verifier sees arity 1.
+    // - source_nargs >= 1: typed args supplied in the spec.
+    let source_args: Vec<Value> = if source_nargs == 0 {
+        vec![make_ctor("UnitLit", vec![])]
+    } else {
+        (1..=source_nargs).map(|i| {
+            let typ_str = source_arg_types.get(&i)
+                .unwrap_or_else(|| panic!("ir_build_fold_from_spec: missing source_arg{}_type in {}", i, path));
+            let val_str = source_arg_vals.get(&i)
+                .unwrap_or_else(|| panic!("ir_build_fold_from_spec: missing source_arg{}_val in {}", i, path));
+            let typ_int: i64 = typ_str.parse()
+                .unwrap_or_else(|_| panic!("ir_build_fold_from_spec: invalid source_arg{}_type {:?} in {}", i, typ_str, path));
+            match typ_int {
+                0 => make_ctor("Var", vec![Value::Str(intern_str(val_str.as_str()))]),
+                1 => {
+                    let n: i64 = val_str.parse()
+                        .unwrap_or_else(|_| panic!("ir_build_fold_from_spec: invalid int literal {:?} for source_arg{}_val in {}", val_str, i, path));
+                    make_ctor("IntLit", vec![Value::Int(n)])
+                }
+                _ => panic!("ir_build_fold_from_spec: invalid source_arg{}_type {} in {}", i, typ_int, path),
+            }
+        }).collect()
+    };
     let source_call = make_ctor("Call", vec![
         Value::Str(intern_str(&source_fn)),
-        Value::List(vec![]),
+        Value::List(source_args),
     ]);
     term = make_ctor("Let", vec![
         Value::Str(intern_str("lst")),
@@ -928,5 +1069,159 @@ fn core_term_to_value(t: &CoreTerm) -> Value {
                 Value::List(arg_vals),
             ])
         }
+    }
+}
+
+#[cfg(test)]
+mod fold_from_spec_tests {
+    use super::*;
+    use std::io::Write;
+
+    fn write_spec(name: &str, contents: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "fold_spec_{}_{}.txt", std::process::id(), name
+        ));
+        let mut f = std::fs::File::create(&path).expect("create spec");
+        f.write_all(contents.as_bytes()).expect("write spec");
+        path
+    }
+
+    fn unwrap_ctor<'a>(v: &'a Value, expected_kind: &str) -> &'a [Value] {
+        match v {
+            Value::Ctor { tag, fields } => {
+                let kind = get_tag_name(*tag);
+                assert_eq!(kind, expected_kind, "expected ctor {}, got {} ({:?})", expected_kind, kind, v);
+                fields.as_slice()
+            }
+            other => panic!("expected Ctor({}), got {:?}", expected_kind, other),
+        }
+    }
+
+    fn expect_str(v: &Value) -> String {
+        match v {
+            Value::Str(s) => get_str(*s),
+            other => panic!("expected Str, got {:?}", other),
+        }
+    }
+
+    fn outer_source_call(result: Value) -> (String, Vec<Value>) {
+        // ir_build_fold_from_spec returns Tuple([term, Str(effect)]).
+        // The outermost Let binds `lst` to the source call.
+        let tuple = match result {
+            Value::Tuple(parts) => parts,
+            other => panic!("expected Tuple, got {:?}", other),
+        };
+        let term = tuple.into_iter().next().expect("term");
+        let let_fields = unwrap_ctor(&term, "Let").to_vec();
+        assert_eq!(expect_str(&let_fields[0]), "lst");
+        let call_fields = unwrap_ctor(&let_fields[1], "Call").to_vec();
+        let target = expect_str(&call_fields[0]);
+        let args = match &call_fields[1] {
+            Value::List(xs) => xs.clone(),
+            other => panic!("expected List args, got {:?}", other),
+        };
+        (target, args)
+    }
+
+    #[test]
+    fn no_source_nargs_emits_unit_lit_arg() {
+        let path = write_spec("no_args", "\
+effect: pure
+source_fn: proc_args
+transform_fn: my_t
+");
+        let (target, args) = outer_source_call(
+            ir_build_fold_from_spec(Value::Str(intern_str(path.to_str().unwrap())))
+        );
+        assert_eq!(target, "proc_args");
+        assert_eq!(args.len(), 1, "expected one UnitLit arg, got {:?}", args);
+        unwrap_ctor(&args[0], "UnitLit");
+    }
+
+    #[test]
+    fn two_var_args_emits_typed_call() {
+        let path = write_spec("two_vars", "\
+effect: reads
+source_fn: str_split
+source_nargs: 2
+source_arg1_type: 0
+source_arg1_val: content
+source_arg2_type: 0
+source_arg2_val: delim
+transform_fn: my_t
+");
+        let (target, args) = outer_source_call(
+            ir_build_fold_from_spec(Value::Str(intern_str(path.to_str().unwrap())))
+        );
+        assert_eq!(target, "str_split");
+        assert_eq!(args.len(), 2);
+        let var1 = unwrap_ctor(&args[0], "Var");
+        assert_eq!(expect_str(&var1[0]), "content");
+        let var2 = unwrap_ctor(&args[1], "Var");
+        assert_eq!(expect_str(&var2[0]), "delim");
+    }
+
+    #[test]
+    fn read_bundle_05_int_literal() {
+        use crate::core_ir_05::{serialiser::{make_int_bundle, write_core_bundle_05_to_file}};
+        let bundle = make_int_bundle(42);
+        let path = std::env::temp_dir()
+            .join(format!("read_bundle_05_int_{}.coreir", std::process::id()));
+        write_core_bundle_05_to_file(&bundle, path.to_str().unwrap()).expect("write");
+        let v = ir_read_bundle(Value::Str(intern_str(path.to_str().unwrap())));
+        let lit = unwrap_ctor(&v, "IntLit");
+        assert!(matches!(lit[0], Value::Int(42)));
+    }
+
+    #[test]
+    fn read_bundle_05_ccall() {
+        use crate::core_ir_05::{
+            int_type_hash, encode_int_payload, ConstantPoolEntry, NodeRef,
+            serialiser::{make_ccall_bundle, write_core_bundle_05_to_file},
+        };
+        let pool = vec![
+            ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(7) },
+            ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(35) },
+        ];
+        // Target identity is arbitrary — only the hex prefix gets surfaced.
+        let target = [0xABu8; 32];
+        let bundle = make_ccall_bundle(
+            target, pool, vec![NodeRef::Pool(0), NodeRef::Pool(1)]
+        );
+        let path = std::env::temp_dir()
+            .join(format!("read_bundle_05_ccall_{}.coreir", std::process::id()));
+        write_core_bundle_05_to_file(&bundle, path.to_str().unwrap()).expect("write");
+        let v = ir_read_bundle(Value::Str(intern_str(path.to_str().unwrap())));
+        let call = unwrap_ctor(&v, "Call");
+        // Target: "#" + first 16 hex chars of 0xAB-repeated.
+        assert_eq!(expect_str(&call[0]), format!("#{}", "ab".repeat(8)));
+        let args = match &call[1] {
+            Value::List(xs) => xs,
+            other => panic!("expected List args, got {:?}", other),
+        };
+        assert_eq!(args.len(), 2);
+        let a0 = unwrap_ctor(&args[0], "IntLit");
+        assert!(matches!(a0[0], Value::Int(7)));
+        let a1 = unwrap_ctor(&args[1], "IntLit");
+        assert!(matches!(a1[0], Value::Int(35)));
+    }
+
+    #[test]
+    fn int_literal_source_arg() {
+        let path = write_spec("int_arg", "\
+effect: pure
+source_fn: range
+source_nargs: 1
+source_arg1_type: 1
+source_arg1_val: 42
+transform_fn: my_t
+");
+        let (target, args) = outer_source_call(
+            ir_build_fold_from_spec(Value::Str(intern_str(path.to_str().unwrap())))
+        );
+        assert_eq!(target, "range");
+        assert_eq!(args.len(), 1);
+        let lit = unwrap_ctor(&args[0], "IntLit");
+        assert!(matches!(lit[0], Value::Int(42)));
     }
 }
