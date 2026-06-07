@@ -72,7 +72,8 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("list_len",      "axis_codegen_bridge::runtime::list::list_len");
     m.insert("list_get",      "axis_codegen_bridge::runtime::list::list_get");
     m.insert("list_get_at",              "axis_codegen_bridge::runtime::list::list_get_at");
-    m.insert("list_get_println_if_some", "axis_codegen_bridge::runtime::list::list_get_println_if_some");
+    m.insert("list_get_println_if_some",   "axis_codegen_bridge::runtime::list::list_get_println_if_some");
+    m.insert("list_str_len_lte_if_some",   "axis_codegen_bridge::runtime::list::list_str_len_lte_if_some");
     m.insert("list_append",              "axis_codegen_bridge::runtime::list::list_append");
     m.insert("list_concat",   "axis_codegen_bridge::runtime::list::list_concat");
     m.insert("list_reverse",  "axis_codegen_bridge::runtime::list::list_reverse");
@@ -113,6 +114,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("proc_args",  "axis_codegen_bridge::runtime::process::proc_args");
     m.insert("proc_exit",  "axis_codegen_bridge::runtime::process::proc_exit");
     m.insert("proc_sleep", "axis_codegen_bridge::runtime::process::proc_sleep");
+    m.insert("sleep",      "axis_codegen_bridge::runtime::process::sleep");
     m.insert("argv",       "axis_codegen_bridge::runtime::process::argv");
     m.insert("argv_int",   "axis_codegen_bridge::runtime::process::argv_int");
     m.insert("argv_count", "axis_codegen_bridge::runtime::process::argv_count");

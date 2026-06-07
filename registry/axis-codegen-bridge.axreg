@@ -64,3 +64,4 @@ fn debug_trace     arity=1 deterministic=false profile=writes
 // ── Process ──────────────────────────────────────────────────────────────────
 fn proc_args       arity=1 deterministic=false profile=reads
 fn proc_exit       arity=1 deterministic=false profile=full-io
+fn sleep           arity=1 deterministic=false profile=writes

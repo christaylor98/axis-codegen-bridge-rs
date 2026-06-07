@@ -906,10 +906,14 @@ pub fn ir_build_fold_from_spec(v: Value) -> Value {
     let content = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("ir_build_fold_from_spec: cannot read '{}': {}", path, e));
 
-    let mut effect         = String::new();
-    let mut source_fn      = String::new();
-    let mut source_nargs   = 0usize;
-    let mut transform_fn   = String::new();
+    let mut effect              = String::new();
+    let mut source_fn           = String::new();
+    let mut source_nargs        = 0usize;
+    let mut transform_fn        = String::new();
+    let mut mode                = String::new();
+    let mut threshold_str       = String::new();
+    let mut source_pipe_fn      = String::new();
+    let mut source_pipe_unwrap  = String::new();
     // Collect source_arg{i}_type and source_arg{i}_val keyed by 1-based index.
     let mut source_arg_types: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
     let mut source_arg_vals:  std::collections::HashMap<usize, String> = std::collections::HashMap::new();
@@ -921,13 +925,17 @@ pub fn ir_build_fold_from_spec(v: Value) -> Value {
             let k = key.trim();
             let v = val.trim().to_string();
             match k {
-                "effect"       => effect       = v,
-                "source_fn"    => source_fn    = v,
+                "effect"              => effect             = v,
+                "source_fn"           => source_fn          = v,
                 "source_nargs" => {
                     source_nargs = v.parse()
                         .unwrap_or_else(|_| panic!("ir_build_fold_from_spec: invalid source_nargs {:?} in {}", v, path));
                 }
-                "transform_fn" => transform_fn = v,
+                "transform_fn"        => transform_fn       = v,
+                "mode"                => mode               = v,
+                "threshold"           => threshold_str      = v,
+                "source_pipe_fn"      => source_pipe_fn     = v,
+                "source_pipe_unwrap"  => source_pipe_unwrap = v,
                 _ => {
                     // source_arg{i}_type  and  source_arg{i}_val
                     if let Some(rest) = k.strip_prefix("source_arg") {
@@ -946,84 +954,19 @@ pub fn ir_build_fold_from_spec(v: Value) -> Value {
         }
     }
 
-    if effect.is_empty()       { panic!("ir_build_fold_from_spec: missing 'effect' in {}", path); }
-    if source_fn.is_empty()    { panic!("ir_build_fold_from_spec: missing 'source_fn' in {}", path); }
-    if transform_fn.is_empty() { panic!("ir_build_fold_from_spec: missing 'transform_fn' in {}", path); }
+    if effect.is_empty()    { panic!("ir_build_fold_from_spec: missing 'effect' in {}", path); }
+    if source_fn.is_empty() { panic!("ir_build_fold_from_spec: missing 'source_fn' in {}", path); }
+    // transform_fn is required only for forEach mode (mode == "" or mode == "forEach")
+    if mode.is_empty() && transform_fn.is_empty() {
+        panic!("ir_build_fold_from_spec: missing 'transform_fn' in {}", path);
+    }
 
     match effect.as_str() {
         "pure" | "reads" | "writes" | "full_io" => {}
         _ => panic!("ir_build_fold_from_spec: invalid effect {:?}", effect),
     }
 
-    const N: usize = 32;
-
-    // Build unrolled forEach: for i in 0..N, if list[i] exists, call transform_fn on it.
-    let mut term = make_ctor("UnitLit", vec![]);
-
-    for i in (0..N).rev() {
-        let res_name = format!("_res{}", i);
-
-        // When transform_fn is io_println, use list_get_println_if_some which
-        // handles the None case atomically in Rust — no CIf or option_unwrap
-        // needed. This is required for 0.5 bundles where all CCall nodes in the
-        // flat list are evaluated eagerly regardless of CIf control flow.
-        let iter_expr = if transform_fn == "io_println" {
-            make_ctor("Call", vec![
-                Value::Str(intern_str("list_get_println_if_some")),
-                Value::List(vec![
-                    make_ctor("Var", vec![Value::Str(intern_str("lst"))]),
-                    make_ctor("IntLit", vec![Value::Int(i as i64)]),
-                ]),
-            ])
-        } else {
-            // For other transforms: guard with CIf so option_unwrap is only
-            // reached when the index is in-bounds. Works in 0.4 (ir_eval) mode;
-            // 0.5 lowering will still eager-evaluate both branches.
-            let cond = make_ctor("Call", vec![
-                Value::Str(intern_str("int_gt")),
-                Value::List(vec![
-                    make_ctor("Var", vec![Value::Str(intern_str("n"))]),
-                    make_ctor("IntLit", vec![Value::Int(i as i64)]),
-                ]),
-            ]);
-            let get_call = make_ctor("Call", vec![
-                Value::Str(intern_str("list_get_at")),
-                Value::List(vec![
-                    make_ctor("Var", vec![Value::Str(intern_str("lst"))]),
-                    make_ctor("IntLit", vec![Value::Int(i as i64)]),
-                ]),
-            ]);
-            let unwrapped = make_ctor("Call", vec![
-                Value::Str(intern_str("option_unwrap")),
-                Value::List(vec![get_call]),
-            ]);
-            let then_branch = make_ctor("Call", vec![
-                Value::Str(intern_str(&transform_fn)),
-                Value::List(vec![unwrapped]),
-            ]);
-            make_ctor("If", vec![cond, then_branch, make_ctor("UnitLit", vec![])])
-        };
-
-        term = make_ctor("Let", vec![
-            Value::Str(intern_str(&res_name)),
-            iter_expr,
-            term,
-        ]);
-    }
-
-    let len_call = make_ctor("Call", vec![
-        Value::Str(intern_str("list_len")),
-        Value::List(vec![
-            make_ctor("Var", vec![Value::Str(intern_str("lst"))]),
-        ]),
-    ]);
-    term = make_ctor("Let", vec![
-        Value::Str(intern_str("n")),
-        len_call,
-        term,
-    ]);
-
-    // Build the source call argument list.
+    // Build the source call argument list (shared by all modes).
     // - source_nargs == 0 (or absent): arity-1 unit function (e.g. proc_args, io_read_line)
     //   → call with a single UnitLit so the verifier sees arity 1.
     // - source_nargs >= 1: typed args supplied in the spec.
@@ -1056,15 +999,154 @@ pub fn ir_build_fold_from_spec(v: Value) -> Value {
             }
         }).collect()
     };
+
+    // If source_pipe_fn is set, wrap source_args[0] through the pipe chain before
+    // passing to source_fn: source_fn(source_pipe_unwrap(source_pipe_fn(arg1)), arg2, ...)
+    let source_args = if !source_pipe_fn.is_empty() && !source_args.is_empty() {
+        let mut args = source_args;
+        let piped = make_ctor("Call", vec![
+            Value::Str(intern_str(&source_pipe_fn)),
+            Value::List(vec![args[0].clone()]),
+        ]);
+        args[0] = if source_pipe_unwrap.is_empty() {
+            piped
+        } else {
+            make_ctor("Call", vec![
+                Value::Str(intern_str(&source_pipe_unwrap)),
+                Value::List(vec![piped]),
+            ])
+        };
+        args
+    } else {
+        source_args
+    };
+
     let source_call = make_ctor("Call", vec![
         Value::Str(intern_str(&source_fn)),
         Value::List(source_args),
     ]);
-    term = make_ctor("Let", vec![
-        Value::Str(intern_str("lst")),
-        source_call,
-        term,
-    ]);
+
+    const N: usize = 32;
+
+    let term = match mode.as_str() {
+        "count_if_str_len_lte" => {
+            // Unrolled count: sum list_str_len_lte_if_some over 32 slots, then println.
+            let threshold: i64 = threshold_str.parse()
+                .unwrap_or_else(|_| panic!("ir_build_fold_from_spec: invalid threshold {:?} in {}", threshold_str, path));
+
+            // Innermost: io_println(int_to_str(_s30))
+            let final_sum_var = format!("_s{}", N - 2);
+            let mut term = make_ctor("Call", vec![
+                Value::Str(intern_str("io_println")),
+                Value::List(vec![
+                    make_ctor("Call", vec![
+                        Value::Str(intern_str("int_to_str")),
+                        Value::List(vec![make_ctor("Var", vec![Value::Str(intern_str(&final_sum_var))])]),
+                    ]),
+                ]),
+            ]);
+
+            // Left-fold sum bindings inside-out: _s30=int_add(_s29,_b31) ... _s0=int_add(_b0,_b1)
+            for j in (0..N - 1).rev() {
+                let lhs_name = if j == 0 { "_b0".to_string() } else { format!("_s{}", j - 1) };
+                let rhs_name = format!("_b{}", j + 1);
+                let sum_name = format!("_s{}", j);
+                term = make_ctor("Let", vec![
+                    Value::Str(intern_str(&sum_name)),
+                    make_ctor("Call", vec![
+                        Value::Str(intern_str("int_add")),
+                        Value::List(vec![
+                            make_ctor("Var", vec![Value::Str(intern_str(&lhs_name))]),
+                            make_ctor("Var", vec![Value::Str(intern_str(&rhs_name))]),
+                        ]),
+                    ]),
+                    term,
+                ]);
+            }
+
+            // Indicator bindings inside-out: _b31=lsllis(lst,31,thr) ... _b0=lsllis(lst,0,thr)
+            for i in (0..N).rev() {
+                let b_name = format!("_b{}", i);
+                term = make_ctor("Let", vec![
+                    Value::Str(intern_str(&b_name)),
+                    make_ctor("Call", vec![
+                        Value::Str(intern_str("list_str_len_lte_if_some")),
+                        Value::List(vec![
+                            make_ctor("Var", vec![Value::Str(intern_str("lst"))]),
+                            make_ctor("IntLit", vec![Value::Int(i as i64)]),
+                            make_ctor("IntLit", vec![Value::Int(threshold)]),
+                        ]),
+                    ]),
+                    term,
+                ]);
+            }
+
+            make_ctor("Let", vec![Value::Str(intern_str("lst")), source_call, term])
+        }
+        "" => {
+            // Build unrolled forEach: for i in 0..N, if list[i] exists, call transform_fn on it.
+            let mut term = make_ctor("UnitLit", vec![]);
+
+            for i in (0..N).rev() {
+                let res_name = format!("_res{}", i);
+
+                // When transform_fn is io_println, use list_get_println_if_some which
+                // handles the None case atomically in Rust — no CIf or option_unwrap
+                // needed. This is required for 0.5 bundles where all CCall nodes in the
+                // flat list are evaluated eagerly regardless of CIf control flow.
+                let iter_expr = if transform_fn == "io_println" {
+                    make_ctor("Call", vec![
+                        Value::Str(intern_str("list_get_println_if_some")),
+                        Value::List(vec![
+                            make_ctor("Var", vec![Value::Str(intern_str("lst"))]),
+                            make_ctor("IntLit", vec![Value::Int(i as i64)]),
+                        ]),
+                    ])
+                } else {
+                    // For other transforms: guard with CIf so option_unwrap is only
+                    // reached when the index is in-bounds. Works in 0.4 (ir_eval) mode;
+                    // 0.5 lowering will still eager-evaluate both branches.
+                    let cond = make_ctor("Call", vec![
+                        Value::Str(intern_str("int_gt")),
+                        Value::List(vec![
+                            make_ctor("Var", vec![Value::Str(intern_str("n"))]),
+                            make_ctor("IntLit", vec![Value::Int(i as i64)]),
+                        ]),
+                    ]);
+                    let get_call = make_ctor("Call", vec![
+                        Value::Str(intern_str("list_get_at")),
+                        Value::List(vec![
+                            make_ctor("Var", vec![Value::Str(intern_str("lst"))]),
+                            make_ctor("IntLit", vec![Value::Int(i as i64)]),
+                        ]),
+                    ]);
+                    let unwrapped = make_ctor("Call", vec![
+                        Value::Str(intern_str("option_unwrap")),
+                        Value::List(vec![get_call]),
+                    ]);
+                    let then_branch = make_ctor("Call", vec![
+                        Value::Str(intern_str(&transform_fn)),
+                        Value::List(vec![unwrapped]),
+                    ]);
+                    make_ctor("If", vec![cond, then_branch, make_ctor("UnitLit", vec![])])
+                };
+
+                term = make_ctor("Let", vec![
+                    Value::Str(intern_str(&res_name)),
+                    iter_expr,
+                    term,
+                ]);
+            }
+
+            let len_call = make_ctor("Call", vec![
+                Value::Str(intern_str("list_len")),
+                Value::List(vec![make_ctor("Var", vec![Value::Str(intern_str("lst"))])]),
+            ]);
+            term = make_ctor("Let", vec![Value::Str(intern_str("n")), len_call, term]);
+            make_ctor("Let", vec![Value::Str(intern_str("lst")), source_call, term])
+        }
+        other => panic!("ir_build_fold_from_spec: unknown mode {:?} in {}", other, path),
+    };
 
     Value::Tuple(vec![term, Value::Str(intern_str(&effect))])
 }
@@ -1358,5 +1440,189 @@ transform_fn: io_println
         assert_eq!(call2_args.len(), 1);
         let lit2 = unwrap_ctor(&call2_args[0], "IntLit");
         assert!(matches!(lit2[0], Value::Int(2)));
+    }
+
+    // Helper: unwrap Let("lst", source_call, body) and return the body.
+    fn strip_lst_let(result: Value) -> Value {
+        let tuple = match result { Value::Tuple(p) => p, other => panic!("{:?}", other) };
+        let term = tuple.into_iter().next().expect("term");
+        let let_fields = unwrap_ctor(&term, "Let").to_vec();
+        assert_eq!(expect_str(&let_fields[0]), "lst");
+        let_fields[2].clone()
+    }
+
+    #[test]
+    fn count_if_str_len_lte_emits_indicator_and_sum_bindings() {
+        let path = write_spec("count_if", "\
+effect: full_io
+source_fn: str_split
+source_nargs: 2
+source_arg1_type: 2
+source_arg1_val: 1
+source_arg2_type: 2
+source_arg2_val: 2
+mode: count_if_str_len_lte
+threshold: 3
+");
+        let body = strip_lst_let(
+            ir_build_fold_from_spec(Value::Str(intern_str(path.to_str().unwrap())))
+        );
+
+        // The body is Let("_b0", lsllis(lst, 0, 3), Let("_b1", ..., ... Let("_s30", int_add(...), println(...))))
+        // Check outermost binding is _b0
+        let b0_fields = unwrap_ctor(&body, "Let").to_vec();
+        assert_eq!(expect_str(&b0_fields[0]), "_b0");
+
+        // Check it calls list_str_len_lte_if_some with (lst, 0, 3)
+        let lsllis_fields = unwrap_ctor(&b0_fields[1], "Call").to_vec();
+        assert_eq!(expect_str(&lsllis_fields[0]), "list_str_len_lte_if_some");
+        let lsllis_args = match &lsllis_fields[1] { Value::List(xs) => xs.clone(), other => panic!("{:?}", other) };
+        assert_eq!(lsllis_args.len(), 3);
+        // arg0: Var("lst")
+        let var_lst = unwrap_ctor(&lsllis_args[0], "Var");
+        assert_eq!(expect_str(&var_lst[0]), "lst");
+        // arg1: IntLit(0)
+        let idx_lit = unwrap_ctor(&lsllis_args[1], "IntLit");
+        assert!(matches!(idx_lit[0], Value::Int(0)));
+        // arg2: IntLit(3) — the threshold
+        let thr_lit = unwrap_ctor(&lsllis_args[2], "IntLit");
+        assert!(matches!(thr_lit[0], Value::Int(3)));
+
+        // Walk 32 _b bindings then check the first sum binding is _s0 = int_add(_b0, _b1)
+        let mut cursor = b0_fields[2].clone();
+        for i in 1..32usize {
+            let f = unwrap_ctor(&cursor, "Let").to_vec();
+            assert_eq!(expect_str(&f[0]), format!("_b{}", i));
+            cursor = f[2].clone();
+        }
+        // cursor is now at Let("_s0", int_add(_b0, _b1), ...)
+        let s0_fields = unwrap_ctor(&cursor, "Let").to_vec();
+        assert_eq!(expect_str(&s0_fields[0]), "_s0");
+        let add_fields = unwrap_ctor(&s0_fields[1], "Call").to_vec();
+        assert_eq!(expect_str(&add_fields[0]), "int_add");
+        let add_args = match &add_fields[1] { Value::List(xs) => xs.clone(), other => panic!("{:?}", other) };
+        assert_eq!(add_args.len(), 2);
+        let lhs = unwrap_ctor(&add_args[0], "Var");
+        assert_eq!(expect_str(&lhs[0]), "_b0");
+        let rhs = unwrap_ctor(&add_args[1], "Var");
+        assert_eq!(expect_str(&rhs[0]), "_b1");
+    }
+
+    #[test]
+    fn source_pipe_fn_and_unwrap_wrap_arg1() {
+        let path = write_spec("pipe_chain", "\
+effect: full_io
+source_fn: str_split
+source_nargs: 2
+source_arg1_type: 2
+source_arg1_val: 1
+source_pipe_fn: fs_read_text
+source_pipe_unwrap: result_text_unwrap
+source_arg2_type: 2
+source_arg2_val: 2
+mode: count_if_str_len_lte
+threshold: 3
+");
+        let (target, args) = outer_source_call(
+            ir_build_fold_from_spec(Value::Str(intern_str(path.to_str().unwrap())))
+        );
+        assert_eq!(target, "str_split");
+        assert_eq!(args.len(), 2);
+
+        // arg0 must be: result_text_unwrap(fs_read_text(argv(1)))
+        let unwrap_call = unwrap_ctor(&args[0], "Call").to_vec();
+        assert_eq!(expect_str(&unwrap_call[0]), "result_text_unwrap");
+        let unwrap_args = match &unwrap_call[1] { Value::List(xs) => xs.clone(), other => panic!("{:?}", other) };
+        assert_eq!(unwrap_args.len(), 1);
+
+        let read_call = unwrap_ctor(&unwrap_args[0], "Call").to_vec();
+        assert_eq!(expect_str(&read_call[0]), "fs_read_text");
+        let read_args = match &read_call[1] { Value::List(xs) => xs.clone(), other => panic!("{:?}", other) };
+        assert_eq!(read_args.len(), 1);
+
+        let argv_call = unwrap_ctor(&read_args[0], "Call").to_vec();
+        assert_eq!(expect_str(&argv_call[0]), "argv");
+        let argv_args = match &argv_call[1] { Value::List(xs) => xs.clone(), other => panic!("{:?}", other) };
+        let lit = unwrap_ctor(&argv_args[0], "IntLit");
+        assert!(matches!(lit[0], Value::Int(1)));
+
+        // arg1 must still be argv(2) — pipe does not affect it
+        let argv2_call = unwrap_ctor(&args[1], "Call").to_vec();
+        assert_eq!(expect_str(&argv2_call[0]), "argv");
+        let argv2_args = match &argv2_call[1] { Value::List(xs) => xs.clone(), other => panic!("{:?}", other) };
+        let lit2 = unwrap_ctor(&argv2_args[0], "IntLit");
+        assert!(matches!(lit2[0], Value::Int(2)));
+    }
+
+    #[test]
+    fn source_pipe_fn_alone_no_unwrap() {
+        let path = write_spec("pipe_no_unwrap", "\
+effect: reads
+source_fn: str_split
+source_nargs: 2
+source_arg1_type: 2
+source_arg1_val: 1
+source_pipe_fn: fs_read_text
+source_arg2_type: 2
+source_arg2_val: 2
+transform_fn: io_println
+");
+        let (target, args) = outer_source_call(
+            ir_build_fold_from_spec(Value::Str(intern_str(path.to_str().unwrap())))
+        );
+        assert_eq!(target, "str_split");
+        // arg0 must be fs_read_text(argv(1)) — no unwrap layer
+        let read_call = unwrap_ctor(&args[0], "Call").to_vec();
+        assert_eq!(expect_str(&read_call[0]), "fs_read_text");
+    }
+
+    #[test]
+    fn no_source_pipe_fn_leaves_arg1_unchanged() {
+        // Regression: existing specs without source_pipe_fn must pass arg1 directly.
+        let path = write_spec("no_pipe", "\
+effect: full_io
+source_fn: str_split
+source_nargs: 2
+source_arg1_type: 2
+source_arg1_val: 1
+source_arg2_type: 2
+source_arg2_val: 2
+mode: count_if_str_len_lte
+threshold: 3
+");
+        let (target, args) = outer_source_call(
+            ir_build_fold_from_spec(Value::Str(intern_str(path.to_str().unwrap())))
+        );
+        assert_eq!(target, "str_split");
+        // arg0 must be argv(1) directly — no pipe wrapping
+        let argv_call = unwrap_ctor(&args[0], "Call").to_vec();
+        assert_eq!(expect_str(&argv_call[0]), "argv");
+    }
+
+    #[test]
+    fn list_str_len_lte_if_some_oob_returns_zero() {
+        use super::super::list::list_str_len_lte_if_some;
+        let list = Value::List(vec![Value::Str(intern_str("hi"))]);
+        // index 5 is OOB → 0
+        let result = list_str_len_lte_if_some(Value::Tuple(vec![list, Value::Int(5), Value::Int(3)]));
+        assert!(matches!(result, Value::Int(0)));
+    }
+
+    #[test]
+    fn list_str_len_lte_if_some_within_threshold() {
+        use super::super::list::list_str_len_lte_if_some;
+        let list = Value::List(vec![Value::Str(intern_str("cat"))]);
+        // "cat".len() == 3 ≤ 3 → 1
+        let result = list_str_len_lte_if_some(Value::Tuple(vec![list, Value::Int(0), Value::Int(3)]));
+        assert!(matches!(result, Value::Int(1)));
+    }
+
+    #[test]
+    fn list_str_len_lte_if_some_exceeds_threshold() {
+        use super::super::list::list_str_len_lte_if_some;
+        let list = Value::List(vec![Value::Str(intern_str("hello"))]);
+        // "hello".len() == 5 > 3 → 0
+        let result = list_str_len_lte_if_some(Value::Tuple(vec![list, Value::Int(0), Value::Int(3)]));
+        assert!(matches!(result, Value::Int(0)));
     }
 }

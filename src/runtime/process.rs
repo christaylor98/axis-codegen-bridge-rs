@@ -23,6 +23,16 @@ pub fn proc_sleep(v: Value) -> Value {
     Value::Unit
 }
 
+pub fn sleep(v: Value) -> Value {
+    let ms = match v {
+        Value::Int(n) if n >= 0 => n as u64,
+        Value::Int(_) => 0,
+        _ => panic!("sleep: expected Int, got {:?}", v),
+    };
+    std::thread::sleep(std::time::Duration::from_millis(ms));
+    Value::Unit
+}
+
 pub fn argv(idx: Value) -> Value {
     let i = match idx { Value::Int(n) => n as usize, _ => 0 };
     let args = get_process_args();

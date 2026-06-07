@@ -1,4 +1,4 @@
-use super::value::Value;
+use super::value::{Value, get_str};
 
 pub fn list_nil(_: Value) -> Value {
     Value::List(vec![])
@@ -128,6 +128,29 @@ pub fn list_of_3(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 3 => Value::List(vec![es[0].clone(), es[1].clone(), es[2].clone()]),
         _ => panic!("list_of_3: expected Tuple(a, b, c)"),
+    }
+}
+
+/// Returns 1 if list[index] exists and str_len(list[index]) ≤ max_len, else 0. OOB-safe.
+pub fn list_str_len_lte_if_some(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 3 => {
+            let idx = match &es[1] { Value::Int(n) => *n, _ => panic!("list_str_len_lte_if_some: expected Int index") };
+            let max_len = match &es[2] { Value::Int(n) => *n, _ => panic!("list_str_len_lte_if_some: expected Int max_len") };
+            if idx < 0 { return Value::Int(0); }
+            match &es[0] {
+                Value::List(elems) => match elems.get(idx as usize) {
+                    Some(Value::Str(s)) => {
+                        let len = get_str(*s).chars().count() as i64;
+                        Value::Int(if len <= max_len { 1 } else { 0 })
+                    }
+                    Some(_) => panic!("list_str_len_lte_if_some: list element is not Str"),
+                    None    => Value::Int(0),
+                },
+                _ => panic!("list_str_len_lte_if_some: expected List"),
+            }
+        }
+        _ => panic!("list_str_len_lte_if_some: expected Tuple(List, Int, Int)"),
     }
 }
 
