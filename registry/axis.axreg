@@ -12,79 +12,111 @@ fn ir_make_var_from_int
   arity 1
   deterministic true
   profile pure
+  in (Int)
+  out Value
 end
 fn celsius_to_fahrenheit
   arity 1
   deterministic true
   profile pure
+  in (Int)
+  out Int
 end
 fn fahrenheit_to_celsius
   arity 1
   deterministic true
   profile pure
+  in (Int)
+  out Int
 end
 fn int_min
   arity 1
   deterministic true
   profile pure
+  in (Int, Int)
+  out Int
 end
 fn int_max
   arity 1
   deterministic true
   profile pure
+  in (Int, Int)
+  out Int
 end
 fn int_clamp
   arity 1
   deterministic true
   profile pure
+  in (Int, Int, Int)
+  out Int
 end
 fn str_before
   arity 1
   deterministic true
   profile pure
+  in (Text, Text)
+  out Text
 end
 fn str_after
   arity 1
   deterministic true
   profile pure
+  in (Text, Text)
+  out Text
 end
 fn dew_point_magnus
   arity 1
   deterministic true
   profile pure
+  in (Int, Int)
+  out Int
 end
 fn str_between
   arity 1
   deterministic true
   profile pure
+  in (Text, Text, Text)
+  out Text
 end
 fn int_to_celsius_str
   arity 1
   deterministic true
   profile pure
+  in (Int)
+  out Text
 end
 fn is_positive
   arity 1
   deterministic true
   profile pure
+  in (Int)
+  out Bool
 end
 fn boot
   arity 1
   deterministic true
   profile pure
+  in (Unit)
+  out Unit
 end
 fn bundle
   arity 1
   deterministic true
   profile pure
+  in (Unit)
+  out Unit
 end
 fn ir_make_term_from_type_and_str
   arity 1
   deterministic true
   profile pure
+  in (Value)
+  out Value
 end
 fn ir_build_arg_list
   arity 1
   deterministic true
   profile pure
+  in (Value)
+  out Value
 end
