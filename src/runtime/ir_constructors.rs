@@ -961,10 +961,13 @@ pub fn ir_build_fold_from_spec(v: Value) -> Value {
     let mut term = make_ctor("UnitLit", vec![]);
 
     for i in (0..N).rev() {
-        let opt_name = format!("opt{}", i);
         let res_name = format!("_res{}", i);
 
-        // if int_gt(n, i) then transform_fn(option_unwrap(opt_i)) else unit
+        // CIf branches are lazy: inline list_get_at + option_unwrap directly
+        // inside the then arm so they only evaluate when int_gt(n, i) is true.
+        // A pre-guard `let opt_i = list_get_at(...)` would place those nodes
+        // before the CIf in the flat node list, causing option_unwrap(None) to
+        // fire eagerly for every iteration beyond the actual list length.
         let cond = make_ctor("Call", vec![
             Value::Str(intern_str("int_gt")),
             Value::List(vec![
@@ -972,11 +975,16 @@ pub fn ir_build_fold_from_spec(v: Value) -> Value {
                 make_ctor("IntLit", vec![Value::Int(i as i64)]),
             ]),
         ]);
+        let get_call = make_ctor("Call", vec![
+            Value::Str(intern_str("list_get_at")),
+            Value::List(vec![
+                make_ctor("Var", vec![Value::Str(intern_str("lst"))]),
+                make_ctor("IntLit", vec![Value::Int(i as i64)]),
+            ]),
+        ]);
         let unwrapped = make_ctor("Call", vec![
             Value::Str(intern_str("option_unwrap")),
-            Value::List(vec![
-                make_ctor("Var", vec![Value::Str(intern_str(&opt_name))]),
-            ]),
+            Value::List(vec![get_call]),
         ]);
         let then_branch = make_ctor("Call", vec![
             Value::Str(intern_str(&transform_fn)),
@@ -991,18 +999,6 @@ pub fn ir_build_fold_from_spec(v: Value) -> Value {
         term = make_ctor("Let", vec![
             Value::Str(intern_str(&res_name)),
             if_expr,
-            term,
-        ]);
-        let get_call = make_ctor("Call", vec![
-            Value::Str(intern_str("list_get_at")),
-            Value::List(vec![
-                make_ctor("Var", vec![Value::Str(intern_str("lst"))]),
-                make_ctor("IntLit", vec![Value::Int(i as i64)]),
-            ]),
-        ]);
-        term = make_ctor("Let", vec![
-            Value::Str(intern_str(&opt_name)),
-            get_call,
             term,
         ]);
     }
