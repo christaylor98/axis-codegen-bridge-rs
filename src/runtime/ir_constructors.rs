@@ -1021,10 +1021,21 @@ pub fn ir_build_fold_from_spec(v: Value) -> Value {
         source_args
     };
 
-    let source_call = make_ctor("Call", vec![
+    let raw_source_call = make_ctor("Call", vec![
         Value::Str(intern_str(&source_fn)),
         Value::List(source_args),
     ]);
+
+    // proc_args returns all argv including argv[0] (the binary name).
+    // Wrap in list_tail to drop it so fold iteration starts at the first real argument.
+    let source_call = if source_fn == "proc_args" {
+        make_ctor("Call", vec![
+            Value::Str(intern_str("list_tail")),
+            Value::List(vec![raw_source_call]),
+        ])
+    } else {
+        raw_source_call
+    };
 
     const N: usize = 32;
 
@@ -1308,6 +1319,8 @@ mod fold_from_spec_tests {
 
     #[test]
     fn no_source_nargs_emits_unit_lit_arg() {
+        // proc_args is wrapped in list_tail to skip argv[0] (binary name).
+        // outer call: list_tail([proc_args([UnitLit])])
         let path = write_spec("no_args", "\
 effect: pure
 source_fn: proc_args
@@ -1316,9 +1329,17 @@ transform_fn: my_t
         let (target, args) = outer_source_call(
             ir_build_fold_from_spec(Value::Str(intern_str(path.to_str().unwrap())))
         );
-        assert_eq!(target, "proc_args");
-        assert_eq!(args.len(), 1, "expected one UnitLit arg, got {:?}", args);
-        unwrap_ctor(&args[0], "UnitLit");
+        assert_eq!(target, "list_tail");
+        assert_eq!(args.len(), 1, "expected one inner Call arg, got {:?}", args);
+        // The single arg must be the inner proc_args(UnitLit) call
+        let inner_fields = unwrap_ctor(&args[0], "Call").to_vec();
+        assert_eq!(expect_str(&inner_fields[0]), "proc_args");
+        let inner_args = match &inner_fields[1] {
+            Value::List(xs) => xs.clone(),
+            other => panic!("expected List inner args, got {:?}", other),
+        };
+        assert_eq!(inner_args.len(), 1, "expected one UnitLit inside proc_args, got {:?}", inner_args);
+        unwrap_ctor(&inner_args[0], "UnitLit");
     }
 
     #[test]

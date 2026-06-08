@@ -27,7 +27,7 @@ use super::{
 fn fn_result_type(name: &str) -> Hash256 {
     match name {
         // TextList-returning
-        "proc_args" | "str_split" => text_list_type_hash(),
+        "proc_args" | "str_split" | "list_tail" => text_list_type_hash(),
         // Int-returning
         "list_len" | "str_len" | "str_index_of" | "str_char_code"
         | "argv_count" | "argv_int"
