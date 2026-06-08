@@ -115,6 +115,35 @@ fn append_fn_to_registry(reg_path: &str, fn_name: &str, effect_class: &core_ir::
     }
 }
 
+/// Locate the bridge rlib next to the binary, falling back to deps/ for debug/test builds.
+/// Release builds place the rlib at {exe_dir}/libaxis_codegen_bridge.rlib directly.
+/// Debug and `cargo test` builds place it at {exe_dir}/deps/libaxis_codegen_bridge-<hash>.rlib.
+fn find_bridge_rlib(exe_dir: &std::path::Path) -> std::path::PathBuf {
+    let simple = exe_dir.join("libaxis_codegen_bridge.rlib");
+    if simple.exists() { return simple; }
+    let deps_dir = exe_dir.join("deps");
+    if let Ok(rd) = std::fs::read_dir(&deps_dir) {
+        let mut candidates: Vec<std::path::PathBuf> = rd
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n.starts_with("libaxis_codegen_bridge") && n.ends_with(".rlib"))
+                    .unwrap_or(false)
+            })
+            .collect();
+        // Prefer newest (most recent build)
+        candidates.sort_by_key(|p| {
+            std::cmp::Reverse(
+                p.metadata().and_then(|m| m.modified()).ok()
+            )
+        });
+        if let Some(p) = candidates.into_iter().next() { return p; }
+    }
+    simple // return even if absent so rustc gives a clear error
+}
+
 /// Compute the .a output path from the --out argument.
 /// If the arg already ends in ".a", use verbatim; otherwise produce <dir>/lib<stem>.a.
 fn compute_lib_path(out_arg: &str) -> std::path::PathBuf {
@@ -189,7 +218,7 @@ fn cmd_build(args: &[String]) {
            .arg("-o").arg(&lib_path)
            .arg("-C").arg("embed-bitcode=no")
            .arg("-C").arg("strip=debuginfo")
-           .arg("--extern").arg(format!("axis_codegen_bridge={}/libaxis_codegen_bridge.rlib", exe_dir.display()))
+           .arg("--extern").arg(format!("axis_codegen_bridge={}", find_bridge_rlib(&exe_dir).display()))
            .arg("-L").arg(format!("dependency={}/deps", exe_dir.display()));
         for path in &link_search { cmd.arg("-L").arg(path); }
         match cmd.status() {
@@ -229,7 +258,7 @@ fn cmd_build(args: &[String]) {
            .arg("--edition=2021")
            .arg("-o").arg(&output)
            .arg("-C").arg("strip=debuginfo")
-           .arg("--extern").arg(format!("axis_codegen_bridge={}/libaxis_codegen_bridge.rlib", exe_dir.display()))
+           .arg("--extern").arg(format!("axis_codegen_bridge={}", find_bridge_rlib(&exe_dir).display()))
            .arg("-L").arg(format!("dependency={}/deps", exe_dir.display()))
            .arg("-C").arg(format!("link-arg={}", lib_abs.display()));
         for path in &link_search { cmd.arg("-L").arg(path); }
@@ -343,7 +372,7 @@ fn cmd_build(args: &[String]) {
        .arg("-o").arg(&lib_path)
        .arg("-C").arg("embed-bitcode=no")
        .arg("-C").arg("strip=debuginfo")
-       .arg("--extern").arg(format!("axis_codegen_bridge={}/libaxis_codegen_bridge.rlib", exe_dir.display()))
+       .arg("--extern").arg(format!("axis_codegen_bridge={}", find_bridge_rlib(&exe_dir).display()))
        .arg("-L").arg(format!("dependency={}/deps", exe_dir.display()));
 
     for path in &link_search { cmd.arg("-L").arg(path); }
@@ -410,7 +439,7 @@ fn cmd_build(args: &[String]) {
        .arg("--edition=2021")
        .arg("-o").arg(&output)
        .arg("-C").arg("strip=debuginfo")
-       .arg("--extern").arg(format!("axis_codegen_bridge={}/libaxis_codegen_bridge.rlib", exe_dir.display()))
+       .arg("--extern").arg(format!("axis_codegen_bridge={}", find_bridge_rlib(&exe_dir).display()))
        .arg("-L").arg(format!("dependency={}/deps", exe_dir.display()))
        .arg("-C").arg(format!("link-arg={}", lib_abs.display()));
 

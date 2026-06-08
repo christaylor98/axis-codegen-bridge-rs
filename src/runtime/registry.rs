@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use sha2::{Sha256, Digest};
 use super::value::{Value, intern_str, intern_tag, get_str};
 
 // ── On-disk schema ───────────────────────────────────────────────────────────
@@ -47,9 +46,8 @@ fn save_registry(store: &RegistryStore) -> Result<(), String> {
 
 fn compute_hash(entry: &RegistryEntry) -> String {
     let repr = format!("{}:{}:{}", entry.qualified_name, entry.provenance, entry.timestamp);
-    let mut h = DefaultHasher::new();
-    repr.hash(&mut h);
-    format!("{:016x}", h.finish())
+    let hash = Sha256::digest(repr.as_bytes());
+    hash.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 fn current_timestamp() -> String {
