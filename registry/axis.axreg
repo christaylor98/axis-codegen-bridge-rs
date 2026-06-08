@@ -1,138 +1,164 @@
 registry axis 0.1
 
+type Unit = prim unit
+type Int  = prim int
+type Text = prim text
+type Bool = prim bool
+type Value = sum [ AsUnit(Unit) | AsBool(Bool) | AsInt(Int) | AsText(Text) ]
+type ResultText = sum [ Ok(Text) | Err(Text) ]
+type ResultUnit = sum [ Ok(Unit) | Err(Text) ]
+type TextList = list Text
+
 // ── Stdlib (AI2-written) ──────────────────────────────────────────────────────
 fn argv_get
-  arity 1
+  identity 0x7072f7ab69ea0657e96e224125a818551ecbe2e87369dae383f30d7f893e0dc3
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int)
   out Text
   effect fullIo
 end
 fn ir_make_var_from_int
-  arity 1
+  identity 0xe06afba3e35912dca245e6edf0667ca6146c9518ec952fbee15ca3ca2a33aa33
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int)
   out Value
   effect pure
 end
 fn celsius_to_fahrenheit
-  arity 1
+  identity 0x4bdcc71aeeeea1b565538fbd5db42d358e99d806445e74a0f74d4b923843502a
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int)
   out Int
   effect pure
 end
 fn fahrenheit_to_celsius
-  arity 1
+  identity 0xfe419e827e7ed1c8c53db0109783cd0bc16e51487394468358ea02a9f2db02c1
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int)
   out Int
   effect pure
 end
 fn int_min
-  arity 1
+  identity 0xa0a4a4bb46c2048c0cb318b615d60ed217e3cf075e254896e6d945d86242c0b3
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int, Int)
   out Int
   effect pure
 end
 fn int_max
-  arity 1
+  identity 0xea4c8cae369025f35d07c81fb44645eca8b20e5f764c3f9b11e62fa18191a9a6
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int, Int)
   out Int
   effect pure
 end
 fn int_clamp
-  arity 1
+  identity 0x7642d5be8ea81f4dae4fa2a6e51fa6a4f9da3273e951cb44472eeb388da4232e
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int, Int, Int)
   out Int
   effect pure
 end
 fn str_before
-  arity 1
+  identity 0xc3171a723999c1bdd0c82fac0a169c564bd9f56fd2da33336bbdfe3eda4dd7a8
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text, Text)
   out Text
   effect pure
 end
 fn str_after
-  arity 1
+  identity 0xe1ba9709bd14c040362c274930650fca6f667562a18483e6a7b24aae572ec3de
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text, Text)
   out Text
   effect pure
 end
 fn dew_point_magnus
-  arity 1
+  identity 0xcca8fed1a5b553bd1c3e2a8f9032080195fe39168b2ff1d2764ff9cfd40be18d
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int, Int)
   out Int
   effect pure
 end
 fn str_between
-  arity 1
+  identity 0xcadeecf3b60acefa6c2038238ba78771fea55e440cd2d3350d016922311e2af2
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text, Text, Text)
   out Text
   effect pure
 end
 fn int_to_celsius_str
-  arity 1
+  identity 0x94ee3b8ebbb062f289d18088d07f820e93a42b250dcd9a8d7832bfcbd45ab231
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int)
   out Text
   effect pure
 end
 fn is_positive
-  arity 1
+  identity 0x72b624d5004014c2f00d2b5574cc44e09d45b423e4597905ba08420b2bbe7fe7
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int)
   out Bool
   effect pure
 end
 fn boot
-  arity 1
+  identity 0x4509beb0ab401d71fa4a5cd94a55c9a74f13332776ae4019c5bfc4c2005157ff
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Unit)
   out Unit
   effect pure
 end
 fn bundle
-  arity 1
+  identity 0x1e6ed65d77d6364eeaed5a745ba5c4985ae2b700dd85d7cf7f027bdf294a33fc
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Unit)
   out Unit
   effect pure
 end
 fn ir_make_term_from_type_and_str
-  arity 1
+  identity 0x277faffa9425f7c6da87735efadb9123bf82e6e670eeaf98d0b7670e5250cfae
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Value
   effect pure
 end
 fn ir_build_arg_list
-  arity 1
+  identity 0xd4ce6908f3b15d1852c8e4ecfad5f89b7613a0cb1b1e3f7eb7e240bb189e1747
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Value
   effect pure

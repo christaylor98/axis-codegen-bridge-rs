@@ -1,74 +1,92 @@
 registry axis-codegen-bridge 0.1
 
+type Unit = prim unit
+type Int  = prim int
+type Text = prim text
+type Bool = prim bool
+type Value = sum [ AsUnit(Unit) | AsBool(Bool) | AsInt(Int) | AsText(Text) ]
+type ResultText = sum [ Ok(Text) | Err(Text) ]
+type ResultUnit = sum [ Ok(Unit) | Err(Text) ]
+type TextList = list Text
+
 // ── Arithmetic (arith.rs) ─────────────────────────────────────────────────────
 fn int_add
-  arity 1
+  identity 0xe75ea99b4ee3797ecd1dbc78deed3baa952651bcae06d74458068fa4c5395ed0
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int, Int)
   out Int
   effect fullIo
 end
 fn int_sub
-  arity 1
+  identity 0xfe3ddb31aca60ca0e7b71a15f2da4571867d21e3e5589101f93e896d3d517407
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int, Int)
   out Int
   effect fullIo
 end
 fn int_mul
-  arity 1
+  identity 0x3e51117b81c503ccb2e030bd9a2893c9b6b72a6c7128576312a91e5d48a6a61a
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int, Int)
   out Int
   effect fullIo
 end
 fn int_div
-  arity 1
+  identity 0x1e16c848a6a2c220c6af96cb6ca94006f1e9024b82f96d4fb91a556ac4a24652
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int, Int)
   out Int
   effect fullIo
 end
 fn int_div_checked
-  arity 1
+  identity 0x62d7c81b9de501801f1fe4b08dbc4b01a89ed76d65cbe375a30c0a04c48c721b
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int, Int)
   out Value
   effect pure
 end
 fn int_mod
-  arity 1
+  identity 0x8288f7c0f83939265d4a99fbeefa20fae0f0a7b7486db06516bc95811c60189d
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int, Int)
   out Int
   effect fullIo
 end
 fn int_to_str
-  arity 1
+  identity 0xfe68e121ccd378f5e5dd63501ac390c2432160015678e75932530146a20afdb9
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int)
   out Text
   effect fullIo
 end
 fn str_to_int
-  arity 1
+  identity 0x573df8ade7086422e8fbf9cc8bf73627c31bcf746b031312fe54510dfaf04387
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text)
   out Int
   effect fullIo
 end
 fn int_abs
-  arity 1
+  identity 0x78c21acaf822ff4071a6ae547812c83547202ed840be326b087223e0212969e0
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int)
   out Int
   effect pure
@@ -76,49 +94,55 @@ end
 
 // ── Comparison (arith.rs) ─────────────────────────────────────────────────────
 fn int_lt
-  arity 1
+  identity 0x297e451d4eba2d6ba1477d480a9924409c16410464a35c824172fafc887bb7b3
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int, Int)
   out Bool
   effect fullIo
 end
 fn int_lte
-  arity 1
+  identity 0xf3e46b67077d5f2f0a3188c64d5f9cf83ea2539762de23390ac9ef7657878a8e
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int, Int)
   out Bool
   effect fullIo
 end
 fn int_gt
-  arity 1
+  identity 0xd6950e6530981e4d3b3fa7d472d6d01a45e4f3b35c4b00763b3c7f510a08b178
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int, Int)
   out Bool
   effect fullIo
 end
 fn int_gte
-  arity 1
+  identity 0xe82839df1a049423e2ce0ab4c9160b1c94b345644a6d012c855bc41fd36fc713
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int, Int)
   out Bool
   effect fullIo
 end
 fn value_eq
-  arity 1
+  identity 0xa881cc52c4d9bd94df4cf68e3b4d7bcb2ced5385833fc6456a537beecdf60ee1
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value, Value)
   out Bool
   effect fullIo
 end
 fn __eq__
-  arity 1
+  identity 0x6cfeb559bbc092096feb6e5734dedc9fbe85a1d2b92442244aacbd78856e20d0
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value, Value)
   out Bool
   effect fullIo
@@ -126,25 +150,28 @@ end
 
 // ── Boolean (bool_ops.rs) ─────────────────────────────────────────────────────
 fn bool_and
-  arity 1
+  identity 0x8f328d52927e5dc1e696f9416bce59b7148abd9147fbe834831048fa95e81bc4
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value, Value)
   out Bool
   effect fullIo
 end
 fn bool_or
-  arity 1
+  identity 0xda958f6a6dcf73289af2745cfe46d0138d88dbef9108887b3c5804d89135fdb1
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value, Value)
   out Bool
   effect fullIo
 end
 fn bool_not
-  arity 1
+  identity 0x532c5da578d56c6a6d421546e8e82143060e8613c40542ecbd88b8d9eddea3ca
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Bool
   effect fullIo
@@ -152,113 +179,127 @@ end
 
 // ── String (str_ops.rs) ───────────────────────────────────────────────────────
 fn str_len
-  arity 1
+  identity 0xe04e2c44d3a795ced753bec7cd92c53fc5fd242d7ee02cef157ea58c4cca6d1f
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text)
   out Int
   effect fullIo
 end
 fn str_concat
-  arity 1
+  identity 0x8c518b471eba3c33272e49013c6be17cd619762823c5b42d38e9364fe4078eac
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text, Text)
   out Text
   effect fullIo
 end
 fn str_char
-  arity 1
+  identity 0x6bc200b26e86e53e5854ba9a242b107d6a57b6e4f32251c1e87c3ec8a2d7cf54
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text, Int)
   out Text
   effect fullIo
 end
 fn str_char_at
-  arity 1
+  identity 0x63d498ade753ed21886273f9ae446ece7099a6f5561b73c794f50fe0bcf69798
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text, Int)
   out Value
   effect fullIo
 end
 fn str_char_code
-  arity 1
+  identity 0xa489640c16f21538c61dc83918eb0ebbec6cf24f39e0ee7ad7efe188df127e21
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text, Int)
   out Int
   effect fullIo
 end
 fn str_slice
-  arity 1
+  identity 0x7c4492e5a7ca387d81daff3b23e455a5287807a92217b8715a86dc0bf0ad4ca6
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text, Int, Int)
   out Text
   effect fullIo
 end
 fn str_split
-  arity 1
+  identity 0x42b7b189f7141842d18f1af1fcc13f49a6b16181e01c6e801127f24cdfc9693b
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text, Text)
   out TextList
   effect fullIo
 end
 fn str_starts_with
-  arity 1
+  identity 0x1389a0bb98b5c24ab99b32a90859913a7c9b9d2a1d0d676c584bc611d627da2f
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text, Text)
   out Bool
   effect fullIo
 end
 fn str_ends_with
-  arity 1
+  identity 0x2a9056983f72b381a5b12a144925cea8b2fb8ba0a51b0697f7ef7974e4bf0c6d
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text, Text)
   out Bool
   effect fullIo
 end
 fn str_trim
-  arity 1
+  identity 0x45925e5c905b1d6c1e321db14dc920916a240d9a212ba5ebf8c5c163e7e08ea2
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text)
   out Text
   effect fullIo
 end
 fn str_contains
-  arity 1
+  identity 0x3ffb73925841bad0920d1345079ed4d3e03b89bcb39f3ae32e91b394155f9934
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text, Text)
   out Bool
   effect fullIo
 end
 fn str_index_of
-  arity 1
+  identity 0xbd5d985d82fed94464c60b6f960322ce633f08b4e453f322005eadc53e921bec
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text, Text)
   out Int
   effect fullIo
 end
 fn str_eq
-  arity 1
+  identity 0x3c79a7a33f116fec035e4c2ff08505d4d9b21df4ff87ac17ecbd267178c10996
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text, Text)
   out Bool
   effect fullIo
 end
 fn chr
-  arity 1
+  identity 0x943723cd5955a5316f4364f750e309b0a9582e939128ce09800d56f126649efb
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int)
   out Text
   effect pure
@@ -266,163 +307,183 @@ end
 
 // ── List (list.rs) ────────────────────────────────────────────────────────────
 fn list_nil
-  arity 1
+  identity 0x86266e8503f8943196f8626a13bbcd5d17008a94ef87fb4e43618a73602ea310
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Unit)
   out Value
   effect fullIo
 end
 fn list_cons
-  arity 1
+  identity 0x8a4cf0184425ffbd9fb1e74c76b0743108e8ce5893693ffd03f35652799c1c89
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value, Value)
   out Value
   effect fullIo
 end
 fn list_len
-  arity 1
+  identity 0x34e8951dbc64971f10e48ecae8f991090c549239477ae76ea2ae09b70a36b548
+  kind     leaf
   deterministic true
-  profile pure
-  in (Value)
+  idempotent    false
+  in (TextList)
   out Int
   effect fullIo
 end
 fn list_get
-  arity 1
+  identity 0xe8b06c5770310736f49b0e0b647bfb78e758cd63bef52eb223b1fbc6e4a0c15c
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value, Int)
   out Value
   effect fullIo
 end
 fn list_get_at
-  arity 1
+  identity 0xdbd1b2c754f33971e59dd3fac47d012b76815f3a04dd6be6328701c71b373cd4
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value, Int)
   out Value
   effect fullIo
 end
 fn list_head
-  arity 1
+  identity 0x75f34e8ccbd3edf0ab1f90a1b1f98c2ffe5e22301a3265296152669e9efc983a
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Value
   effect fullIo
 end
 fn list_tail
-  arity 1
+  identity 0xe917780d187827c4cb5049fbcb6ce0899aa29cb44adc7e9cd6ed34a40e2b2a04
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Value
   effect fullIo
 end
 fn list_is_empty
-  arity 1
+  identity 0x46bf1e3e3cc74f54a6ef1706ca5fd8f26ed9ac5b9e9fed0241aafc3131690d8f
+  kind     leaf
   deterministic true
-  profile pure
-  in (Value)
+  idempotent    false
+  in (TextList)
   out Bool
   effect fullIo
 end
 fn list_append
-  arity 1
+  identity 0xe5b9a04d046f7689d7a671fb707655ebe66f7ce76977407c8dc5dfea9fb1abf1
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value, Value)
   out Value
   effect fullIo
 end
 fn list_concat
-  arity 1
+  identity 0x630dbcd556bb8bde74882e15c3f4727263a52162c4cc1c76c039f9229dd58472
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value, Value)
   out Value
   effect fullIo
 end
 fn list_reverse
-  arity 1
+  identity 0xfe43451ca4432b25605d8010c36afea98d66ebf4350e971bc9867dee064cf445
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Value
   effect fullIo
 end
 fn list_of_1
-  arity 1
+  identity 0x45b0f3dd179497125d5d136ee16303824fb4d53d059db82d14f9b6b64d9ddb21
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Value
   effect fullIo
 end
 fn list_of_2
-  arity 1
+  identity 0xc6687006556370a4e126c8a9047db03c0f0a8066310ad88a1b0ef97ca47029be
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value, Value)
   out Value
   effect fullIo
 end
 fn list_of_3
-  arity 1
+  identity 0xaac36ad519385451c853a92678896733fa7ae9db086c9f82798fdabc77967aa9
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value, Value, Value)
   out Value
   effect fullIo
 end
 fn list_str_len_lte_if_some
-  arity 1
+  identity 0x13cf388db6e026dd4f60d972492264730bf4d5769d478496ccf7dcbcf427ae68
+  kind     leaf
   deterministic true
-  profile pure
-  in (Value, Int, Int)
+  idempotent    false
+  in (TextList, Int, Int)
   out Int
   effect fullIo
 end
 fn list_get_println_if_some
-  arity 1
+  identity 0xd2a993de8d7afffe229244948de1dab85134cd111b5251ca4c50c555ec51b501
+  kind     leaf
   deterministic false
-  profile full_io
-  in (Value, Int)
+  idempotent    false
+  in (TextList, Int)
   out Unit
   effect fullIo
 end
 
 // ── Tuple / Constructor (tuple.rs) ────────────────────────────────────────────
 fn tuple_field
-  arity 1
+  identity 0xcd53821c1e662647c6170a5949859816cf739b162bf4629743de046154e6fd68
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value, Int)
   out Value
   effect fullIo
 end
 fn ctor_field
-  arity 1
+  identity 0x3e00f30c56b94607212c28dfda620ea1c16b6c663de529196f72eb0d317113bd
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value, Int)
   out Value
   effect fullIo
 end
 fn ctor_is_ok
-  arity 1
+  identity 0x5b5aae3e461db97011018361d3a37e4d4b62c47d9291247bde3993b79830f8b2
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Bool
   effect pure
 end
 fn result_text_unwrap
-  arity 1
+  identity 0x9b806a35ffce133ab0b40ee24e6d5ff19bd7eb72c4453ed88b806c7451780c03
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    true
   in (Value)
   out Text
   effect pure
@@ -430,41 +491,46 @@ end
 
 // ── Option (option.rs) ────────────────────────────────────────────────────────
 fn option_none
-  arity 1
+  identity 0x471d60491686e15b0a5233d4f380a1e90a4a1bb763bce56106a09c59a601d4ad
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Unit)
   out Value
   effect fullIo
 end
 fn option_some
-  arity 1
+  identity 0x846f69d3a7546ae5eacbd589a2f564989bd2958aadaed515ab559666205de801
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Value
   effect fullIo
 end
 fn option_is_none
-  arity 1
+  identity 0xdcceaad825f2b070af56064b6e9f8db83d4b70eb8a5252a121bb3e658838a915
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Bool
   effect fullIo
 end
 fn option_is_some
-  arity 1
+  identity 0xeb6e18de52b96bd03c103d0d3f467826a22dc26ba9d1f6073793c9d177e16fd9
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Bool
   effect fullIo
 end
 fn option_unwrap
-  arity 1
+  identity 0xa699c3c804671aa2fd24bd80405150f176522ad622b48f994b5f7cdf81ad456c
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Value
   effect fullIo
@@ -472,65 +538,73 @@ end
 
 // ── IO (io.rs) ────────────────────────────────────────────────────────────────
 fn io_print
-  arity 1
+  identity 0xb1c85be5370b984238e921642e956f6ed235f5e426ee29c44885dc0b4f0080fa
+  kind     leaf
   deterministic false
-  profile writes
+  idempotent    false
   in (Value)
   out Unit
   effect fullIo
 end
 fn io_println
-  arity 1
+  identity 0x922ef5ee2e252f6843e2c7494128b55fc330d988a725fa38d5176fc7b1b48f0f
+  kind     leaf
   deterministic false
-  profile writes
+  idempotent    false
   in (Value)
   out Unit
   effect fullIo
 end
 fn io_eprint
-  arity 1
+  identity 0xcf715cff0fb4f66a0ef238440fd74d9911239a5598f1798fc0d3accb4131120b
+  kind     leaf
   deterministic false
-  profile writes
+  idempotent    false
   in (Value)
   out Unit
   effect fullIo
 end
 fn io_read_line
-  arity 1
+  identity 0xe85a6e8b486d7fc295ce3eda6eb1313601de1c317fa1a1e618a7ce59943d7fac
+  kind     leaf
   deterministic false
-  profile reads
+  idempotent    false
   in (Unit)
   out Text
   effect fullIo
 end
 fn fs_read_text
-  arity 1
+  identity 0xce00479b9607c9fbd872954eea6db2c426738c89d965cc2c2411003f9b3f6b5a
+  kind     leaf
   deterministic false
-  profile reads
+  idempotent    false
   in (Text)
   out Value
   effect fullIo
 end
 fn fs_write_text
-  arity 1
+  identity 0x3b3691849d1618ba55b983927704366d7bc44b10490846456bb17190d7c128e6
+  kind     leaf
   deterministic false
-  profile writes
+  idempotent    false
   in (Text, Text)
   out Value
   effect fullIo
 end
 fn fs_append_text
-  arity 1
+  identity 0xfe77014a0e74770129b5036bbb1a5c90fd36cc91928116ed7e7bf11c5bd43ee1
+  kind     leaf
   deterministic false
-  profile writes
+  idempotent    false
   in (Text, Text)
   out Value
   effect fullIo
 end
 fn debug_trace
-  arity 1
+  identity 0x7dd29fd40ce882923f5620ac58ccb1121996014564a311f82cf1b43be13d35b1
+  kind     leaf
   deterministic false
-  profile writes
+  idempotent    false
   in (Value)
   out Unit
   effect fullIo
@@ -538,65 +612,73 @@ end
 
 // ── Process (process.rs) ──────────────────────────────────────────────────────
 fn proc_args
-  arity 1
+  identity 0x72321bb1fee5f557422fd2e00bccd1b51a55f6d3d2d31a33f9959d3aa607375b
+  kind     leaf
   deterministic false
-  profile reads
+  idempotent    false
   in (Unit)
   out TextList
   effect fullIo
 end
 fn proc_exit
-  arity 1
+  identity 0x1b5efa070aa8bc18f4bc22a735e78637b3b11699c2384c24575e1901a0490ac3
+  kind     leaf
   deterministic false
-  profile full_io
+  idempotent    false
   in (Unit)
   out Unit
   effect fullIo
 end
 fn proc_sleep
-  arity 1
+  identity 0x2172ad8c0bc2f1453d30e60739b0bd5fcf1fd408322a52cccc58bd0519c1bf92
+  kind     leaf
   deterministic false
-  profile writes
+  idempotent    false
   in (Int)
   out Unit
   effect writes
 end
 fn sleep
-  arity 1
+  identity 0x0afa5bb5d5f1787945e555e91474675beb6f34dd9a490423c4d0460e4d454885
+  kind     leaf
   deterministic false
-  profile writes
+  idempotent    false
   in (Int)
   out Unit
   effect fullIo
 end
 fn argv
-  arity 1
+  identity 0x5a6e537c2ba28ef19cad9f47cbb139af0bc071b53c3969479e06ff8868284e33
+  kind     leaf
   deterministic false
-  profile reads
+  idempotent    false
   in (Int)
   out Text
   effect fullIo
 end
 fn argv_int
-  arity 1
+  identity 0xe7b8b6dbcefc3dac3f35aec2601655c1259e7c1b84b044569687bf1721689359
+  kind     leaf
   deterministic false
-  profile reads
+  idempotent    false
   in (Int)
   out Int
   effect fullIo
 end
 fn argv_count
-  arity 1
+  identity 0x39db70e7162fba6313172c90b67dbb2cf9cc0d29c9706a2f019cbe35d4c52d0c
+  kind     leaf
   deterministic false
-  profile reads
+  idempotent    false
   in (Unit)
   out Int
   effect fullIo
 end
 fn argv_or
-  arity 1
+  identity 0x7151c07e5361ed7c7aa1fd927f63f9a5e6e87709118d5c957790f7ac500d8b2a
+  kind     leaf
   deterministic false
-  profile reads
+  idempotent    false
   in (Int, Text)
   out Text
   effect fullIo
@@ -604,161 +686,181 @@ end
 
 // ── IR Constructors (ir_constructors.rs) ──────────────────────────────────────
 fn ir_make_int_lit
-  arity 1
+  identity 0x13043dac582cc68ccdac278a391abcbb18bd509ea6d51bf9386df98bd0b1ab3f
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Int)
   out Value
   effect fullIo
 end
 fn ir_make_bool_lit
-  arity 1
+  identity 0x3b245b6fddcf6579c4bd071a33a0f1ed1d8ae64d512bb43c0deb4c293a5b4233
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Bool)
   out Value
   effect fullIo
 end
 fn ir_make_unit_lit
-  arity 1
+  identity 0xdda20845457fc3a22ca002caae71b46d187295cdbb224928fa521677d50d2a56
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Unit)
   out Value
   effect fullIo
 end
 fn ir_make_var
-  arity 1
+  identity 0x97c26b1393b614c175cc439a7f1b4960273e84127873fda798433f82305e2766
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text)
   out Value
   effect fullIo
 end
 fn ir_make_lam
-  arity 1
+  identity 0x3970c34fdd414d323d81e2c315bca363f970eb7f860ee69b2cf92f927b690036
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text, Value)
   out Value
   effect fullIo
 end
 fn ir_make_let
-  arity 1
+  identity 0x36cfa1db95f42aa65c3e1c79b921347a56463903f0b6217839e680bd309aaaab
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text, Value, Value)
   out Value
   effect fullIo
 end
 fn ir_make_if
-  arity 1
+  identity 0x69e2b340f5f960c1c315e9f175a1c23df28a4d7cc257dc922910a4c10284935e
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value, Value, Value)
   out Value
   effect fullIo
 end
 fn ir_make_app
-  arity 1
+  identity 0x02749bbbc1c41ea37ed4c00e66d63454651c3fca9b1f35bbb5cde497e3099331
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value, Value)
   out Value
   effect fullIo
 end
 fn ir_make_call
-  arity 1
+  identity 0xb9152dc4dcb643df6512c807458e24a2fbdd3821d3c8fbd62190bd12c33d12ca
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text, Value)
   out Value
   effect fullIo
 end
 fn ir_term_kind
-  arity 1
+  identity 0x1b3f3b47034271aa5e1d57d7b71595ceaaeb182310022ec2d6c2f02d50018b0b
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Text
   effect fullIo
 end
 fn ir_to_string
-  arity 1
+  identity 0x2b00a6658f050701d0af6861154fc58f34906d77f7f054593b84d63bffc2881d
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Text
   effect fullIo
 end
 fn ir_to_h1_string
-  arity 1
+  identity 0x951869748faf353c6e357b5b2bf702b70b49fcfe2f3707fb932428f397909071
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Text
   effect fullIo
 end
 fn ir_subst
-  arity 1
+  identity 0xf142e355e888c2c4dca8e2827754ecc77a1567866f40a1570b338cc5af926a53
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text, Value, Value)
   out Value
   effect fullIo
 end
 fn ir_rename
-  arity 1
+  identity 0xa3dc0202b1189c966fda5a78d4eb5e5c8184396a6870a1d2e3e64c45b975a293
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text, Text, Value)
   out Value
   effect fullIo
 end
 fn ir_free_vars
-  arity 1
+  identity 0x997c5fc062d68545d688edc9bb7a0667a615f231f59ce5ec384bc665b7e34cb1
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out TextList
   effect fullIo
 end
 fn ir_write_bundle
-  arity 1
+  identity 0x537fae5c65cf63cd73e776e45c059258a7f83fd3cdca9dd459592f96634fc5f7
+  kind     leaf
   deterministic false
-  profile writes
+  idempotent    false
   in (Unit)
   out Unit
   effect fullIo
 end
 fn ir_read_bundle
-  arity 1
+  identity 0x1b9aeaa0786619605f386722ed6314503fb684bf232594ed12f4b746236db074
+  kind     leaf
   deterministic false
-  profile reads
+  idempotent    false
   in (Text)
   out Value
   effect fullIo
 end
 fn ir_build_program_from_spec
-  arity 1
+  identity 0x8b76d968df15a9a863a185055a7afa9d0cb5d1acb9f6a3ca25c054dd41b4f2f0
+  kind     leaf
   deterministic false
-  profile reads
+  idempotent    false
   in (Text)
   out Value
   effect fullIo
 end
 fn ir_build_fold_from_spec
-  arity 1
+  identity 0x34f121f7348b82d916a45c38d966b316b4e210e32c4dbb7d971bc73f5fa61272
+  kind     leaf
   deterministic false
-  profile reads
+  idempotent    false
   in (Text)
   out Value
   effect reads
 end
 fn ir_bundle_view
-  arity 1
+  identity 0xfb326a94bf3fdc07a8a71fd2777cf5ff7b0f5c8dab047083bc6a1825867f7149
+  kind     leaf
   deterministic false
-  profile reads
+  idempotent    false
   in (Text)
   out Text
   effect fullIo
@@ -766,17 +868,19 @@ end
 
 // ── IR Eval (ir_eval.rs) ──────────────────────────────────────────────────────
 fn ir_eval
-  arity 1
+  identity 0x20987bde358108b7e94ff43022ebcd873963fdc4e8860e7231890f0d4ff6e962
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value, Value)
   out Value
   effect fullIo
 end
 fn ir_apply
-  arity 1
+  identity 0x6124cae62f9e4cd06942a775f35ff340027674bc12b617e02f902f0583d6a216
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value, Value)
   out Value
   effect fullIo
@@ -784,81 +888,91 @@ end
 
 // ── IR Accessors (ir_accessors.rs) ────────────────────────────────────────────
 fn ir_get_kind
-  arity 1
+  identity 0x0cbd4106057265c0d68739e6f6b40a4022d1a7a0190655537e9602500bc71f70
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Text
   effect pure
 end
 fn ir_get_name
-  arity 1
+  identity 0x481347217c9b33eafdba79b27ac3d2068bc46e571df343028a5a64be2bb43b3d
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Text
   effect pure
 end
 fn ir_get_int_val
-  arity 1
+  identity 0x156646364e7f0addf67a4804494757b5f49db95389e80a2f16f6dc5ad50f1058
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Int
   effect pure
 end
 fn ir_get_fn
-  arity 1
+  identity 0x7b5195d3a9df68d6d5eb78fba24ad2326a03b8d7d630b10079210cdd1964d55a
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Value
   effect pure
 end
 fn ir_get_arg
-  arity 1
+  identity 0x0c69a32a13f00f737b41521d0fb24c54ebe552686a5810a29dac4e7e87726bf8
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Value
   effect pure
 end
 fn ir_get_body
-  arity 1
+  identity 0xf1a58e8cf220b665cbed57c0cbdb762db91a9aec22078c8e230efc2c89e58451
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Value
   effect pure
 end
 fn ir_get_value
-  arity 1
+  identity 0x73ee1161ff7b50211dc01d6c7a2913c5ee26bf45be036f7bd6d85c3a15d393f9
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Value
   effect pure
 end
 fn ir_get_cond
-  arity 1
+  identity 0x519633560989c3f16454ce4e10910f947f059d0512ce63aefd8c3d14d6b3b546
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Value
   effect pure
 end
 fn ir_get_then
-  arity 1
+  identity 0xe0d85a92b1e1a7947e14c28c816e3d4eceb3a17a41b5d66da5236e1f84e3536d
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Value
   effect pure
 end
 fn ir_get_else
-  arity 1
+  identity 0x1dde3d7f923266782168ffc7a6dc6b49297bbef94fdb506c37795a0510a982ba
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Value
   effect pure
@@ -866,73 +980,82 @@ end
 
 // ── Registry (registry.rs) ────────────────────────────────────────────────────
 fn registry_has_entry
-  arity 1
+  identity 0x41c32da568412645d0ddce5a495a16ebf30943d6de66de5ba5010bb98a824bbf
+  kind     leaf
   deterministic true
-  profile reads
+  idempotent    false
   in (Text)
   out Bool
   effect fullIo
 end
 fn registry_lookup
-  arity 1
+  identity 0xedaefb470c2f3eaecaa31e752c47dfb563396e1df1f0a5f500596600bd4d9a2e
+  kind     leaf
   deterministic true
-  profile reads
+  idempotent    false
   in (Text)
   out Value
   effect fullIo
 end
 fn registry_get_provenance
-  arity 1
+  identity 0x50512a15b8eba0e6bd126071caa4b82304372e9ace07cdd3e42b9774ea2693bb
+  kind     leaf
   deterministic true
-  profile reads
+  idempotent    false
   in (Text)
   out Value
   effect fullIo
 end
 fn registry_get_contract
-  arity 1
+  identity 0x41bac6ce35d9ec091ed706913bdd0ab491fb35327f5e1913e49a457108d3d901
+  kind     leaf
   deterministic true
-  profile reads
+  idempotent    false
   in (Text)
   out Value
   effect fullIo
 end
 fn registry_get_effect_sig
-  arity 1
+  identity 0xefc6c8f8d109ed3a3dc37a480122709faec4e963887915b4b72138c521a664b2
+  kind     leaf
   deterministic true
-  profile reads
+  idempotent    false
   in (Text)
   out Value
   effect fullIo
 end
 fn registry_all_entries
-  arity 1
+  identity 0x62bcbb38e652582283bde13e9cbecf25dfc1d46afbf3d724b10b301b6cdbf968
+  kind     leaf
   deterministic true
-  profile reads
+  idempotent    false
   in (Unit)
   out Value
   effect fullIo
 end
 fn registry_insert
-  arity 1
+  identity 0xedfb256aba03bff9463a44d2b0a82be277cc8e040303c4d297ffb2c245d0d7a1
+  kind     leaf
   deterministic false
-  profile writes
+  idempotent    false
   in (Text, Text, Text)
   out Value
   effect fullIo
 end
 fn registry_verify_chain
-  arity 1
+  identity 0x81b8422e72b609a2df61e3325b7cbbe0d548ce86602360ea2f05342dff03ff80
+  kind     leaf
   deterministic true
-  profile reads
+  idempotent    false
   in (Unit)
   out Bool
   effect fullIo
 end
 fn registry_compound_id
-  arity 1
+  identity 0xd4c49fca2ee1bb7674a5b49b45e7381edee9153bc80f9591c56007e7510600f9
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Text, Text)
   out Text
   effect fullIo
@@ -940,65 +1063,73 @@ end
 
 // ── Transitions (transitions.rs) ──────────────────────────────────────────────
 fn introduce_let_binding
-  arity 1
+  identity 0xbcdf78c6e2b73b9c417ff721d79efb674bdcdf8629a711da4d35ea007c1bbdb8
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Value
   effect pure
 end
 fn introduce_lambda
-  arity 1
+  identity 0x355faec28eb2aa6f75d6b6df33421d847fdc4ac24879e5d311b3b1f49ab11345
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Value
   effect pure
 end
 fn apply_function
-  arity 1
+  identity 0x268ead004a3882d7d52c9533a70359a6e7df7bf293f041bc2b9ac8f1ecff2b13
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Value
   effect pure
 end
 fn extract_subterm_to_function
-  arity 1
+  identity 0xceb9fdc99182d41861f9d9a7d9d6311da188211f920a0c9a9c4163046ddec791
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Value
   effect pure
 end
 fn inline_let_binding
-  arity 1
+  identity 0xa6237565f06c340ec78f64c51605ba0f0f003d117c009b25e7fb8f200099e353
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Value
   effect pure
 end
 fn rename_bound_variable
-  arity 1
+  identity 0xa5727abbfd76266b13fdb844a5263bdb7694afa42015c001f8df0cc6443d7eb4
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Value
   effect pure
 end
 fn reference_registry_function
-  arity 1
+  identity 0x8e8f04ebaefde16c41b1a668d5efaea5031af99184e5d14763374fafbd7446ac
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Value
   effect pure
 end
 fn verify_foreign_reference
-  arity 1
+  identity 0xdb189e7456f7d7b0b8b6254104d1bd74558b186ec0e0940cb0db1ffa1a4641de
+  kind     leaf
   deterministic true
-  profile pure
+  idempotent    false
   in (Value)
   out Value
   effect pure
@@ -1006,17 +1137,19 @@ end
 
 // ── Frontend (frontend.rs) ────────────────────────────────────────────────────
 fn frontend_lookup_shape
-  arity 1
+  identity 0xd152f7ae635314120e8c9f20d44dff2266ec50f132eefc8d4846872674d9e461
+  kind     leaf
   deterministic false
-  profile io
+  idempotent    false
   in (Text, Text)
   out Text
   effect fullIo
 end
 fn frontend_walk
-  arity 1
+  identity 0x68f97cb602941c7843f320e7220859ce14fc2a1b12b798251599f580fa311437
+  kind     leaf
   deterministic false
-  profile io
+  idempotent    false
   in (Text, Text, Text)
   out Text
   effect fullIo
@@ -1024,10 +1157,9 @@ end
 
 // ── Composites ────────────────────────────────────────────────────────────────
 fn composite_io_passthrough
-  arity 1
-  deterministic false
-  profile full_io
+  identity 0x9e56256b9f2705bb2011f34ca5f9e8ea161f3f6da03c3b60c08ef6b40d5ef9ab
+  kind composite
   in (Unit)
   out Unit
-  effect fullIo
+  body 0xff5924dd4c111ea53ada27e1afcff98572320e8eef68335bd0e77d51df758a55
 end

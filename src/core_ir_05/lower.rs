@@ -26,8 +26,8 @@ use super::{
 /// Returns NO_RESULT_TYPE (all-zero) for unknown functions.
 fn fn_result_type(name: &str) -> Hash256 {
     match name {
-        // Process
-        "proc_args"           => text_list_type_hash(),
+        // TextList-returning
+        "proc_args" | "str_split" => text_list_type_hash(),
         // Int-returning
         "list_len" | "str_len" | "str_index_of" | "str_char_code"
         | "argv_count" | "argv_int"
