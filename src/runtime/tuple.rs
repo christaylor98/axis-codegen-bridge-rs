@@ -1,5 +1,6 @@
 use super::value::{Value, get_tag_name, get_str};
 
+#[track_caller]
 pub fn tuple_field(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => {
@@ -14,6 +15,7 @@ pub fn tuple_field(args: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn ctor_field(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => {
@@ -27,6 +29,7 @@ pub fn ctor_field(args: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn ctor_is_ok(v: Value) -> Value {
     match v {
         Value::Ctor { tag, .. } if get_tag_name(tag) == "Ok" => Value::Bool(true),
@@ -36,6 +39,7 @@ pub fn ctor_is_ok(v: Value) -> Value {
 
 /// Unwrap a Result(Text) (as produced by fs_read_text): returns the Ok payload,
 /// panics on Err with the message. Monomorphic over Text — mirrors option_unwrap.
+#[track_caller]
 pub fn result_text_unwrap(v: Value) -> Value {
     match v {
         Value::Ctor { tag, fields } if get_tag_name(tag) == "Ok" => {

@@ -227,6 +227,7 @@ fn apply_bindings(term: Value, bindings_val: &Value) -> Value {
 
 /// ir_eval: takes Tuple(term, bindings) where bindings is List of Tuple(Str, Value).
 /// Pre-substitutes bindings, then evaluates the closed term.
+#[track_caller]
 pub fn ir_eval(v: Value) -> Value {
     match v {
         Value::Tuple(mut fields) if fields.len() == 2 => {
@@ -239,6 +240,7 @@ pub fn ir_eval(v: Value) -> Value {
 }
 
 /// ir_apply: takes Tuple(lam_term, arg). Applies lam to arg via substitution.
+#[track_caller]
 pub fn ir_apply(v: Value) -> Value {
     match v {
         Value::Tuple(mut fields) if fields.len() == 2 => {

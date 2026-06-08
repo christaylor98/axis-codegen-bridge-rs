@@ -1,6 +1,7 @@
 use std::io::{BufRead, Write};
 use super::value::{Value, intern_str, intern_tag, get_str};
 
+#[track_caller]
 pub fn io_print(val: Value) -> Value {
     match &val {
         Value::Str(h) => print!("{}", get_str(*h)),
@@ -13,6 +14,7 @@ pub fn io_print(val: Value) -> Value {
     Value::Unit
 }
 
+#[track_caller]
 pub fn io_println(val: Value) -> Value {
     match &val {
         Value::Str(h) => println!("{}", get_str(*h)),
@@ -24,6 +26,7 @@ pub fn io_println(val: Value) -> Value {
     Value::Unit
 }
 
+#[track_caller]
 pub fn io_eprint(val: Value) -> Value {
     match &val {
         Value::Str(h) => eprint!("{}", get_str(*h)),
@@ -36,6 +39,7 @@ pub fn io_eprint(val: Value) -> Value {
     Value::Unit
 }
 
+#[track_caller]
 pub fn io_read_line(_: Value) -> Value {
     let stdin = std::io::stdin();
     let mut line = String::new();
@@ -43,6 +47,7 @@ pub fn io_read_line(_: Value) -> Value {
     Value::Str(intern_str(&line))
 }
 
+#[track_caller]
 pub fn fs_read_text(path: Value) -> Value {
     let path_str = match path {
         Value::Str(h) => get_str(h),
@@ -60,6 +65,7 @@ pub fn fs_read_text(path: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn fs_write_text(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
@@ -77,6 +83,7 @@ pub fn fs_write_text(args: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn fs_append_text(args: Value) -> Value {
     use std::io::Write as IoWrite;
     match args {
@@ -99,6 +106,7 @@ pub fn fs_append_text(args: Value) -> Value {
 }
 
 /// Observational trace. Controlled by AXIS_TRACE=1. No semantic effect.
+#[track_caller]
 pub fn debug_trace(val: Value) -> Value {
     if std::env::var("AXIS_TRACE").ok().as_deref() == Some("1") {
         eprintln!("[trace] {}", val);

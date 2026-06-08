@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(gh repo *)",
+      "Bash(grep -v \"^$\")",
+      "Bash(bash tests/test_ratchet_cold.sh)",
+      "Read(//home/chris/.claude/**)",
+      "Bash(bash scripts/build.sh)",
+      "Bash(cargo build *)",
+      "Bash(cargo test *)",
+      "Bash(git stash *)",
+      "Bash(git push *)",
+      "Bash(npm run *)",
+      "Bash(python3 -m json.tool)"
+    ]
+  }
+}

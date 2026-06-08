@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::io::Write;
 use std::time::Instant;
+use sha2::{Sha256, Digest};
 use axis_codegen_bridge::core_ir;
 use axis_codegen_bridge::core_ir_05;
 use axis_codegen_bridge::emit::rust::{emit_rust_lib_from_core, sanitise};
@@ -92,16 +93,21 @@ fn append_fn_to_registry(reg_path: &str, fn_name: &str, effect_class: &core_ir::
             }
         }
     }
-    let deterministic = matches!(effect_class, core_ir::EffectClass::Pure);
-    let profile = match effect_class {
+    let effect = match effect_class {
         core_ir::EffectClass::Pure   => "pure",
         core_ir::EffectClass::Reads  => "reads",
         core_ir::EffectClass::Writes => "writes",
-        core_ir::EffectClass::FullIo => "full_io",
+        core_ir::EffectClass::FullIo => "fullIo",
+    };
+    let deterministic = matches!(effect_class, core_ir::EffectClass::Pure);
+    let idempotent    = matches!(effect_class, core_ir::EffectClass::Pure);
+    let identity: String = {
+        let hash = Sha256::digest(fn_name.as_bytes());
+        format!("0x{}", hash.iter().map(|b| format!("{:02x}", b)).collect::<String>())
     };
     let entry = format!(
-        "\nfn {}\n  arity 1\n  deterministic {}\n  profile {}\nend\n",
-        fn_name, deterministic, profile
+        "\nfn {}\n  identity {}\n  kind     leaf\n  in       (Value)\n  out      Value\n  effect   {}\n  deterministic {}\n  idempotent    {}\nend\n",
+        fn_name, identity, effect, deterministic, idempotent
     );
     match std::fs::OpenOptions::new().append(true).open(reg_path) {
         Ok(mut f) => { let _ = f.write_all(entry.as_bytes()); }

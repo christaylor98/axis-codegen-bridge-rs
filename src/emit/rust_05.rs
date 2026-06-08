@@ -32,6 +32,12 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("int_to_str",      "axis_codegen_bridge::runtime::arith::int_to_str");
     m.insert("str_to_int",      "axis_codegen_bridge::runtime::arith::str_to_int");
     m.insert("int_abs",         "axis_codegen_bridge::runtime::arith::int_abs");
+    m.insert("int_min",         "axis_codegen_bridge::runtime::arith::int_min");
+    m.insert("int_max",         "axis_codegen_bridge::runtime::arith::int_max");
+    m.insert("int_clamp",       "axis_codegen_bridge::runtime::arith::int_clamp");
+    m.insert("celsius_to_fahrenheit", "axis_codegen_bridge::runtime::arith::celsius_to_fahrenheit");
+    m.insert("fahrenheit_to_celsius", "axis_codegen_bridge::runtime::arith::fahrenheit_to_celsius");
+    m.insert("is_positive",     "axis_codegen_bridge::runtime::arith::is_positive");
 
     // Comparison
     m.insert("int_lt",   "axis_codegen_bridge::runtime::arith::int_lt");
@@ -64,6 +70,9 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("str_contains",    "axis_codegen_bridge::runtime::str_ops::str_contains");
     m.insert("str_index_of",    "axis_codegen_bridge::runtime::str_ops::str_index_of");
     m.insert("str_eq",          "axis_codegen_bridge::runtime::str_ops::str_eq");
+    m.insert("str_before",      "axis_codegen_bridge::runtime::str_ops::str_before");
+    m.insert("str_after",       "axis_codegen_bridge::runtime::str_ops::str_after");
+    m.insert("str_between",     "axis_codegen_bridge::runtime::str_ops::str_between");
     m.insert("chr",             "axis_codegen_bridge::runtime::str_ops::chr");
 
     // List
@@ -335,6 +344,7 @@ pub fn emit_rust_lib_from_bundle(
 
     let mut out = String::new();
     out.push_str("extern crate axis_codegen_bridge;\n");
+    out.push_str("#[allow(unused_imports)]\n");
     out.push_str(
         "use axis_codegen_bridge::runtime::value::{Value, truthy, intern_str, init_runtime};\n\n",
     );

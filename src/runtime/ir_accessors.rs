@@ -8,6 +8,7 @@ fn expect_ctor(name: &str, v: Value) -> (String, Vec<Value>) {
 }
 
 /// Returns lowercase kind name: 'int' | 'bool' | 'unit' | 'var' | 'lam' | 'let' | 'if' | 'app'
+#[track_caller]
 pub fn ir_get_kind(v: Value) -> Value {
     let (kind, _) = expect_ctor("ir_get_kind", v);
     let short = match kind.as_str() {
@@ -26,6 +27,7 @@ pub fn ir_get_kind(v: Value) -> Value {
 }
 
 /// Returns var name (Var), binding name (Let), or param name (Lam).
+#[track_caller]
 pub fn ir_get_name(v: Value) -> Value {
     let (kind, fields) = expect_ctor("ir_get_name", v);
     match kind.as_str() {
@@ -38,6 +40,7 @@ pub fn ir_get_name(v: Value) -> Value {
 }
 
 /// Returns the integer value of an IntLit term.
+#[track_caller]
 pub fn ir_get_int_val(v: Value) -> Value {
     let (kind, fields) = expect_ctor("ir_get_int_val", v);
     if kind != "IntLit" {
@@ -50,6 +53,7 @@ pub fn ir_get_int_val(v: Value) -> Value {
 }
 
 /// Returns the fn (function) field of an App term.
+#[track_caller]
 pub fn ir_get_fn(v: Value) -> Value {
     let (kind, mut fields) = expect_ctor("ir_get_fn", v);
     if kind != "App" {
@@ -59,6 +63,7 @@ pub fn ir_get_fn(v: Value) -> Value {
 }
 
 /// Returns the arg field of an App term.
+#[track_caller]
 pub fn ir_get_arg(v: Value) -> Value {
     let (kind, mut fields) = expect_ctor("ir_get_arg", v);
     if kind != "App" {
@@ -68,6 +73,7 @@ pub fn ir_get_arg(v: Value) -> Value {
 }
 
 /// Returns the body field of a Lam or Let term.
+#[track_caller]
 pub fn ir_get_body(v: Value) -> Value {
     let (kind, mut fields) = expect_ctor("ir_get_body", v);
     match kind.as_str() {
@@ -78,6 +84,7 @@ pub fn ir_get_body(v: Value) -> Value {
 }
 
 /// Returns the value field of a Let term.
+#[track_caller]
 pub fn ir_get_value(v: Value) -> Value {
     let (kind, mut fields) = expect_ctor("ir_get_value", v);
     if kind != "Let" {
@@ -87,6 +94,7 @@ pub fn ir_get_value(v: Value) -> Value {
 }
 
 /// Returns the cond field of an If term.
+#[track_caller]
 pub fn ir_get_cond(v: Value) -> Value {
     let (kind, mut fields) = expect_ctor("ir_get_cond", v);
     if kind != "If" {
@@ -96,6 +104,7 @@ pub fn ir_get_cond(v: Value) -> Value {
 }
 
 /// Returns the then field of an If term.
+#[track_caller]
 pub fn ir_get_then(v: Value) -> Value {
     let (kind, mut fields) = expect_ctor("ir_get_then", v);
     if kind != "If" {
@@ -105,6 +114,7 @@ pub fn ir_get_then(v: Value) -> Value {
 }
 
 /// Returns the else field of an If term.
+#[track_caller]
 pub fn ir_get_else(v: Value) -> Value {
     let (kind, mut fields) = expect_ctor("ir_get_else", v);
     if kind != "If" {

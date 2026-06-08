@@ -13,6 +13,7 @@ pub enum Value {
 }
 
 impl Value {
+    #[track_caller]
     pub fn as_int(&self) -> i64 {
         match self {
             Value::Int(n) => *n,
@@ -20,6 +21,7 @@ impl Value {
         }
     }
 
+    #[track_caller]
     pub fn as_bool(&self) -> bool {
         match self {
             Value::Bool(b) => *b,
@@ -63,6 +65,7 @@ impl std::fmt::Display for Value {
     }
 }
 
+#[track_caller]
 pub fn truthy(v: &Value) -> bool {
     match v {
         Value::Bool(b)    => *b,
@@ -80,6 +83,7 @@ pub fn truthy(v: &Value) -> bool {
 static STRING_TABLE: OnceLock<Mutex<Vec<String>>>         = OnceLock::new();
 static STRING_MAP:   OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
 
+#[track_caller]
 pub fn intern_str(s: &str) -> u32 {
     let map = STRING_MAP.get_or_init(|| Mutex::new(HashMap::new()));
     let mut map = map.lock().unwrap();
@@ -92,6 +96,7 @@ pub fn intern_str(s: &str) -> u32 {
     h
 }
 
+#[track_caller]
 pub fn get_str(handle: u32) -> String {
     let tbl = STRING_TABLE.get_or_init(|| Mutex::new(vec!["".to_string()]));
     let tbl = tbl.lock().unwrap();
@@ -103,6 +108,7 @@ pub fn get_str(handle: u32) -> String {
 static TAG_TABLE: OnceLock<Mutex<Vec<String>>>         = OnceLock::new();
 static TAG_MAP:   OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
 
+#[track_caller]
 pub fn intern_tag(name: &str) -> u32 {
     let map = TAG_MAP.get_or_init(|| Mutex::new(HashMap::new()));
     let mut map = map.lock().unwrap();
@@ -115,6 +121,7 @@ pub fn intern_tag(name: &str) -> u32 {
     t
 }
 
+#[track_caller]
 pub fn get_tag_name(tag: u32) -> String {
     let tbl = TAG_TABLE.get_or_init(|| Mutex::new(Vec::new()));
     let tbl = tbl.lock().unwrap();
@@ -125,12 +132,14 @@ pub fn get_tag_name(tag: u32) -> String {
 
 static PROCESS_ARGS: OnceLock<Vec<String>> = OnceLock::new();
 
+#[track_caller]
 pub fn init_runtime() {
     PROCESS_ARGS.get_or_init(|| std::env::args().collect());
     STRING_TABLE.get_or_init(|| Mutex::new(vec!["".to_string()]));
     STRING_MAP.get_or_init(|| Mutex::new(HashMap::new()));
 }
 
+#[track_caller]
 pub fn get_process_args() -> &'static Vec<String> {
     PROCESS_ARGS.get_or_init(|| std::env::args().collect())
 }

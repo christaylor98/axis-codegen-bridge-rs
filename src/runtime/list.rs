@@ -1,9 +1,11 @@
 use super::value::{Value, get_str};
 
+#[track_caller]
 pub fn list_nil(_: Value) -> Value {
     Value::List(vec![])
 }
 
+#[track_caller]
 pub fn list_cons(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => match &es[1] {
@@ -18,6 +20,7 @@ pub fn list_cons(args: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn list_len(list: Value) -> Value {
     match list {
         Value::List(es) => Value::Int(es.len() as i64),
@@ -25,6 +28,7 @@ pub fn list_len(list: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn list_get(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => {
@@ -38,6 +42,7 @@ pub fn list_get(args: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn list_get_at(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => {
@@ -55,6 +60,7 @@ pub fn list_get_at(args: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn list_append(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => match &es[0] {
@@ -69,6 +75,7 @@ pub fn list_append(args: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn list_concat(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
@@ -83,6 +90,7 @@ pub fn list_concat(args: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn list_reverse(list: Value) -> Value {
     match list {
         Value::List(mut es) => { es.reverse(); Value::List(es) }
@@ -90,6 +98,7 @@ pub fn list_reverse(list: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn list_head(list: Value) -> Value {
     match list {
         Value::List(es) if !es.is_empty() => es[0].clone(),
@@ -98,6 +107,7 @@ pub fn list_head(list: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn list_tail(list: Value) -> Value {
     match list {
         Value::List(es) if !es.is_empty() => Value::List(es[1..].to_vec()),
@@ -106,6 +116,7 @@ pub fn list_tail(list: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn list_is_empty(list: Value) -> Value {
     match list {
         Value::List(es) => Value::Bool(es.is_empty()),
@@ -113,10 +124,12 @@ pub fn list_is_empty(list: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn list_of_1(v: Value) -> Value {
     Value::List(vec![v])
 }
 
+#[track_caller]
 pub fn list_of_2(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => Value::List(vec![es[0].clone(), es[1].clone()]),
@@ -124,6 +137,7 @@ pub fn list_of_2(args: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn list_of_3(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 3 => Value::List(vec![es[0].clone(), es[1].clone(), es[2].clone()]),
@@ -132,6 +146,7 @@ pub fn list_of_3(args: Value) -> Value {
 }
 
 /// Returns 1 if list[index] exists and str_len(list[index]) ≤ max_len, else 0. OOB-safe.
+#[track_caller]
 pub fn list_str_len_lte_if_some(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 3 => {
@@ -157,6 +172,7 @@ pub fn list_str_len_lte_if_some(args: Value) -> Value {
 /// Get list[i] and println the value if it exists; return Unit either way.
 /// Used by the unrolled forEach loop in 0.5 bundles where CIf branches are
 /// evaluated eagerly — inlining the None check into Rust avoids option_unwrap(None).
+#[track_caller]
 pub fn list_get_println_if_some(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => {

@@ -6,6 +6,7 @@ fn make_ctor(tag: &str, fields: Vec<Value>) -> Value {
     Value::Ctor { tag: intern_tag(tag), fields }
 }
 
+#[track_caller]
 pub fn ir_make_int_lit(v: Value) -> Value {
     match v {
         Value::Int(n) => make_ctor("IntLit", vec![Value::Int(n)]),
@@ -13,6 +14,7 @@ pub fn ir_make_int_lit(v: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn ir_make_bool_lit(v: Value) -> Value {
     match v {
         Value::Bool(b) => make_ctor("BoolLit", vec![Value::Bool(b)]),
@@ -20,6 +22,7 @@ pub fn ir_make_bool_lit(v: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn ir_make_unit_lit(v: Value) -> Value {
     match v {
         Value::Unit => make_ctor("UnitLit", vec![]),
@@ -27,6 +30,7 @@ pub fn ir_make_unit_lit(v: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn ir_make_var(v: Value) -> Value {
     match v {
         Value::Str(s) => make_ctor("Var", vec![Value::Str(s)]),
@@ -34,6 +38,7 @@ pub fn ir_make_var(v: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn ir_make_lam(v: Value) -> Value {
     match v {
         Value::Tuple(mut fields) if fields.len() == 2 => {
@@ -48,6 +53,7 @@ pub fn ir_make_lam(v: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn ir_make_let(v: Value) -> Value {
     match v {
         Value::Tuple(mut fields) if fields.len() == 3 => {
@@ -63,6 +69,7 @@ pub fn ir_make_let(v: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn ir_make_if(v: Value) -> Value {
     match v {
         Value::Tuple(fields) if fields.len() == 3 => make_ctor("If", fields),
@@ -70,6 +77,7 @@ pub fn ir_make_if(v: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn ir_make_app(v: Value) -> Value {
     match v {
         Value::Tuple(fields) if fields.len() == 2 => make_ctor("App", fields),
@@ -77,6 +85,7 @@ pub fn ir_make_app(v: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn ir_make_call(v: Value) -> Value {
     match v {
         Value::Tuple(mut fields) if fields.len() == 2 => {
@@ -150,10 +159,12 @@ fn term_to_str(v: &Value) -> String {
     }
 }
 
+#[track_caller]
 pub fn ir_to_string(v: Value) -> Value {
     Value::Str(intern_str(&term_to_str(&v)))
 }
 
+#[track_caller]
 pub fn ir_term_kind(v: Value) -> Value {
     match v {
         Value::Ctor { tag, .. } => Value::Str(intern_str(&get_tag_name(tag))),
@@ -255,6 +266,7 @@ fn h1_expr(v: &Value, depth: usize) -> String {
     format!("{:?}", v)
 }
 
+#[track_caller]
 pub fn ir_to_h1_string(v: Value) -> Value {
     Value::Str(intern_str(&h1_block_body(&v, 0)))
 }
@@ -361,6 +373,7 @@ pub(crate) fn subst_value(name: &str, replacement: &Value, term: Value) -> Value
 /// ir_subst: takes Tuple([name_str, replacement_term, target_term]).
 /// Substitutes all free occurrences of name in target with replacement.
 /// Respects shadowing: does not descend into Lam/Let that rebind name.
+#[track_caller]
 pub fn ir_subst(v: Value) -> Value {
     match v {
         Value::Tuple(mut fields) if fields.len() == 3 => {
@@ -379,6 +392,7 @@ pub fn ir_subst(v: Value) -> Value {
 
 /// ir_rename: takes Tuple([old_name_str, new_name_str, lam_term]).
 /// Replaces the Lam's param with new_name and substitutes old_name → Var(new_name) in body.
+#[track_caller]
 pub fn ir_rename(v: Value) -> Value {
     match v {
         Value::Tuple(mut fields) if fields.len() == 3 => {
@@ -486,6 +500,7 @@ fn free_vars_inner(term: &Value, bound: &std::collections::HashSet<String>) -> s
 
 /// ir_free_vars: takes any IR Ctor term.
 /// Returns a sorted List of Str — all free variable names in the term.
+#[track_caller]
 pub fn ir_free_vars(v: Value) -> Value {
     let fvs = free_vars_inner(&v, &std::collections::HashSet::new());
     let mut result: Vec<Value> = fvs.into_iter()
@@ -506,6 +521,7 @@ pub fn ir_free_vars(v: Value) -> Value {
 ///
 /// Multi-export form:
 ///   Tuple([List(Tuple([Str name, term, Str effectSig])), Str path, Bool idempotent])
+#[track_caller]
 pub fn ir_write_bundle(v: Value) -> Value {
     match v {
         // Multi-export: Tuple([List(Tuple([name, term, effectSig])), path, idempotent])
@@ -586,6 +602,7 @@ pub fn ir_write_bundle(v: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn ir_read_bundle(v: Value) -> Value {
     let path = match v {
         Value::Str(s) => get_str(s),
@@ -694,6 +711,7 @@ fn walk_ref_05(bundle: &crate::core_ir_05::CoreBundle, r: &crate::core_ir_05::No
 /// ir_bundle_view: takes Str path.
 /// Reads a .coreir file in either Core IR 0.4 or 0.5 format and returns a
 /// human-readable string. Never panics — on error, returns the error message.
+#[track_caller]
 pub fn ir_bundle_view(v: Value) -> Value {
     let path = match v {
         Value::Str(s) => get_str(s),
@@ -780,6 +798,7 @@ pub fn ir_bundle_view(v: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn ir_build_program_from_spec(v: Value) -> Value {
     let path = match v {
         Value::Str(s) => get_str(s),
@@ -897,6 +916,7 @@ pub fn ir_build_program_from_spec(v: Value) -> Value {
 /// Parses a fold spec (key: value lines) and builds an unrolled forEach IR.
 /// Returns Tuple(term, Str effect_class).
 /// Supports up to 32 list elements (TODO: replace with letrec when recursion lands).
+#[track_caller]
 pub fn ir_build_fold_from_spec(v: Value) -> Value {
     let path = match v {
         Value::Str(s) => get_str(s),
@@ -1027,15 +1047,11 @@ pub fn ir_build_fold_from_spec(v: Value) -> Value {
     ]);
 
     // proc_args returns all argv including argv[0] (the binary name).
-    // Wrap in list_tail to drop it so fold iteration starts at the first real argument.
-    let source_call = if source_fn == "proc_args" {
-        make_ctor("Call", vec![
-            Value::Str(intern_str("list_tail")),
-            Value::List(vec![raw_source_call]),
-        ])
-    } else {
-        raw_source_call
-    };
+    // Use proc_args directly as TextList (wrapping in list_tail causes a
+    // TextList/Value type mismatch in the 0.5 verifier). Instead, start loop
+    // indices at 1 to skip argv[0] when the source is proc_args.
+    let source_call = raw_source_call;
+    let start_index: usize = if source_fn == "proc_args" { 1 } else { 0 };
 
     const N: usize = 32;
 
@@ -1084,7 +1100,7 @@ pub fn ir_build_fold_from_spec(v: Value) -> Value {
                         Value::Str(intern_str("list_str_len_lte_if_some")),
                         Value::List(vec![
                             make_ctor("Var", vec![Value::Str(intern_str("lst"))]),
-                            make_ctor("IntLit", vec![Value::Int(i as i64)]),
+                            make_ctor("IntLit", vec![Value::Int((i + start_index) as i64)]),
                             make_ctor("IntLit", vec![Value::Int(threshold)]),
                         ]),
                     ]),
@@ -1110,7 +1126,7 @@ pub fn ir_build_fold_from_spec(v: Value) -> Value {
                         Value::Str(intern_str("list_get_println_if_some")),
                         Value::List(vec![
                             make_ctor("Var", vec![Value::Str(intern_str("lst"))]),
-                            make_ctor("IntLit", vec![Value::Int(i as i64)]),
+                            make_ctor("IntLit", vec![Value::Int((i + start_index) as i64)]),
                         ]),
                     ])
                 } else {
@@ -1121,14 +1137,14 @@ pub fn ir_build_fold_from_spec(v: Value) -> Value {
                         Value::Str(intern_str("int_gt")),
                         Value::List(vec![
                             make_ctor("Var", vec![Value::Str(intern_str("n"))]),
-                            make_ctor("IntLit", vec![Value::Int(i as i64)]),
+                            make_ctor("IntLit", vec![Value::Int((i + start_index) as i64)]),
                         ]),
                     ]);
                     let get_call = make_ctor("Call", vec![
                         Value::Str(intern_str("list_get_at")),
                         Value::List(vec![
                             make_ctor("Var", vec![Value::Str(intern_str("lst"))]),
-                            make_ctor("IntLit", vec![Value::Int(i as i64)]),
+                            make_ctor("IntLit", vec![Value::Int((i + start_index) as i64)]),
                         ]),
                     ]);
                     let unwrapped = make_ctor("Call", vec![
@@ -1319,8 +1335,9 @@ mod fold_from_spec_tests {
 
     #[test]
     fn no_source_nargs_emits_unit_lit_arg() {
-        // proc_args is wrapped in list_tail to skip argv[0] (binary name).
-        // outer call: list_tail([proc_args([UnitLit])])
+        // proc_args is used directly (TextList) — no list_tail wrapper.
+        // Indices start at 1 to skip argv[0] (binary name).
+        // outer call: proc_args([UnitLit])
         let path = write_spec("no_args", "\
 effect: pure
 source_fn: proc_args
@@ -1329,17 +1346,9 @@ transform_fn: my_t
         let (target, args) = outer_source_call(
             ir_build_fold_from_spec(Value::Str(intern_str(path.to_str().unwrap())))
         );
-        assert_eq!(target, "list_tail");
-        assert_eq!(args.len(), 1, "expected one inner Call arg, got {:?}", args);
-        // The single arg must be the inner proc_args(UnitLit) call
-        let inner_fields = unwrap_ctor(&args[0], "Call").to_vec();
-        assert_eq!(expect_str(&inner_fields[0]), "proc_args");
-        let inner_args = match &inner_fields[1] {
-            Value::List(xs) => xs.clone(),
-            other => panic!("expected List inner args, got {:?}", other),
-        };
-        assert_eq!(inner_args.len(), 1, "expected one UnitLit inside proc_args, got {:?}", inner_args);
-        unwrap_ctor(&inner_args[0], "UnitLit");
+        assert_eq!(target, "proc_args");
+        assert_eq!(args.len(), 1, "expected one UnitLit arg inside proc_args, got {:?}", args);
+        unwrap_ctor(&args[0], "UnitLit");
     }
 
     #[test]

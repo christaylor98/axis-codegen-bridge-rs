@@ -1,5 +1,6 @@
 use super::value::{Value, intern_str, get_str};
 
+#[track_caller]
 pub fn str_len(s: Value) -> Value {
     match s {
         Value::Str(h) => Value::Int(get_str(h).chars().count() as i64),
@@ -7,6 +8,7 @@ pub fn str_len(s: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn str_concat(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
@@ -20,6 +22,7 @@ pub fn str_concat(args: Value) -> Value {
 }
 
 /// Checked character access. Returns Option(Str).
+#[track_caller]
 pub fn str_char_at(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => {
@@ -37,6 +40,7 @@ pub fn str_char_at(args: Value) -> Value {
 }
 
 /// Unchecked character access. Panics on out-of-bounds.
+#[track_caller]
 pub fn str_char(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => {
@@ -49,6 +53,7 @@ pub fn str_char(args: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn str_char_code(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => {
@@ -61,6 +66,7 @@ pub fn str_char_code(args: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn str_slice(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 3 => {
@@ -77,6 +83,7 @@ pub fn str_slice(args: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn str_split(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
@@ -94,6 +101,7 @@ pub fn str_split(args: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn str_starts_with(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
@@ -106,6 +114,7 @@ pub fn str_starts_with(args: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn str_ends_with(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
@@ -118,6 +127,7 @@ pub fn str_ends_with(args: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn str_trim(s: Value) -> Value {
     match s {
         Value::Str(h) => Value::Str(intern_str(get_str(h).trim())),
@@ -125,6 +135,7 @@ pub fn str_trim(s: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn str_contains(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
@@ -137,6 +148,7 @@ pub fn str_contains(args: Value) -> Value {
     }
 }
 
+#[track_caller]
 pub fn str_eq(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
@@ -148,6 +160,7 @@ pub fn str_eq(args: Value) -> Value {
 }
 
 /// Returns the char-index of the first occurrence of needle in haystack, or -1 if not found.
+#[track_caller]
 pub fn str_index_of(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
@@ -165,7 +178,66 @@ pub fn str_index_of(args: Value) -> Value {
     }
 }
 
+#[track_caller]
+pub fn str_before(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Str(sh), Value::Str(dh)) => {
+                let s = get_str(*sh);
+                let d = get_str(*dh);
+                let result = s.split_once(d.as_str())
+                    .map(|(before, _)| before)
+                    .unwrap_or(s.as_str());
+                Value::Str(intern_str(result))
+            }
+            _ => panic!("str_before: expected two Str values"),
+        },
+        _ => panic!("str_before: expected Tuple(Str, Str)"),
+    }
+}
+
+#[track_caller]
+pub fn str_after(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Str(sh), Value::Str(dh)) => {
+                let s = get_str(*sh);
+                let d = get_str(*dh);
+                let result = s.split_once(d.as_str())
+                    .map(|(_, after)| after)
+                    .unwrap_or("");
+                Value::Str(intern_str(result))
+            }
+            _ => panic!("str_after: expected two Str values"),
+        },
+        _ => panic!("str_after: expected Tuple(Str, Str)"),
+    }
+}
+
+#[track_caller]
+pub fn str_between(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 3 => match (&es[0], &es[1], &es[2]) {
+            (Value::Str(sh), Value::Str(start_h), Value::Str(end_h)) => {
+                let s = get_str(*sh);
+                let start = get_str(*start_h);
+                let end = get_str(*end_h);
+                let after_start = s.split_once(start.as_str())
+                    .map(|(_, after)| after)
+                    .unwrap_or(s.as_str());
+                let result = after_start.split_once(end.as_str())
+                    .map(|(before, _)| before)
+                    .unwrap_or(after_start);
+                Value::Str(intern_str(result))
+            }
+            _ => panic!("str_between: expected three Str values"),
+        },
+        _ => panic!("str_between: expected Tuple(Str, Str, Str)"),
+    }
+}
+
 /// chr: takes Int (Unicode code point), returns single-char Str.
+#[track_caller]
 pub fn chr(v: Value) -> Value {
     match v {
         Value::Int(n) => {
