@@ -92,7 +92,7 @@ fn test_lower_unitlit_goes_to_pool() {
     assert_eq!(bundle.nodes.len(), 0);
     assert_eq!(bundle.constant_pool.len(), 1);
     assert_eq!(bundle.constant_pool[0].def_hash, unit_type_hash());
-    assert_eq!(bundle.constant_pool[0].payload,  vec![]);
+    assert_eq!(bundle.constant_pool[0].payload,  Vec::<u8>::new());
 }
 
 #[test]
