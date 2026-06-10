@@ -13,5 +13,7 @@ pub mod ir_constructors;
 pub mod ir_accessors;
 pub mod ir_eval;
 pub mod frontend;
+#[allow(dead_code, unused_imports, unused_variables, unused_mut, non_upper_case_globals)]
+pub mod non_blocking_memory;
 
 pub use value::Value;

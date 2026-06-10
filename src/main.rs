@@ -335,6 +335,9 @@ fn cmd_build(args: &[String]) {
                 }
             } else if provider_map.contains_key(&eid) {
                 xbundle_entry_ids.push(eid);
+            } else if eid == sha256_bytes(fn_name.as_bytes()) {
+                // Entry is the root bundle's own function. Its ax_fn_<eid> identity
+                // export is already compiled into the root rlib — no separate provider.
             } else {
                 eprintln!(
                     "error: UNRESOLVED_ENTRY: '{}' (identity {}...) — not a bridge built-in and no provider in --lib set",
@@ -444,9 +447,13 @@ fn cmd_build(args: &[String]) {
             // Multi-entry thread driver (BRIDGE_ENTRY_POINTS_V1 §PART5).
             // One OS thread per entry; each receives the full argv as List(Text).
             // catch_unwind isolates panics per entry; exit code 1 if any panicked.
+            // AdaptiveCell result sink (BRIDGE_TESTKIT_FINALIZE_V1): each entry writes
+            // verdict 1u8 on success; main reads after join for per-entry PASS/FAIL.
             let mut s = String::new();
             s += "extern crate axis_codegen_bridge;\n";
-            s += "use axis_codegen_bridge::runtime::value::{Value, init_runtime, intern_str};\n\n";
+            s += "use axis_codegen_bridge::runtime::value::{Value, init_runtime, intern_str};\n";
+            s += "use axis_codegen_bridge::runtime::non_blocking_memory::{AdaptiveCell, AdaptiveRegistry};\n";
+            s += "use std::sync::{Arc, Mutex};\n\n";
 
             // Extern block for §5b entry symbols (built-ins are called directly).
             let mut extern_syms: Vec<String> = Vec::new();
@@ -465,15 +472,19 @@ fn cmd_build(args: &[String]) {
                 s += "}\n\n";
             }
 
+            let n_entries = entry_names.len();
             s += "fn main() {\n";
             s += "    init_runtime();\n";
             s += "    let _argv: Vec<Value> = std::env::args().skip(1)\n";
             s += "        .map(|s| Value::Str(intern_str(&s)))\n";
             s += "        .collect();\n";
             s += "    let args = Value::List(_argv);\n";
+            // Per-entry verdict sinks: harness-internal, opt-in via --entries.
+            s += &format!("    let _sink_cells: Vec<Arc<Mutex<AdaptiveCell<u8>>>> = (0..{n}).map(|_| Arc::new(Mutex::new(AdaptiveCell::new()))).collect();\n", n = n_entries);
+            s += &format!("    let _sink_regs: Vec<Arc<AdaptiveRegistry>>          = (0..{n}).map(|_| Arc::new(AdaptiveRegistry::new())).collect();\n", n = n_entries);
             s += "    let mut handles = Vec::new();\n\n";
 
-            for name in &entry_names {
+            for (idx, name) in entry_names.iter().enumerate() {
                 let eid = sha256_bytes(name.as_bytes());
                 let call_expr = if let Some(path) = rust_05::builtin_path_for_identity(&eid) {
                     format!("{}(a)", path)
@@ -482,20 +493,32 @@ fn cmd_build(args: &[String]) {
                 };
                 s += "    {\n";
                 s += "        let a = args.clone();\n";
+                s += &format!("        let _sc = _sink_cells[{}].clone();\n", idx);
+                s += &format!("        let _sr = _sink_regs[{}].clone();\n", idx);
                 s += &format!("        let h = std::thread::Builder::new()\n");
                 s += &format!("            .name({:?}.to_string())\n", name);
                 s += &format!("            .stack_size({})\n", entry_stack_size);
                 s += "            .spawn(move || std::panic::catch_unwind(\n";
-                s += &format!("                std::panic::AssertUnwindSafe(move || {{{}}})\n", call_expr);
+                // On success: write PASS verdict (1u8) to sink before returning.
+                // On panic: never reaches write; sink stays empty → FAIL.
+                s += &format!("                std::panic::AssertUnwindSafe(move || {{ let _v = {}; let _ = unsafe {{ _sc.lock().unwrap().write(1u8, &*_sr) }}; _v }})\n", call_expr);
                 s += &format!("            )).expect({:?});\n", format!("spawn {}", name));
-                s += &format!("        handles.push(({:?}, h));\n", name);
+                s += &format!("        handles.push(({:?}, {}usize, h));\n", name, idx);
                 s += "    }\n\n";
             }
 
             s += "    let mut bad = false;\n";
-            s += "    for (name, h) in handles {\n";
+            s += "    for (name, _idx, h) in handles {\n";
             s += "        match h.join() {\n";
-            s += "            Ok(Ok(v))  => { if !matches!(v, Value::Unit) { println!(\"{}: {}\", name, v); } }\n";
+            // Unit-returning entries: read verdict from sink and print PASS.
+            s += "            Ok(Ok(v)) if matches!(v, Value::Unit) => {\n";
+            s += "                let _sh = _sink_regs[_idx].acquire();\n";
+            s += "                let _sv = { let _c = _sink_cells[_idx].lock().unwrap(); _c.read_pinned(&_sh, 0) };\n";
+            s += "                let _ = _sv.as_ref().map(|r| r.is_zero_copy());\n";
+            s += "                drop(_sv);\n";
+            s += "                println!(\"{}: PASS\", name);\n";
+            s += "            }\n";
+            s += "            Ok(Ok(v))  => { println!(\"{}: {}\", name, v); }\n";
             s += "            Ok(Err(_)) => { eprintln!(\"{}: PANIC\", name); bad = true; }\n";
             s += "            Err(_)     => { eprintln!(\"{}: thread join failed\", name); bad = true; }\n";
             s += "        }\n";

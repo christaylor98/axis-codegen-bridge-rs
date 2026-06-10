@@ -598,6 +598,70 @@ fn test_ep_foreign_entry_abi_match() {
     assert!(stdout.contains("argv:"), "expected 'argv:' label in stdout:\n{}", stdout);
 }
 
+// ── (19) result sink: assert-based multi-entry — PASS + FAIL via AdaptiveCell ─
+
+/// assert(Bool(true)) → Unit (PASS via result sink).
+fn make_assert_pass_bundle() -> CoreBundle {
+    CoreBundle {
+        version: "0.5".to_string(),
+        constant_pool: vec![ConstantPoolEntry { def_hash: bool_type_hash(), payload: encode_bool_payload(true) }],
+        nodes: vec![Node::CCall {
+            target_identity: sha256_bytes(b"assert"),
+            target_name: "assert".to_string(),
+            args: vec![NodeRef::Pool(0)],
+        }],
+    }
+}
+
+/// assert(Bool(false)) → panic (FAIL — caught by catch_unwind in harness).
+fn make_assert_fail_bundle() -> CoreBundle {
+    CoreBundle {
+        version: "0.5".to_string(),
+        constant_pool: vec![ConstantPoolEntry { def_hash: bool_type_hash(), payload: encode_bool_payload(false) }],
+        nodes: vec![Node::CCall {
+            target_identity: sha256_bytes(b"assert"),
+            target_name: "assert".to_string(),
+            args: vec![NodeRef::Pool(0)],
+        }],
+    }
+}
+
+#[test]
+fn test_ep_result_sink_mixed_verdicts() {
+    let dir = TempDir::new().unwrap();
+
+    let pass_coreir = write_05_bundle(&dir, "assert_pass.coreir", &make_assert_pass_bundle());
+    let fail_coreir = write_05_bundle(&dir, "assert_fail.coreir", &make_assert_fail_bundle());
+    let root_coreir = write_05_bundle(&dir, "root.coreir", &make_unit_bundle());
+    let exe_out = dir.path().join("sink_test_exe");
+
+    let status = Command::new(bridge())
+        .args([
+            "build", root_coreir.to_str().unwrap(),
+            "--out",     exe_out.to_str().unwrap(),
+            "--lib",     pass_coreir.to_str().unwrap(),
+            "--lib",     fail_coreir.to_str().unwrap(),
+            "--entries", "assert_pass,assert_fail",
+            "--exe",
+        ])
+        .status()
+        .expect("bridge failed to run");
+    assert!(status.success(), "result-sink build failed");
+
+    let output = Command::new(&exe_out).output().expect("failed to run exe");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // assert_fail panics → non-zero exit
+    assert!(!output.status.success(), "expected non-zero exit (assert_fail panics)");
+    // assert_pass completes; sink records PASS; harness prints "assert_pass: PASS"
+    assert!(stdout.contains("assert_pass: PASS"),
+        "expected 'assert_pass: PASS' in stdout:\n{}", stdout);
+    // assert_fail panics before writing verdict; harness prints "assert_fail: PANIC"
+    assert!(stderr.contains("assert_fail: PANIC"),
+        "expected 'assert_fail: PANIC' in stderr:\n{}", stderr);
+}
+
 // ── (11) inspect subcommand on a 0.5 bundle ───────────────────────────────────
 
 #[test]

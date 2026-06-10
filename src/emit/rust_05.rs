@@ -57,6 +57,9 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("bool_or",  "axis_codegen_bridge::runtime::bool_ops::bool_or");
     m.insert("bool_not", "axis_codegen_bridge::runtime::bool_ops::bool_not");
 
+    // Test assertion (identity = sha256("assert") — BRIDGE_TESTKIT_FINALIZE_V1)
+    m.insert("assert",   "axis_codegen_bridge::runtime::bool_ops::ax_assert");
+
     // String
     m.insert("str_len",         "axis_codegen_bridge::runtime::str_ops::str_len");
     m.insert("str_concat",      "axis_codegen_bridge::runtime::str_ops::str_concat");
