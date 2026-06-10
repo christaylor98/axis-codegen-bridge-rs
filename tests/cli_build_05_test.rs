@@ -8,7 +8,7 @@ use axis_codegen_bridge::core_ir_05::{
     serialiser::{create_core_bundle_05, make_bool_bundle, make_int_bundle, make_unit_bundle,
                  make_ccall_bundle},
     ConstantPoolEntry, CoreBundle, Node, NodeRef,
-    bool_type_hash, int_type_hash, sha256_bytes,
+    bool_type_hash, int_type_hash, unit_type_hash, sha256_bytes,
     encode_bool_payload, encode_int_payload,
 };
 use std::process::Command;
@@ -322,6 +322,280 @@ fn test_05_build_xbundle_missing_provider_fails() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("UNRESOLVED_XBUNDLE"),
         "expected UNRESOLVED_XBUNDLE in stderr, got:\n{}", stderr);
+}
+
+// ── BRIDGE_ENTRY_POINTS_V1 test fixtures ─────────────────────────────────────
+
+/// Returns Int(42) regardless of args.
+fn make_entry_a_bundle() -> CoreBundle {
+    CoreBundle {
+        version: "0.5".to_string(),
+        constant_pool: vec![ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(42) }],
+        nodes: vec![],
+    }
+}
+
+/// Returns Int(99) regardless of args.
+fn make_entry_b_bundle() -> CoreBundle {
+    CoreBundle {
+        version: "0.5".to_string(),
+        constant_pool: vec![ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(99) }],
+        nodes: vec![],
+    }
+}
+
+/// Panics at runtime: calls option_unwrap(Unit) → panics inside the thread.
+fn make_panicky_bundle() -> CoreBundle {
+    CoreBundle {
+        version: "0.5".to_string(),
+        constant_pool: vec![ConstantPoolEntry { def_hash: unit_type_hash(), payload: vec![] }],
+        nodes: vec![Node::CCall {
+            target_identity: sha256_bytes(b"option_unwrap"),
+            target_name: "option_unwrap".to_string(),
+            args: vec![NodeRef::Pool(0)],
+        }],
+    }
+}
+
+/// Write a minimal registry entry for a built-in with a specific `in` clause.
+fn write_registry(dir: &TempDir, fn_name: &str, in_clause: &str) -> std::path::PathBuf {
+    let path = dir.path().join(format!("{}.axreg", fn_name));
+    std::fs::write(&path, format!(
+        "fn {}\n  kind     leaf\n  in       {}\n  out      TextList\n  effect   reads\n  deterministic false\n  idempotent    false\nend\n",
+        fn_name, in_clause
+    )).unwrap();
+    path
+}
+
+// ── (12) back-compat: no --entries → output format unchanged ─────────────────
+
+#[test]
+fn test_ep_no_entries_back_compat() {
+    let dir = TempDir::new().unwrap();
+    let negate = make_fn_negate_bundle();
+    let negate_coreir = write_05_bundle(&dir, "fn_negate.coreir", &negate);
+
+    let caller = make_two_fn_call_bundle();
+    let caller_coreir = write_05_bundle(&dir, "two_fn_call.coreir", &caller);
+    let exe_out = dir.path().join("back_compat_exe");
+
+    let status = Command::new(bridge())
+        .args([
+            "build", caller_coreir.to_str().unwrap(),
+            "--out",  exe_out.to_str().unwrap(),
+            "--lib",  negate_coreir.to_str().unwrap(),
+            "--exe",
+        ])
+        .status()
+        .expect("bridge failed to run");
+    assert!(status.success(), "back-compat build failed");
+
+    let output = Command::new(&exe_out).output().expect("failed to run exe");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Without --entries, output is just the bare result — no "name: " prefix.
+    assert_eq!(stdout.trim(), "true",
+        "back-compat: expected bare 'true', got: {:?}", stdout);
+}
+
+// ── (13) --entries: two named bundle entries both run ─────────────────────────
+
+#[test]
+fn test_ep_two_entries_both_run() {
+    let dir = TempDir::new().unwrap();
+
+    let entry_a = make_entry_a_bundle();
+    let entry_a_coreir = write_05_bundle(&dir, "entry_a.coreir", &entry_a);
+
+    let entry_b = make_entry_b_bundle();
+    let entry_b_coreir = write_05_bundle(&dir, "entry_b.coreir", &entry_b);
+
+    // Root bundle: trivial unit (unused — entries are the entry points)
+    let root = make_unit_bundle();
+    let root_coreir = write_05_bundle(&dir, "root.coreir", &root);
+    let exe_out = dir.path().join("two_entries_exe");
+
+    let status = Command::new(bridge())
+        .args([
+            "build",   root_coreir.to_str().unwrap(),
+            "--out",   exe_out.to_str().unwrap(),
+            "--lib",   entry_a_coreir.to_str().unwrap(),
+            "--lib",   entry_b_coreir.to_str().unwrap(),
+            "--entries", "entry_a,entry_b",
+            "--exe",
+        ])
+        .status()
+        .expect("bridge failed to run");
+    assert!(status.success(), "two-entry build failed");
+    assert!(exe_out.exists(), "exe not produced");
+
+    let output = Command::new(&exe_out).output().expect("failed to run exe");
+    assert!(output.status.success(), "exe exited non-zero");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("entry_a: 42"), "missing 'entry_a: 42' in stdout:\n{}", stdout);
+    assert!(stdout.contains("entry_b: 99"), "missing 'entry_b: 99' in stdout:\n{}", stdout);
+}
+
+// ── (14) --entry (repeatable): same as --entries but one flag per name ────────
+
+#[test]
+fn test_ep_entry_flag_repeatable() {
+    let dir = TempDir::new().unwrap();
+
+    let entry_a = make_entry_a_bundle();
+    let entry_a_coreir = write_05_bundle(&dir, "entry_a.coreir", &entry_a);
+
+    let entry_b = make_entry_b_bundle();
+    let entry_b_coreir = write_05_bundle(&dir, "entry_b.coreir", &entry_b);
+
+    let root = make_unit_bundle();
+    let root_coreir = write_05_bundle(&dir, "root.coreir", &root);
+    let exe_out = dir.path().join("repflag_exe");
+
+    let status = Command::new(bridge())
+        .args([
+            "build", root_coreir.to_str().unwrap(),
+            "--out", exe_out.to_str().unwrap(),
+            "--lib", entry_a_coreir.to_str().unwrap(),
+            "--lib", entry_b_coreir.to_str().unwrap(),
+            "--entry", "entry_a",
+            "--entry", "entry_b",
+            "--exe",
+        ])
+        .status()
+        .expect("bridge failed to run");
+    assert!(status.success(), "--entry repeatable build failed");
+
+    let output = Command::new(&exe_out).output().expect("failed to run exe");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("entry_a:"), "missing entry_a in stdout:\n{}", stdout);
+    assert!(stdout.contains("entry_b:"), "missing entry_b in stdout:\n{}", stdout);
+}
+
+// ── (15) panic isolation: panicking entry does not kill good entry ────────────
+
+#[test]
+fn test_ep_panic_isolation() {
+    let dir = TempDir::new().unwrap();
+
+    let entry_a = make_entry_a_bundle();
+    let entry_a_coreir = write_05_bundle(&dir, "entry_a.coreir", &entry_a);
+
+    let panicky = make_panicky_bundle();
+    let panicky_coreir = write_05_bundle(&dir, "panicky.coreir", &panicky);
+
+    let root = make_unit_bundle();
+    let root_coreir = write_05_bundle(&dir, "root.coreir", &root);
+    let exe_out = dir.path().join("panic_iso_exe");
+
+    let status = Command::new(bridge())
+        .args([
+            "build",   root_coreir.to_str().unwrap(),
+            "--out",   exe_out.to_str().unwrap(),
+            "--lib",   entry_a_coreir.to_str().unwrap(),
+            "--lib",   panicky_coreir.to_str().unwrap(),
+            "--entries", "entry_a,panicky",
+            "--exe",
+        ])
+        .status()
+        .expect("bridge failed to run");
+    assert!(status.success(), "panic-isolation build failed");
+
+    let output = Command::new(&exe_out).output().expect("failed to run exe");
+    // exit code must be non-zero (panicky thread failed)
+    assert!(!output.status.success(), "expected non-zero exit due to panicky entry");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // good entry still produces output
+    assert!(stdout.contains("entry_a: 42"), "missing 'entry_a: 42' in stdout:\n{}", stdout);
+    // panicky entry reports PANIC in stderr
+    assert!(stderr.contains("panicky: PANIC"), "missing 'panicky: PANIC' in stderr:\n{}", stderr);
+}
+
+// ── (16) UNRESOLVED_ENTRY: missing provider → hard halt ──────────────────────
+
+#[test]
+fn test_ep_unresolved_entry_fails() {
+    let dir = TempDir::new().unwrap();
+    let root = make_unit_bundle();
+    let root_coreir = write_05_bundle(&dir, "root.coreir", &root);
+    let exe_out = dir.path().join("unresolved_exe");
+
+    let output = Command::new(bridge())
+        .args([
+            "build", root_coreir.to_str().unwrap(),
+            "--out", exe_out.to_str().unwrap(),
+            "--entries", "no_such_fn",
+            "--exe",
+        ])
+        .output()
+        .expect("bridge failed to run");
+
+    assert!(!output.status.success(), "should fail with UNRESOLVED_ENTRY");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("UNRESOLVED_ENTRY"),
+        "expected UNRESOLVED_ENTRY in stderr:\n{}", stderr);
+}
+
+// ── (17) ENTRY_ABI_MISMATCH: foreign fn with wrong `in` → rejected ────────────
+
+#[test]
+fn test_ep_foreign_entry_abi_mismatch() {
+    let dir = TempDir::new().unwrap();
+    let root = make_unit_bundle();
+    let root_coreir = write_05_bundle(&dir, "root.coreir", &root);
+    let exe_out = dir.path().join("abi_mismatch_exe");
+
+    // Registry says `argv` has `in (Int)` — wrong ABI for an entry point.
+    let reg = write_registry(&dir, "argv", "(Int)");
+
+    let output = Command::new(bridge())
+        .args([
+            "build", root_coreir.to_str().unwrap(),
+            "--out", exe_out.to_str().unwrap(),
+            "--entry", "argv",
+            "--reg", reg.to_str().unwrap(),
+            "--exe",
+        ])
+        .output()
+        .expect("bridge failed to run");
+
+    assert!(!output.status.success(), "should fail with ENTRY_ABI_MISMATCH");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("ENTRY_ABI_MISMATCH"),
+        "expected ENTRY_ABI_MISMATCH in stderr:\n{}", stderr);
+}
+
+// ── (18) foreign fn entry with `in (TextList)` → accepted and runs ───────────
+
+#[test]
+fn test_ep_foreign_entry_abi_match() {
+    let dir = TempDir::new().unwrap();
+    let root = make_unit_bundle();
+    let root_coreir = write_05_bundle(&dir, "root.coreir", &root);
+    let exe_out = dir.path().join("abi_match_exe");
+
+    // Registry says `argv` has `in (TextList)` — correct ABI.
+    let reg = write_registry(&dir, "argv", "(TextList)");
+
+    let status = Command::new(bridge())
+        .args([
+            "build", root_coreir.to_str().unwrap(),
+            "--out", exe_out.to_str().unwrap(),
+            "--entry", "argv",
+            "--reg", reg.to_str().unwrap(),
+            "--exe",
+        ])
+        .status()
+        .expect("bridge failed to run");
+
+    assert!(status.success(), "build with TextList foreign entry failed");
+    assert!(exe_out.exists(), "exe not produced");
+
+    let output = Command::new(&exe_out).output().expect("failed to run exe");
+    assert!(output.status.success(), "exe exited non-zero");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // argv returns the process args as a list; output will be "argv: [...]"
+    assert!(stdout.contains("argv:"), "expected 'argv:' label in stdout:\n{}", stdout);
 }
 
 // ── (11) inspect subcommand on a 0.5 bundle ───────────────────────────────────

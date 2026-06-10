@@ -349,6 +349,47 @@ pub fn is_bridge_builtin(identity: &Hash256) -> bool {
     bridge_builtin_map().contains_key(identity)
 }
 
+/// Return the bridge runtime path for a built-in identity, or None if not a built-in.
+pub fn builtin_path_for_identity(identity: &Hash256) -> Option<&'static str> {
+    bridge_builtin_map().get(identity).copied()
+}
+
+/// Parse `--reg` files and return identity → in-clause string (e.g. "(TextList)").
+///
+/// Used at build time to validate the ABI of foreign-fn entries (ENTRY_ABI_MISMATCH check).
+/// Falls back to computing sha256(name) as the identity when no explicit `identity` line is present.
+pub fn load_registry_in_map(paths: &[String]) -> HashMap<Hash256, String> {
+    let mut map = HashMap::new();
+    for path in paths {
+        let content = match std::fs::read_to_string(path) {
+            Ok(c)  => c,
+            Err(e) => { eprintln!("warning: could not read --reg {}: {}", path, e); continue; }
+        };
+        let mut current_identity: Option<Hash256> = None;
+        for line in content.lines() {
+            let t = line.trim();
+            if let Some(rest) = t.strip_prefix("fn ") {
+                let name = rest.split_whitespace().next().unwrap_or("").to_string();
+                if !name.is_empty() {
+                    current_identity = Some(sha256_bytes(name.as_bytes()));
+                }
+            } else if let Some(rest) = t.strip_prefix("identity ") {
+                let hex = rest.trim().trim_start_matches("0x");
+                if let Ok(id) = crate::core_ir_05::hex_to_hash256(hex) {
+                    current_identity = Some(id);
+                }
+            } else if let Some(rest) = t.strip_prefix("in ") {
+                if let Some(id) = current_identity {
+                    map.insert(id, rest.trim().to_string());
+                }
+            } else if t == "end" {
+                current_identity = None;
+            }
+        }
+    }
+    map
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /// Sanitise a name into a valid Rust identifier.
@@ -443,9 +484,11 @@ pub fn emit_rust_lib_from_bundle(
         }
     }
 
-    // Emit extern block for §5b cross-bundle symbols
+    // Emit extern block for §5b cross-bundle symbols.
+    // "C-unwind" allows Rust panics to propagate across the ABI boundary so
+    // catch_unwind in the multi-entry driver can isolate per-entry failures.
     if !extern_syms.is_empty() {
-        out.push_str("#[allow(improper_ctypes)]\nextern \"C\" {\n");
+        out.push_str("#[allow(improper_ctypes)]\nextern \"C-unwind\" {\n");
         for sym in &extern_syms {
             out.push_str(&format!("    fn {}(args: Value) -> Value;\n", sym));
         }
@@ -454,7 +497,7 @@ pub fn emit_rust_lib_from_bundle(
 
     // Emit main function
     out.push_str(&format!(
-        "#[no_mangle]\npub extern \"C\" fn {}(args: Value) -> Value {{\n",
+        "#[no_mangle]\npub extern \"C-unwind\" fn {}(args: Value) -> Value {{\n",
         safe_name
     ));
     out.push_str("    init_runtime();\n");
@@ -491,10 +534,12 @@ pub fn emit_rust_lib_from_bundle(
 
     // Identity-derived export: ax_fn_<hex(sha256(fn_name))>
     // Callers in other bundles link against this symbol (LINK_BY_IDENTITY).
+    // Uses "C-unwind" so panics can propagate through the call chain and be
+    // caught by the multi-entry driver's catch_unwind (BRIDGE_ENTRY_POINTS_V1).
     let fn_identity = sha256_bytes(fn_name.as_bytes());
     let identity_sym = format!("ax_fn_{}", hash256_to_hex(&fn_identity));
     out.push_str(&format!(
-        "#[no_mangle]\npub extern \"C\" fn {}(args: Value) -> Value {{\n",
+        "#[no_mangle]\npub extern \"C-unwind\" fn {}(args: Value) -> Value {{\n",
         identity_sym
     ));
     out.push_str(&format!("    {}(args)\n", safe_name));
@@ -502,7 +547,7 @@ pub fn emit_rust_lib_from_bundle(
 
     // Exe shim
     out.push_str(&format!(
-        "#[no_mangle]\npub extern \"C\" fn _ax_exe_{}(args: Value) -> Value {{\n",
+        "#[no_mangle]\npub extern \"C-unwind\" fn _ax_exe_{}(args: Value) -> Value {{\n",
         safe_name
     ));
     out.push_str(&format!("    {}(args)\n", safe_name));

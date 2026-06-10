@@ -11,12 +11,16 @@ fn usage() -> ! {
     eprintln!("Usage:");
     eprintln!("  axis-codegen-bridge build <input.coreir> --out <path> [options]");
     eprintln!("    Produces <dir>/lib<stem>.a (lib-first). Use --out x.a to name verbatim.");
-    eprintln!("    --exe                   also compile a runnable binary at <path>");
-    eprintln!("    --lib <path.coreir>     link a library bundle (repeatable)");
-    eprintln!("    --lib-dir <directory>   link all .coreir in directory (repeatable)");
-    eprintln!("    --reg <path.axreg>      registry file for CCall validation (repeatable)");
-    eprintln!("    --link-lib <name>       pass -l <name> to rustc");
-    eprintln!("    --link-search <path>    pass -L <path> to rustc");
+    eprintln!("    --exe                         also compile a runnable binary at <path>");
+    eprintln!("    --entries name1,name2,...      named entry points (comma-separated); each");
+    eprintln!("                                  runs in its own thread with full argv");
+    eprintln!("    --entry <name>                repeatable alias for --entries");
+    eprintln!("    --entry-stack-size <bytes>    per-entry stack (default 1 MiB)");
+    eprintln!("    --lib <path.coreir>           link a library bundle (repeatable)");
+    eprintln!("    --lib-dir <directory>         link all .coreir in directory (repeatable)");
+    eprintln!("    --reg <path.axreg>            registry file for CCall validation (repeatable)");
+    eprintln!("    --link-lib <name>             pass -l <name> to rustc");
+    eprintln!("    --link-search <path>          pass -L <path> to rustc");
     eprintln!("  axis-codegen-bridge bundle --out <output.a> <input1.a> [<input2.a> ...]");
     eprintln!("    Merges multiple .a archives into a single output.a via ar.");
     eprintln!("  axis-codegen-bridge inspect <input.coreir>");
@@ -157,19 +161,33 @@ fn compute_lib_path(out_arg: &str) -> std::path::PathBuf {
     }
 }
 
-/// Collect the transitive closure of §5b provider identities needed by `root`,
-/// returning them in post-order (deepest dependency first).
+/// Collect the transitive closure of §5b provider identities needed by `root`
+/// and any `extra_roots` (e.g. named entry-point providers), returning them in
+/// post-order (deepest dependency first).
 ///
 /// Uses a visited set for cycle safety: if A calls B and B calls A, both end up
 /// in the closure. Their mutual extern decls are unresolved at rlib compilation
 /// time but resolve at final executable link (CYCLES_ARE_LEGAL).
+///
+/// `extra_roots` are provider identities (e.g. §5b entry points not called
+/// from the root bundle) whose bundles are also traversed, and whose own
+/// identity is added to the ordered list so they get compiled.
 fn collect_xbundle_closure(
     root: &CoreBundle,
     available: &HashMap<Hash256, (String, CoreBundle)>,
+    extra_roots: &[Hash256],
 ) -> Vec<Hash256> {
     let mut ordered: Vec<Hash256> = Vec::new();
     let mut visited: HashSet<Hash256> = HashSet::new();
     collect_closure_dfs(root, available, &mut visited, &mut ordered);
+    for eid in extra_roots {
+        if let Some((_, eb)) = available.get(eid) {
+            collect_closure_dfs(eb, available, &mut visited, &mut ordered);
+        }
+        if visited.insert(*eid) {
+            ordered.push(*eid);
+        }
+    }
     ordered
 }
 
@@ -197,24 +215,44 @@ fn cmd_build(args: &[String]) {
     if args.is_empty() { usage(); }
     let input = &args[0];
 
-    let mut output        = "a.out".to_string();
-    let mut exe_flag      = false;
+    let mut output             = "a.out".to_string();
+    let mut exe_flag           = false;
     let mut link_libs:   Vec<String> = Vec::new();
     let mut link_search: Vec<String> = Vec::new();
     let mut lib_paths:   Vec<String> = Vec::new();
     let mut lib_dirs:    Vec<String> = Vec::new();
     let mut reg_paths:   Vec<String> = Vec::new();
+    let mut entry_names: Vec<String> = Vec::new();
+    let mut entry_stack_size: usize  = 1048576; // 1 MiB default
 
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "--out"         if i + 1 < args.len() => { output = args[i+1].clone(); i += 2; }
-            "--exe"                               => { exe_flag = true; i += 1; }
-            "--link-lib"    if i + 1 < args.len() => { link_libs.push(args[i+1].clone()); i += 2; }
-            "--link-search" if i + 1 < args.len() => { link_search.push(args[i+1].clone()); i += 2; }
-            "--lib"         if i + 1 < args.len() => { lib_paths.push(args[i+1].clone()); i += 2; }
-            "--lib-dir"     if i + 1 < args.len() => { lib_dirs.push(args[i+1].clone()); i += 2; }
-            "--reg"         if i + 1 < args.len() => { reg_paths.push(args[i+1].clone()); i += 2; }
+            "--out"              if i + 1 < args.len() => { output = args[i+1].clone(); i += 2; }
+            "--exe"                                    => { exe_flag = true; i += 1; }
+            "--link-lib"         if i + 1 < args.len() => { link_libs.push(args[i+1].clone()); i += 2; }
+            "--link-search"      if i + 1 < args.len() => { link_search.push(args[i+1].clone()); i += 2; }
+            "--lib"              if i + 1 < args.len() => { lib_paths.push(args[i+1].clone()); i += 2; }
+            "--lib-dir"          if i + 1 < args.len() => { lib_dirs.push(args[i+1].clone()); i += 2; }
+            "--reg"              if i + 1 < args.len() => { reg_paths.push(args[i+1].clone()); i += 2; }
+            "--entries"          if i + 1 < args.len() => {
+                for name in args[i+1].split(',') {
+                    let n = name.trim().to_string();
+                    if !n.is_empty() { entry_names.push(n); }
+                }
+                i += 2;
+            }
+            "--entry"            if i + 1 < args.len() => { entry_names.push(args[i+1].clone()); i += 2; }
+            "--entry-stack-size" if i + 1 < args.len() => {
+                match args[i+1].parse::<usize>() {
+                    Ok(n) => entry_stack_size = n,
+                    Err(_) => {
+                        eprintln!("error: --entry-stack-size must be a positive integer, got {:?}", args[i+1]);
+                        std::process::exit(1);
+                    }
+                }
+                i += 2;
+            }
             _ => { i += 1; }
         }
     }
@@ -270,10 +308,46 @@ fn cmd_build(args: &[String]) {
             provider_map.insert(pid, (pfn, pbundle));
         }
 
-        // Collect the full transitive closure of §5b providers needed by the root,
-        // using DFS with a visited set for cycle safety (SCC members are all included
-        // and their mutual externs resolve at final link — CYCLES_ARE_LEGAL).
-        let all_providers = collect_xbundle_closure(&bundle, &provider_map);
+        // ── Named-entry resolution (BRIDGE_ENTRY_POINTS_V1) ─────────────────
+        // Validate each named entry and collect §5b entry provider IDs for the
+        // closure sweep. Built-in entries are ABI-checked (must have `in (TextList)`)
+        // to satisfy ENTRY_ABI_MISMATCH. §5b entries must have a provider in the
+        // --lib set (UNRESOLVED_ENTRY).
+        let in_map = if !entry_names.is_empty() {
+            rust_05::load_registry_in_map(&reg_paths)
+        } else {
+            HashMap::new()
+        };
+        let mut xbundle_entry_ids: Vec<Hash256> = Vec::new();
+        for name in &entry_names {
+            let eid = sha256_bytes(name.as_bytes());
+            if rust_05::is_bridge_builtin(&eid) {
+                match in_map.get(&eid) {
+                    Some(in_clause) if in_clause.trim() == "(TextList)" => { /* OK */ }
+                    Some(in_clause) => {
+                        eprintln!("error: ENTRY_ABI_MISMATCH: '{}' is a foreign fn with `in {}` (expected (TextList))", name, in_clause);
+                        std::process::exit(1);
+                    }
+                    None => {
+                        eprintln!("error: ENTRY_ABI_MISMATCH: '{}' is a foreign fn with no `in` entry in registry (expected (TextList)) — add --reg", name);
+                        std::process::exit(1);
+                    }
+                }
+            } else if provider_map.contains_key(&eid) {
+                xbundle_entry_ids.push(eid);
+            } else {
+                eprintln!(
+                    "error: UNRESOLVED_ENTRY: '{}' (identity {}...) — not a bridge built-in and no provider in --lib set",
+                    name, &hash256_to_hex(&eid)[..16]
+                );
+                std::process::exit(1);
+            }
+        }
+
+        // Collect the full transitive closure of §5b providers needed by the root
+        // plus any §5b entry-point providers (extra_roots), using DFS with a visited
+        // set for cycle safety (CYCLES_ARE_LEGAL).
+        let all_providers = collect_xbundle_closure(&bundle, &provider_map, &xbundle_entry_ids);
 
         // Build xbundle_providers map: identity → "ax_fn_<hex>" symbol.
         // This covers the full closure so each bundle (root + providers) can emit
@@ -345,24 +419,92 @@ fn cmd_build(args: &[String]) {
         }
         if !exe_flag { return; }
         let safe_name = rust_05::sanitise(&fn_name);
-        let shim_fn   = format!("_ax_exe_{}", safe_name);
-        let shim_code = format!(
-            "extern crate axis_codegen_bridge;\n\
-             use axis_codegen_bridge::runtime::value::{{Value, init_runtime, intern_str}};\n\n\
-             #[allow(improper_ctypes)]\n\
-             extern \"C\" {{\n\
-                 fn {fn}(args: Value) -> Value;\n\
-             }}\n\n\
-             fn main() {{\n\
-                 init_runtime();\n\
-                 let args: Vec<Value> = std::env::args().skip(1)\n\
-                     .map(|s| Value::Str(intern_str(&s)))\n\
-                     .collect();\n\
-                 let result = unsafe {{ {fn}(Value::List(args)) }};\n\
-                 if !matches!(result, Value::Unit) {{ println!(\"{{}}\", result); }}\n\
-             }}\n",
-            fn = shim_fn
-        );
+
+        let shim_code = if entry_names.is_empty() {
+            // Back-compat: single-root, byte-identical to pre-change behaviour.
+            let shim_fn = format!("_ax_exe_{}", safe_name);
+            format!(
+                "extern crate axis_codegen_bridge;\n\
+                 use axis_codegen_bridge::runtime::value::{{Value, init_runtime, intern_str}};\n\n\
+                 #[allow(improper_ctypes)]\n\
+                 extern \"C-unwind\" {{\n\
+                     fn {fn}(args: Value) -> Value;\n\
+                 }}\n\n\
+                 fn main() {{\n\
+                     init_runtime();\n\
+                     let args: Vec<Value> = std::env::args().skip(1)\n\
+                         .map(|s| Value::Str(intern_str(&s)))\n\
+                         .collect();\n\
+                     let result = unsafe {{ {fn}(Value::List(args)) }};\n\
+                     if !matches!(result, Value::Unit) {{ println!(\"{{}}\", result); }}\n\
+                 }}\n",
+                fn = shim_fn
+            )
+        } else {
+            // Multi-entry thread driver (BRIDGE_ENTRY_POINTS_V1 §PART5).
+            // One OS thread per entry; each receives the full argv as List(Text).
+            // catch_unwind isolates panics per entry; exit code 1 if any panicked.
+            let mut s = String::new();
+            s += "extern crate axis_codegen_bridge;\n";
+            s += "use axis_codegen_bridge::runtime::value::{Value, init_runtime, intern_str};\n\n";
+
+            // Extern block for §5b entry symbols (built-ins are called directly).
+            let mut extern_syms: Vec<String> = Vec::new();
+            for name in &entry_names {
+                let eid = sha256_bytes(name.as_bytes());
+                if !rust_05::is_bridge_builtin(&eid) {
+                    let sym = format!("ax_fn_{}", hash256_to_hex(&eid));
+                    if !extern_syms.contains(&sym) { extern_syms.push(sym); }
+                }
+            }
+            if !extern_syms.is_empty() {
+                s += "#[allow(improper_ctypes)]\nextern \"C-unwind\" {\n";
+                for sym in &extern_syms {
+                    s += &format!("    fn {}(args: Value) -> Value;\n", sym);
+                }
+                s += "}\n\n";
+            }
+
+            s += "fn main() {\n";
+            s += "    init_runtime();\n";
+            s += "    let _argv: Vec<Value> = std::env::args().skip(1)\n";
+            s += "        .map(|s| Value::Str(intern_str(&s)))\n";
+            s += "        .collect();\n";
+            s += "    let args = Value::List(_argv);\n";
+            s += "    let mut handles = Vec::new();\n\n";
+
+            for name in &entry_names {
+                let eid = sha256_bytes(name.as_bytes());
+                let call_expr = if let Some(path) = rust_05::builtin_path_for_identity(&eid) {
+                    format!("{}(a)", path)
+                } else {
+                    format!("unsafe {{ ax_fn_{}(a) }}", hash256_to_hex(&eid))
+                };
+                s += "    {\n";
+                s += "        let a = args.clone();\n";
+                s += &format!("        let h = std::thread::Builder::new()\n");
+                s += &format!("            .name({:?}.to_string())\n", name);
+                s += &format!("            .stack_size({})\n", entry_stack_size);
+                s += "            .spawn(move || std::panic::catch_unwind(\n";
+                s += &format!("                std::panic::AssertUnwindSafe(move || {{{}}})\n", call_expr);
+                s += &format!("            )).expect({:?});\n", format!("spawn {}", name));
+                s += &format!("        handles.push(({:?}, h));\n", name);
+                s += "    }\n\n";
+            }
+
+            s += "    let mut bad = false;\n";
+            s += "    for (name, h) in handles {\n";
+            s += "        match h.join() {\n";
+            s += "            Ok(Ok(v))  => { if !matches!(v, Value::Unit) { println!(\"{}: {}\", name, v); } }\n";
+            s += "            Ok(Err(_)) => { eprintln!(\"{}: PANIC\", name); bad = true; }\n";
+            s += "            Err(_)     => { eprintln!(\"{}: thread join failed\", name); bad = true; }\n";
+            s += "        }\n";
+            s += "    }\n";
+            s += "    std::process::exit(if bad { 1 } else { 0 });\n";
+            s += "}\n";
+            s
+        };
+
         let shim_rs  = out_dir.join("generated_main.rs");
         if let Err(e) = std::fs::write(&shim_rs, &shim_code) {
             eprintln!("error: cannot write generated_main.rs: {}", e); std::process::exit(1);
