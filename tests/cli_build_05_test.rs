@@ -680,3 +680,67 @@ fn test_05_inspect() {
     assert!(stdout.contains("0.5"), "version 0.5 not in inspect output:\n{}", stdout);
     assert!(stdout.contains("constant_pool"), "pool info not in output:\n{}", stdout);
 }
+
+// ── (20) ping-pong: two loops exchanging signals via shared atomics ────────────
+
+fn make_ping_bundle() -> CoreBundle {
+    CoreBundle {
+        version: "0.5".to_string(),
+        constant_pool: vec![ConstantPoolEntry { def_hash: unit_type_hash(), payload: vec![] }],
+        nodes: vec![Node::CCall {
+            target_identity: sha256_bytes(b"ping_loop"),
+            target_name: "ping_loop".to_string(),
+            args: vec![NodeRef::Pool(0)],
+        }],
+    }
+}
+
+fn make_pong_bundle() -> CoreBundle {
+    CoreBundle {
+        version: "0.5".to_string(),
+        constant_pool: vec![ConstantPoolEntry { def_hash: unit_type_hash(), payload: vec![] }],
+        nodes: vec![Node::CCall {
+            target_identity: sha256_bytes(b"pong_loop"),
+            target_name: "pong_loop".to_string(),
+            args: vec![NodeRef::Pool(0)],
+        }],
+    }
+}
+
+#[test]
+fn test_ping_pong_two_loops() {
+    let dir = TempDir::new().unwrap();
+
+    let ping = make_ping_bundle();
+    let ping_coreir = write_05_bundle(&dir, "ping.coreir", &ping);
+
+    let pong = make_pong_bundle();
+    let pong_coreir = write_05_bundle(&dir, "pong.coreir", &pong);
+
+    let root = make_unit_bundle();
+    let root_coreir = write_05_bundle(&dir, "root.coreir", &root);
+    let exe_out = dir.path().join("pingpong_exe");
+
+    let status = Command::new(bridge())
+        .args([
+            "build",     root_coreir.to_str().unwrap(),
+            "--out",     exe_out.to_str().unwrap(),
+            "--lib",     ping_coreir.to_str().unwrap(),
+            "--lib",     pong_coreir.to_str().unwrap(),
+            "--entries", "ping,pong",
+            "--exe",
+        ])
+        .status()
+        .expect("bridge failed to run");
+    assert!(status.success(), "ping-pong build failed");
+    assert!(exe_out.exists(), "exe not produced");
+
+    let output = Command::new(&exe_out).output().expect("failed to run exe");
+    assert!(output.status.success(), "ping-pong exe exited non-zero");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.contains("ping: round 5"), "missing 'ping: round 5' in:\n{}", stdout);
+    assert!(stdout.contains("pong: round 5"), "missing 'pong: round 5' in:\n{}", stdout);
+    assert!(stdout.contains("ping: PASS"), "missing 'ping: PASS' in:\n{}", stdout);
+    assert!(stdout.contains("pong: PASS"), "missing 'pong: PASS' in:\n{}", stdout);
+}

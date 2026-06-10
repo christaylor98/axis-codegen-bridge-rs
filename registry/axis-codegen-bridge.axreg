@@ -1183,3 +1183,24 @@ fn test_let
   deterministic true
   idempotent    true
 end
+
+// ── Signal ping-pong (signals.rs) ─────────────────────────────────────────────
+fn ping_loop
+  identity 0x7ab4bb5f769658ea567bdba4604d04d68af335edd3e0bf1125fadc3e130049f7
+  kind     leaf
+  in       (Unit)
+  out      Unit
+  effect   fullIo
+  deterministic false
+  idempotent    false
+end
+
+fn pong_loop
+  identity 0x558d5bd4b8f6b835cef6cd23c84c2164e15f94df384da58c94e335b5568c4ea8
+  kind     leaf
+  in       (Unit)
+  out      Unit
+  effect   fullIo
+  deterministic false
+  idempotent    false
+end

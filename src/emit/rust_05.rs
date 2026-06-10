@@ -141,6 +141,10 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("argv_count", "axis_codegen_bridge::runtime::process::argv_count");
     m.insert("argv_or",    "axis_codegen_bridge::runtime::process::argv_or");
 
+    // Signal ping-pong (signals.rs)
+    m.insert("ping_loop", "axis_codegen_bridge::runtime::signals::ping_loop");
+    m.insert("pong_loop", "axis_codegen_bridge::runtime::signals::pong_loop");
+
     // IR constructors / accessors (kept for backward compat)
     m.insert("ir_make_int_lit",  "axis_codegen_bridge::runtime::ir_constructors::ir_make_int_lit");
     m.insert("ir_make_bool_lit", "axis_codegen_bridge::runtime::ir_constructors::ir_make_bool_lit");
