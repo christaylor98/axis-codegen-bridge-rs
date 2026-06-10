@@ -30,15 +30,20 @@ pub enum Node {
     CCall {
         target_identity: Hash256,
         args: Vec<NodeRef>,
-        /// Output type def_hash. All-zero = not annotated (verifier falls back to
-        /// registry lookup). Set to the function's declared return type hash.
-        result_type: Hash256,
+        /// Human-readable fn name. Mandatory in Core IR 0.5; must match the
+        /// registry entry for `target_identity`. Tools and humans key on this;
+        /// the bridge, Verifier, and compiler key on `target_identity`.
+        target_name: String,
     },
     CIf {
         cond: NodeRef,
         then_: NodeRef,
         else_: NodeRef,
     },
+    /// Determinacy discharge gate (schema ordinal @4). A pure marker with no
+    /// operands that produces a Unit discharge token; used as a domination
+    /// gate for irreversibility checking. No lowering emits this yet.
+    CDeterminate,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -113,9 +118,6 @@ pub fn text_list_type_hash() -> Hash256 {
     list_type_hash(&text_type_hash())
 }
 
-/// All-zero hash sentinel meaning "result type not annotated".
-pub const NO_RESULT_TYPE: Hash256 = [0u8; 32];
-
 // ── Payload codecs ────────────────────────────────────────────────────────────
 //
 // Matching axis-lang-lab fabric/codec value payload encoders:
@@ -165,6 +167,10 @@ pub fn encode_text_payload(v: &str) -> Vec<u8> {
 
 pub fn decode_bool_payload(payload: &[u8]) -> Result<bool, String> {
     match payload {
+        // Strict per the bridge codec: Bool is exactly one byte, 0x00 | 0x01.
+        // An empty payload is INVALID — the producer must encode a valid zero
+        // value (false = [0x00]). The bridge stays the strict validator so a
+        // malformed/empty sentinel is caught here, not silently coerced.
         [0x00] => Ok(false),
         [0x01] => Ok(true),
         other => Err(format!("invalid bool payload: {:?}", other)),

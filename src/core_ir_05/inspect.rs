@@ -1,4 +1,4 @@
-use super::{hash256_to_hex, CoreBundle, Node, NodeRef, NO_RESULT_TYPE};
+use super::{hash256_to_hex, CoreBundle, Node, NodeRef};
 
 pub fn inspect_core_bundle(path: &str) -> Result<String, String> {
     let bundle = super::load_core_bundle(path)?;
@@ -21,23 +21,16 @@ fn format_bundle(path: &str, bundle: &CoreBundle) -> String {
     out.push_str(&format!("  nodes:         {}\n", bundle.nodes.len()));
     for (i, node) in bundle.nodes.iter().enumerate() {
         let desc = match node {
-            Node::CCall { target_identity, args, result_type } => {
+            Node::CCall { target_identity, args, target_name } => {
                 let arg_list: Vec<String> = args.iter().map(format_ref).collect();
-                if result_type != &NO_RESULT_TYPE {
-                    format!(
-                        "CCall(identity={}…, args=[{}], result_type={}…)",
-                        &hash256_to_hex(target_identity)[..16],
-                        arg_list.join(", "),
-                        &hash256_to_hex(result_type)[..16],
-                    )
-                } else {
-                    format!(
-                        "CCall(identity={}…, args=[{}])",
-                        &hash256_to_hex(target_identity)[..16],
-                        arg_list.join(", ")
-                    )
-                }
+                format!(
+                    "CCall(name={}, identity={}…, args=[{}])",
+                    target_name,
+                    &hash256_to_hex(target_identity)[..16],
+                    arg_list.join(", ")
+                )
             }
+            Node::CDeterminate => "CDeterminate".to_string(),
             Node::CIf { cond, then_, else_ } => {
                 format!(
                     "CIf(cond={}, then={}, else={})",

@@ -48,8 +48,9 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("value_eq", "axis_codegen_bridge::runtime::arith::value_eq");
 
     // Unit / sequence helpers (§5b bootstrap functions)
-    m.insert("unit_id",  "axis_codegen_bridge::runtime::arith::unit_id");
-    m.insert("seq_unit", "axis_codegen_bridge::runtime::arith::seq_unit");
+    m.insert("unit_id",    "axis_codegen_bridge::runtime::arith::unit_id");
+    m.insert("const_unit", "axis_codegen_bridge::runtime::arith::unit_id");
+    m.insert("seq_unit",   "axis_codegen_bridge::runtime::arith::seq_unit");
 
     // Boolean
     m.insert("bool_and", "axis_codegen_bridge::runtime::bool_ops::bool_and");
@@ -98,6 +99,13 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("ctor_field",  "axis_codegen_bridge::runtime::tuple::ctor_field");
     m.insert("ctor_is_ok",  "axis_codegen_bridge::runtime::tuple::ctor_is_ok");
     m.insert("result_text_unwrap", "axis_codegen_bridge::runtime::tuple::result_text_unwrap");
+
+    // M1 compound-value constructors / accessors
+    m.insert("value_make", "axis_codegen_bridge::runtime::tuple::value_make");
+    m.insert("value_0",    "axis_codegen_bridge::runtime::tuple::value_0");
+    m.insert("value_1",    "axis_codegen_bridge::runtime::tuple::value_1");
+    m.insert("value_2",    "axis_codegen_bridge::runtime::tuple::value_2");
+    m.insert("list_make",  "axis_codegen_bridge::runtime::list::list_make");
 
     // Option
     m.insert("option_none",    "axis_codegen_bridge::runtime::option::option_none_fn");
@@ -221,6 +229,14 @@ pub fn load_registry_identity_map(paths: &[String]) -> HashMap<Hash256, String> 
 
 fn decode_pool_entry(entry: &ConstantPoolEntry) -> Result<String, String> {
     let dh = &entry.def_hash;
+    if dh == &[0u8; 32] {
+        return Err(
+            "all-zero def_hash (UNKNOWN-gate sentinel): pool entry has no resolved \
+             type identity. This is an upstream lowering gap — e.g. a lambda or \
+             fn-reference that was not assigned a Fn type hash — not a bridge defect."
+                .to_string(),
+        );
+    }
     if dh == &unit_type_hash() {
         return Ok("Value::Unit".to_string());
     }
@@ -305,6 +321,8 @@ fn emit_node(
                 ref_clone(else_)
             ))
         }
+        // A determinacy gate has no operands and yields a Unit discharge token.
+        Node::CDeterminate => Ok("Value::Unit".to_string()),
     }
 }
 

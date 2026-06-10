@@ -3,7 +3,7 @@ use capnp::serialize;
 use std::fs;
 use std::io::BufReader;
 
-use super::{ConstantPoolEntry, CoreBundle, Hash256, Node, NodeRef, NO_RESULT_TYPE};
+use super::{ConstantPoolEntry, CoreBundle, Hash256, Node, NodeRef};
 use crate::axis_core_ir_0_5_capnp as capnp05;
 
 fn read_hash256(r: capnp05::hash256::Reader<'_>) -> Hash256 {
@@ -100,11 +100,18 @@ fn load_from_reader<R: std::io::Read>(r: &mut R) -> Result<CoreBundle, String> {
                             .map_err(|e| format!("node[{}].args[{}]: {}", i, j, e))?,
                     );
                 }
-                let result_type = match cc.get_result_type() {
-                    Ok(rt) => read_hash256(rt),
-                    Err(_) => NO_RESULT_TYPE,
-                };
-                Node::CCall { target_identity, args, result_type }
+                let target_name = cc
+                    .get_target_name()
+                    .map_err(|e| format!("node[{}] get_target_name: {}", i, e))?
+                    .to_str()
+                    .map_err(|e| format!("node[{}] target_name utf8: {}", i, e))?
+                    .to_string();
+                Node::CCall { target_identity, args, target_name }
+            }
+            capnp05::node::CDeterminate(r) => {
+                // No fields; validate the pointer then record the marker.
+                r.map_err(|e| format!("node[{}] CDeterminate: {}", i, e))?;
+                Node::CDeterminate
             }
             capnp05::node::CIf(r) => {
                 let ci = r.map_err(|e| format!("node[{}] CIf: {}", i, e))?;

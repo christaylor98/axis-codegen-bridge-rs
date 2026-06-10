@@ -18,41 +18,9 @@ use std::collections::HashMap;
 use crate::core_ir::CoreTerm;
 use super::{
     bool_type_hash, encode_bool_payload, encode_int_payload, int_type_hash,
-    sha256_bytes, text_list_type_hash, text_type_hash, unit_type_hash,
-    ConstantPoolEntry, CoreBundle, Hash256, Node, NodeRef, NO_RESULT_TYPE,
+    sha256_bytes, unit_type_hash,
+    ConstantPoolEntry, CoreBundle, Hash256, Node, NodeRef,
 };
-
-/// Known output type hashes for bridge built-in functions.
-/// Returns NO_RESULT_TYPE (all-zero) for unknown functions.
-fn fn_result_type(name: &str) -> Hash256 {
-    match name {
-        // TextList-returning
-        "proc_args" | "str_split" | "list_tail" => text_list_type_hash(),
-        // Int-returning
-        "list_len" | "str_len" | "str_index_of" | "str_char_code"
-        | "argv_count" | "argv_int"
-        | "int_add" | "int_sub" | "int_mul" | "int_div" | "int_div_checked"
-        | "int_mod" | "int_abs"  => int_type_hash(),
-        // Bool-returning
-        "int_lt" | "int_lte" | "int_gt" | "int_gte" | "int_eq" | "value_eq"
-        | "bool_and" | "bool_or" | "bool_not"
-        | "str_eq" | "str_starts_with" | "str_ends_with" | "str_contains"
-        | "list_is_empty" | "option_is_none" | "option_is_some"
-        | "ctor_is_ok"          => bool_type_hash(),
-        // Text-returning
-        "int_to_str" | "str_concat" | "str_slice" | "str_trim" | "str_char"
-        | "chr" | "argv" | "argv_get" | "argv_or"
-        | "io_read_line" | "fs_read_text"
-        | "option_unwrap"       => text_type_hash(),
-        // Unit-returning
-        "io_print" | "io_println" | "io_eprint" | "io_eprint_ln"
-        | "fs_write_text" | "fs_append_text" | "debug_trace"
-        | "proc_exit" | "proc_sleep"
-        | "unit_id" | "seq_unit"
-        | "list_get_println_if_some"  => unit_type_hash(),
-        _                       => NO_RESULT_TYPE,
-    }
-}
 
 struct Lowering {
     pool: Vec<ConstantPoolEntry>,
@@ -96,7 +64,7 @@ impl Lowering {
                 Ok(self.push_node(Node::CCall {
                     target_identity: sha256_bytes(target.as_bytes()),
                     args: arg_refs,
-                    result_type: fn_result_type(target),
+                    target_name: target.clone(),
                 }))
             }
             CoreTerm::App(..) => {
@@ -108,7 +76,7 @@ impl Lowering {
                 Ok(self.push_node(Node::CCall {
                     target_identity: sha256_bytes(fn_name.as_bytes()),
                     args: arg_refs,
-                    result_type: fn_result_type(&fn_name),
+                    target_name: fn_name.clone(),
                 }))
             }
             CoreTerm::If(cond, then_, else_, _) => {

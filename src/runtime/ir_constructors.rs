@@ -657,6 +657,7 @@ fn walk_node_05(bundle: &crate::core_ir_05::CoreBundle, idx: usize) -> Value {
             walk_ref_05(bundle, then_),
             walk_ref_05(bundle, else_),
         ]),
+        Node::CDeterminate => make_ctor("Determinate", vec![]),
     }
 }
 
@@ -773,6 +774,7 @@ pub fn ir_bundle_view(v: Value) -> Value {
                         format!("CIf(cond={}, then={}, else={})",
                             ref_str(cond), ref_str(then_), ref_str(else_))
                     }
+                    Node::CDeterminate => "CDeterminate".to_string(),
                 };
                 out.push_str(&format!("node[{}]: {}\n", i, desc));
             }

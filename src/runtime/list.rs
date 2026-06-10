@@ -5,6 +5,13 @@ pub fn list_nil(_: Value) -> Value {
     Value::List(vec![])
 }
 
+/// Build an M1 ValueList from its elements. Lowering target of
+/// `ValueList(T)(a, b, ...)`. Variadic, same calling convention as value_make.
+#[track_caller]
+pub fn list_make(args: Value) -> Value {
+    Value::List(super::tuple::fields_from_variadic(args))
+}
+
 #[track_caller]
 pub fn list_cons(args: Value) -> Value {
     match args {

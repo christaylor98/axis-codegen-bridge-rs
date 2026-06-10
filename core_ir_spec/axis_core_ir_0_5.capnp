@@ -40,7 +40,7 @@
 #   A toolchain MAY carry them in a working representation; the canonical
 #   binary does not.
 #
-# NODE SET — reduced to exactly two kinds:
+# NODE SET — reduced to exactly three kinds:
 #
 #   Removed: CIntLit, CBoolLit, CUnitLit
 #     Constants are constant pool entries, not nodes. A small value is a
@@ -51,6 +51,8 @@
 #     All abstraction is registry-resident. Higher-order surfaces lower to
 #     Core IR through closure-conversion and lambda-lifting before the
 #     compiler sees the bundle. No inline abstraction exists at this layer.
+#     Fn references passed as arguments are constant pool entries whose
+#     payload is the target fn's 256-bit minted identity hash.
 #
 #   Removed: CLet, CVar
 #     Binding machinery was tree-tax. In the flat node table, sharing is
@@ -58,7 +60,9 @@
 #     carry the same NodeRef index. No explicit naming of intermediate
 #     values is required or permitted.
 #
-#   Remaining: CCall, CIf (exactly two).
+#   Remaining: CCall, CIf, CDeterminate (exactly three).
+#     CDeterminate is a structural domination gate for irreversibility
+#     checking. It has no operands and produces a Unit discharge token.
 #
 # BUNDLE STRUCTURE — changed from recursive tree to flat indexed table:
 #
@@ -85,12 +89,14 @@
 #
 #   0.4: targetName @0 :Text   (dispatch by name)
 #   WD:  targetIdentity @0 :Hash256  (dispatch by registry identity token)
+#        targetName     @2 :Text     (mandatory — human-readable fn name)
 #
-#   Names are a projection surface. The canonical form carries the minted
-#   identity token. A scope that presents duplicate names to the compiler
-#   is invalid (see Registry working draft, Resolution section). The
-#   compiler resolves name → identity before lowering; Core IR never
-#   carries names.
+#   targetIdentity is the authoritative dispatch key. The Verifier, the
+#   UNKNOWN gate, and the bridge all key on this — not on the name.
+#   targetName is mandatory and must be present on every CCall. It is the
+#   primary human-readable identifier: fn names are unique across all
+#   domains, so a bundle viewed as text is fully understandable without
+#   resolving hashes. The compiler emits both; tools display the name.
 #
 #   0.4: args @1 :List(CoreTerm)  (nested recursive terms)
 #   WD:  args @1 :List(NodeRef)   (indices into pool or node table)
@@ -169,6 +175,14 @@ struct ConstantPoolEntry {
   # The canonical payload bytes of the value. Encoded per the Registry
   # Format Specification: positional, schema-directed, no embedded names,
   # no type tags. The schema is retrieved by resolving defHash.
+  #
+  # FN REFERENCE AS ARGUMENT: when a fn is passed as an argument to
+  # another fn (e.g. sort(list, comparator_fn)), the fn reference is a
+  # pool entry whose defHash resolves to the Fn type in the registry,
+  # and whose payload is the 32-byte minted identity hash of the target
+  # fn. The bridge resolves this hash to a concrete implementation.
+  # No special node type is needed — a fn reference is just a typed
+  # constant in the pool.
   payload @1 :Data;
 }
 
@@ -200,13 +214,19 @@ struct CoreBundle {
 
 
 # ============================================================================
-# Node — exactly two kinds. The complete node set of Core IR.
+# Node — exactly three kinds. The complete node set of Core IR 0.5.
+#
+# cCall @0 and cIf @1 carry the full semantic content of the program.
+# cDeterminate @2 is a structural domination gate for irreversibility checks.
+# (Earlier drafts used @2/@3 for CLam/CVar; since no 0.5 bundle was ever
+# serialised with them, the ordinals are reclaimed rather than retired.)
 # ============================================================================
 
 struct Node {
   union {
-    cCall @0 :CCall;
-    cIf   @1 :CIf;
+    cCall        @0 :CCall;
+    cIf          @1 :CIf;
+    cDeterminate @2 :CDeterminate;
   }
 }
 
@@ -222,13 +242,11 @@ struct Node {
 struct CCall {
   # The registry identity of the function being called.
   # A 256-bit minted identity token. Dispatch, resolution, and the UNKNOWN
-  # gate all key on this — not on a name.
+  # gate all key on this — not on the name.
   #
   # If this identity does not resolve in the active scope: UNKNOWN gate.
   # Hard halt. Never a default. Never a guess.
-  #
-  # The compiler resolves name → identity before emitting this field.
-  # Names are never present in the canonical form.
+  # Zero identity (all-zero Hash256) is also UNKNOWN gate — hard halt.
   targetIdentity @0 :Hash256;
 
   # Ordered argument values. Each is a NodeRef to either a pool entry
@@ -240,15 +258,15 @@ struct CCall {
   # registry could not perform.
   args           @1 :List(NodeRef);
 
-  # The type identity of this node's result value — the def_hash the Verifier
-  # should attribute to NodeRef.node(i) when this node is referenced as an
-  # argument to a later node.
+  # The human-readable name of the function being called. Mandatory.
+  # Must match the name recorded in the registry entry for targetIdentity.
   #
-  # Producers MUST set this to the def_hash declared in the function's frozen
-  # signature. The Verifier reads this field and checks it against the
-  # function's declared output type. An all-zero hash means "not annotated"
-  # and reverts to registry-lookup behaviour.
-  resultType     @2 :Hash256;
+  # targetName is the primary identifier for human inspection. Fn names
+  # are unique across all domains — a bundle printed as text is fully
+  # understandable by reading names alone, without resolving hashes.
+  # The bridge, Verifier, and compiler key on targetIdentity; tools and
+  # humans key on targetName. Neither is optional.
+  targetName     @2 :Text;
 }
 
 
@@ -271,4 +289,26 @@ struct CIf {
 
   # The result value when the condition is false.
   else @2 :NodeRef;
+}
+
+
+# ============================================================================
+# CDeterminate — determinacy discharge gate.
+#
+# A pure marker node with no operands. Represents a point in the program
+# where the execution has been "gated" — a determinacy check has fired.
+#
+# Soundness invariant: an Irreversible CCall node must be dominated by a
+# CDeterminate on every control-flow path from the bundle entry to that node.
+# Verification fails if any Irreversible node is not dominated.
+#
+# CDeterminate produces a value of type Unit (a discharge token). No surface
+# syntax or lowering emits CDeterminate in this phase — tests construct
+# gated/ungated bundles directly. Lowering is the deferred next phase.
+# ============================================================================
+
+struct CDeterminate {
+  # No fields. CDeterminate is a pure structural marker; domination is
+  # established by its presence as a required data ancestor (on every
+  # control-flow path) of the Irreversible node it protects.
 }
