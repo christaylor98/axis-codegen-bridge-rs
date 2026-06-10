@@ -736,11 +736,31 @@ fn test_ping_pong_two_loops() {
     assert!(exe_out.exists(), "exe not produced");
 
     let output = Command::new(&exe_out).output().expect("failed to run exe");
-    assert!(output.status.success(), "ping-pong exe exited non-zero");
+    assert!(output.status.success(), "ping-pong exe exited non-zero:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    assert!(stdout.contains("ping: round 5"), "missing 'ping: round 5' in:\n{}", stdout);
-    assert!(stdout.contains("pong: round 5"), "missing 'pong: round 5' in:\n{}", stdout);
+    // All 5 rounds must complete and be reported by both sides.
+    for round in 1..=5 {
+        assert!(stdout.contains(&format!("ping: round {} ok", round)),
+            "missing 'ping: round {} ok' in:\n{}", round, stdout);
+        assert!(stdout.contains(&format!("pong: round {} done", round)),
+            "missing 'pong: round {} done' in:\n{}", round, stdout);
+    }
+
+    // Verify pong computed the right answers for each payload shape.
+    // Round 1: Int(7) → 7² = 49
+    assert!(stdout.contains("→ 49]"), "round 1 (square) wrong in:\n{}", stdout);
+    // Round 2: List(0..100) → sum = 4950
+    assert!(stdout.contains("→ 4950]"), "round 2 (list sum) wrong in:\n{}", stdout);
+    // Round 3: Str(240 chars) → char count = 240
+    assert!(stdout.contains("→ 240]"), "round 3 (str len) wrong in:\n{}", stdout);
+    // Round 4: List(0..5000) → sum = 12497500
+    assert!(stdout.contains("→ 12497500]"), "round 4 (large list sum) wrong in:\n{}", stdout);
+    // Round 5: List(3×List(1000)) → flatten+sum = 1498500
+    assert!(stdout.contains("→ 1498500]"), "round 5 (nested sum) wrong in:\n{}", stdout);
+
+    // Harness-level verdict from the result sink.
     assert!(stdout.contains("ping: PASS"), "missing 'ping: PASS' in:\n{}", stdout);
     assert!(stdout.contains("pong: PASS"), "missing 'pong: PASS' in:\n{}", stdout);
 }
