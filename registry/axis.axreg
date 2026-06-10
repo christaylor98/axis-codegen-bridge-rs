@@ -163,3 +163,23 @@ fn ir_build_arg_list
   out Value
   effect pure
 end
+
+fn test_lam
+  identity 0x412c0a6a3be9f76e2406e4652669fd8ee25f5e08fb299f85e0b2f5056cfea41d
+  kind     leaf
+  in       (Value)
+  out      Value
+  effect   pure
+  deterministic true
+  idempotent    true
+end
+
+fn test_let
+  identity 0x0dc710b505bbc2e31e315f7442e54d82aef7d47681e5dcfcd74416f05779f4e1
+  kind     leaf
+  in       (Value)
+  out      Value
+  effect   pure
+  deterministic true
+  idempotent    true
+end
