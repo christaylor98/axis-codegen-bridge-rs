@@ -190,7 +190,141 @@ fn test_05_build_cif_node() {
     assert!(sym.contains("cif_fn"), "symbol 'cif_fn' not in rlib");
 }
 
-// ── (7) inspect subcommand on a 0.5 bundle ────────────────────────────────────
+// ── Cross-bundle fixture builders ────────────────────────────────────────────
+
+/// Provider: always returns bool_not(false) = true (ignores runtime args).
+fn make_fn_negate_bundle() -> CoreBundle {
+    CoreBundle {
+        version: "0.5".to_string(),
+        constant_pool: vec![ConstantPoolEntry {
+            def_hash: bool_type_hash(),
+            payload: encode_bool_payload(false),
+        }],
+        nodes: vec![Node::CCall {
+            target_identity: sha256_bytes(b"bool_not"),
+            args: vec![NodeRef::Pool(0)],
+            target_name: "bool_not".to_string(),
+        }],
+    }
+}
+
+/// Caller: §5b CCall to fn_negate with no args → returns fn_negate's result.
+fn make_two_fn_call_bundle() -> CoreBundle {
+    CoreBundle {
+        version: "0.5".to_string(),
+        constant_pool: vec![],
+        nodes: vec![Node::CCall {
+            target_identity: sha256_bytes(b"fn_negate"),
+            args: vec![],
+            target_name: "fn_negate".to_string(),
+        }],
+    }
+}
+
+// ── (8) cross-bundle: two_fn_call → fn_negate, rlib symbols ──────────────────
+
+#[test]
+fn test_05_build_xbundle_two_fn_call() {
+    let dir = TempDir::new().unwrap();
+
+    // Build fn_negate provider (single-bundle — must still work, P1 identity export)
+    let negate = make_fn_negate_bundle();
+    let negate_coreir = write_05_bundle(&dir, "fn_negate.coreir", &negate);
+    let negate_out = dir.path().join("fn_negate");
+    let status = Command::new(bridge())
+        .args(["build", negate_coreir.to_str().unwrap(), "--out", negate_out.to_str().unwrap()])
+        .status()
+        .expect("bridge failed to run");
+    assert!(status.success(), "fn_negate single-bundle build failed");
+
+    // Confirm fn_negate rlib carries the identity export symbol
+    let negate_lib = rlib_path(&dir, "fn_negate");
+    assert!(negate_lib.exists(), "fn_negate rlib not produced");
+    let nm = Command::new("nm").arg(&negate_lib).output().expect("nm failed");
+    let sym = String::from_utf8_lossy(&nm.stdout);
+    assert!(sym.contains("ax_fn_"), "identity export 'ax_fn_...' missing from fn_negate rlib:\n{}", sym);
+    assert!(sym.contains("fn_negate"), "'fn_negate' symbol missing from rlib:\n{}", sym);
+
+    // Build two_fn_call with --lib fn_negate.coreir  (cross-bundle link)
+    let caller = make_two_fn_call_bundle();
+    let caller_coreir = write_05_bundle(&dir, "two_fn_call.coreir", &caller);
+    let caller_out = dir.path().join("two_fn_call");
+    let status = Command::new(bridge())
+        .args([
+            "build", caller_coreir.to_str().unwrap(),
+            "--out",  caller_out.to_str().unwrap(),
+            "--lib",  negate_coreir.to_str().unwrap(),
+        ])
+        .status()
+        .expect("bridge failed to run");
+    assert!(status.success(), "two_fn_call cross-bundle build failed");
+
+    let caller_lib = rlib_path(&dir, "two_fn_call");
+    assert!(caller_lib.exists(), "two_fn_call rlib not produced at {:?}", caller_lib);
+    let nm = Command::new("nm").arg(&caller_lib).output().expect("nm failed");
+    let sym = String::from_utf8_lossy(&nm.stdout);
+    assert!(sym.contains("two_fn_call"), "'two_fn_call' symbol missing:\n{}", sym);
+    assert!(sym.contains("_ax_exe_two_fn_call"), "'_ax_exe_two_fn_call' symbol missing:\n{}", sym);
+    assert!(sym.contains("ax_fn_"), "identity export missing from caller rlib:\n{}", sym);
+}
+
+// ── (9) cross-bundle: build exe and run it, verify output ────────────────────
+
+#[test]
+fn test_05_build_xbundle_exe_runs() {
+    let dir = TempDir::new().unwrap();
+
+    let negate = make_fn_negate_bundle();
+    let negate_coreir = write_05_bundle(&dir, "fn_negate.coreir", &negate);
+
+    let caller = make_two_fn_call_bundle();
+    let caller_coreir = write_05_bundle(&dir, "two_fn_call.coreir", &caller);
+    let exe_out = dir.path().join("two_fn_call_exe");
+
+    let status = Command::new(bridge())
+        .args([
+            "build", caller_coreir.to_str().unwrap(),
+            "--out",  exe_out.to_str().unwrap(),
+            "--lib",  negate_coreir.to_str().unwrap(),
+            "--exe",
+        ])
+        .status()
+        .expect("bridge failed to run");
+    assert!(status.success(), "two_fn_call --exe build failed");
+    assert!(exe_out.exists(), "exe not produced at {:?}", exe_out);
+
+    let output = Command::new(&exe_out).output().expect("failed to run exe");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "true",
+        "expected output 'true', got: {:?}", stdout);
+}
+
+// ── (10) FAIL_CLOSED: missing provider → UNRESOLVED_XBUNDLE error ────────────
+
+#[test]
+fn test_05_build_xbundle_missing_provider_fails() {
+    let dir = TempDir::new().unwrap();
+
+    let caller = make_two_fn_call_bundle();
+    let caller_coreir = write_05_bundle(&dir, "two_fn_call.coreir", &caller);
+    let caller_out = dir.path().join("two_fn_call");
+
+    let output = Command::new(bridge())
+        .args([
+            "build", caller_coreir.to_str().unwrap(),
+            "--out",  caller_out.to_str().unwrap(),
+            // intentionally no --lib fn_negate
+        ])
+        .output()
+        .expect("bridge failed to run");
+
+    assert!(!output.status.success(), "build should fail when provider is missing (FAIL_CLOSED)");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("UNRESOLVED_XBUNDLE"),
+        "expected UNRESOLVED_XBUNDLE in stderr, got:\n{}", stderr);
+}
+
+// ── (11) inspect subcommand on a 0.5 bundle ───────────────────────────────────
 
 #[test]
 fn test_05_inspect() {

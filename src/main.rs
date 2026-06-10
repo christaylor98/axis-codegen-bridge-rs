@@ -1,9 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use std::io::Write;
 use std::time::Instant;
 use sha2::{Sha256, Digest};
 use axis_codegen_bridge::core_ir;
-use axis_codegen_bridge::core_ir_05;
+use axis_codegen_bridge::core_ir_05::{self, CoreBundle, Node, Hash256, sha256_bytes, hash256_to_hex};
 use axis_codegen_bridge::emit::rust::{emit_rust_lib_from_core, sanitise};
 use axis_codegen_bridge::emit::rust_05;
 
@@ -157,6 +157,41 @@ fn compute_lib_path(out_arg: &str) -> std::path::PathBuf {
     }
 }
 
+/// Collect the transitive closure of §5b provider identities needed by `root`,
+/// returning them in post-order (deepest dependency first).
+///
+/// Uses a visited set for cycle safety: if A calls B and B calls A, both end up
+/// in the closure. Their mutual extern decls are unresolved at rlib compilation
+/// time but resolve at final executable link (CYCLES_ARE_LEGAL).
+fn collect_xbundle_closure(
+    root: &CoreBundle,
+    available: &HashMap<Hash256, (String, CoreBundle)>,
+) -> Vec<Hash256> {
+    let mut ordered: Vec<Hash256> = Vec::new();
+    let mut visited: HashSet<Hash256> = HashSet::new();
+    collect_closure_dfs(root, available, &mut visited, &mut ordered);
+    ordered
+}
+
+fn collect_closure_dfs(
+    bundle: &CoreBundle,
+    available: &HashMap<Hash256, (String, CoreBundle)>,
+    visited: &mut HashSet<Hash256>,
+    ordered: &mut Vec<Hash256>,
+) {
+    for node in &bundle.nodes {
+        if let Node::CCall { target_identity, target_name, .. } = node {
+            if rust_05::is_bridge_builtin(target_identity) { continue; }
+            if target_name.is_empty() || sha256_bytes(target_name.as_bytes()) != *target_identity { continue; }
+            if !visited.insert(*target_identity) { continue; } // cycle or already processed
+            if let Some((_, dep_bundle)) = available.get(target_identity) {
+                collect_closure_dfs(dep_bundle, available, visited, ordered);
+                ordered.push(*target_identity);
+            }
+        }
+    }
+}
+
 fn cmd_build(args: &[String]) {
     let t0 = Instant::now();
     if args.is_empty() { usage(); }
@@ -186,30 +221,110 @@ fn cmd_build(args: &[String]) {
 
     // Detect 0.5 bundle: try 0.5 loader first; if it parses, use the 0.5 pipeline.
     if let Ok(bundle) = core_ir_05::load_core_bundle(input) {
-        if !lib_paths.is_empty() || !lib_dirs.is_empty() {
-            eprintln!("warning: --lib and --lib-dir are not supported for 0.5 bundles \
-                       (link pre-compiled rlibs via --link-lib / --link-search instead)");
-        }
         let fn_name = std::path::Path::new(input)
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("main")
             .to_string();
+        let lib_path = compute_lib_path(&output);
+        let out_dir  = lib_path.parent().unwrap_or(std::path::Path::new(".")).to_owned();
+        if let Err(e) = std::fs::create_dir_all(&out_dir) {
+            eprintln!("error: cannot create output dir: {}", e); std::process::exit(1);
+        }
+        let exe_dir = std::env::current_exe().expect("current exe").parent().expect("exe dir").to_owned();
         let registry_map = rust_05::load_registry_identity_map(&reg_paths);
-        let rust_code = match rust_05::emit_rust_lib_from_bundle(&bundle, &fn_name, &registry_map) {
+
+        // ── §5b provider resolution (--lib / --lib-dir) ────────────────────
+        // Expand --lib-dir into lib_paths (same logic as the 0.4 path).
+        for dir in &lib_dirs {
+            let entries = match std::fs::read_dir(dir) {
+                Ok(e)  => e,
+                Err(e) => { eprintln!("error: cannot read --lib-dir {}: {}", dir, e); std::process::exit(1); }
+            };
+            let mut paths: Vec<String> = entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().map_or(false, |ext| ext == "coreir"))
+                .map(|e| e.path().to_string_lossy().to_string())
+                .collect();
+            paths.sort();
+            lib_paths.extend(paths);
+        }
+
+        // Load each provider bundle; key by sha256(fn_name) per §5b rule.
+        let mut provider_map: HashMap<Hash256, (String, CoreBundle)> = HashMap::new();
+        for lp in &lib_paths {
+            let pbundle = match core_ir_05::load_core_bundle(lp) {
+                Ok(b)  => b,
+                Err(e) => { eprintln!("error: failed to load --lib {}: {}", lp, e); std::process::exit(1); }
+            };
+            let pfn = std::path::Path::new(lp)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            if pfn.is_empty() {
+                eprintln!("error: --lib {} has no usable filename stem", lp);
+                std::process::exit(1);
+            }
+            let pid = sha256_bytes(pfn.as_bytes());
+            provider_map.insert(pid, (pfn, pbundle));
+        }
+
+        // Collect the full transitive closure of §5b providers needed by the root,
+        // using DFS with a visited set for cycle safety (SCC members are all included
+        // and their mutual externs resolve at final link — CYCLES_ARE_LEGAL).
+        let all_providers = collect_xbundle_closure(&bundle, &provider_map);
+
+        // Build xbundle_providers map: identity → "ax_fn_<hex>" symbol.
+        // This covers the full closure so each bundle (root + providers) can emit
+        // extern decls for any §5b target in the closure.
+        let xbundle_providers: HashMap<Hash256, String> = provider_map.keys()
+            .map(|id| (*id, format!("ax_fn_{}", hash256_to_hex(id))))
+            .collect();
+
+        // Compile each provider in the closure to its own rlib.
+        let mut provider_rlibs: Vec<std::path::PathBuf> = Vec::new();
+        for pid in &all_providers {
+            let (pfn, pbundle) = provider_map.get(pid).expect("provider in closure");
+            let safe_pfn = rust_05::sanitise(pfn);
+            let provider_lib = out_dir.join(format!("lib{}_xb.a", safe_pfn));
+            if !provider_lib.exists() {
+                let pcode = match rust_05::emit_rust_lib_from_bundle(pbundle, pfn, &registry_map, &xbundle_providers) {
+                    Ok(c)  => c,
+                    Err(e) => { eprintln!("error (provider '{}'): {}", pfn, e); std::process::exit(1); }
+                };
+                let prs = out_dir.join(format!("generated_{}_xb.rs", safe_pfn));
+                if let Err(e) = std::fs::write(&prs, &pcode) {
+                    eprintln!("error: cannot write provider rs {}: {}", prs.display(), e); std::process::exit(1);
+                }
+                let mut pcmd = std::process::Command::new("rustc");
+                pcmd.arg(&prs)
+                    .arg("--crate-type=rlib")
+                    .arg("--crate-name=generated")
+                    .arg("--edition=2021")
+                    .arg("-o").arg(&provider_lib)
+                    .arg("-C").arg("embed-bitcode=no")
+                    .arg("-C").arg("strip=debuginfo")
+                    .arg("--extern").arg(format!("axis_codegen_bridge={}", find_bridge_rlib(&exe_dir).display()))
+                    .arg("-L").arg(format!("dependency={}/deps", exe_dir.display()));
+                match pcmd.status() {
+                    Ok(s) if s.success() => {}
+                    Ok(s) => { eprintln!("error: rustc (provider '{}') exited {:?}", pfn, s.code()); std::process::exit(1); }
+                    Err(e) => { eprintln!("error: failed to invoke rustc for provider '{}': {}", pfn, e); std::process::exit(1); }
+                }
+            }
+            provider_rlibs.push(provider_lib);
+        }
+        // ── end §5b provider resolution ─────────────────────────────────────
+
+        let rust_code = match rust_05::emit_rust_lib_from_bundle(&bundle, &fn_name, &registry_map, &xbundle_providers) {
             Ok(code) => code,
             Err(e)   => { eprintln!("error: {}", e); std::process::exit(1); }
         };
-        let lib_path = compute_lib_path(&output);
-        let out_dir  = lib_path.parent().unwrap_or(std::path::Path::new("."));
-        if let Err(e) = std::fs::create_dir_all(out_dir) {
-            eprintln!("error: cannot create output dir: {}", e); std::process::exit(1);
-        }
         let generated_rs = out_dir.join("generated_lib.rs");
         if let Err(e) = std::fs::write(&generated_rs, &rust_code) {
             eprintln!("error: cannot write generated_lib.rs: {}", e); std::process::exit(1);
         }
-        let exe_dir = std::env::current_exe().expect("current exe").parent().expect("exe dir").to_owned();
         let mut cmd = std::process::Command::new("rustc");
         cmd.arg(&generated_rs)
            .arg("--crate-type=rlib")
@@ -261,6 +376,11 @@ fn cmd_build(args: &[String]) {
            .arg("--extern").arg(format!("axis_codegen_bridge={}", find_bridge_rlib(&exe_dir).display()))
            .arg("-L").arg(format!("dependency={}/deps", exe_dir.display()))
            .arg("-C").arg(format!("link-arg={}", lib_abs.display()));
+        // Link all provider rlibs so §5b extern symbols resolve at final link.
+        for prlib in &provider_rlibs {
+            let abs = std::fs::canonicalize(prlib).unwrap_or_else(|_| prlib.clone());
+            cmd.arg("-C").arg(format!("link-arg={}", abs.display()));
+        }
         for path in &link_search { cmd.arg("-L").arg(path); }
         for lib  in &link_libs   { cmd.arg("-l").arg(lib);  }
         match cmd.status() {

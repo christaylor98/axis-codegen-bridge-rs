@@ -278,16 +278,33 @@ fn emit_node(
     builtin: &HashMap<Hash256, &'static str>,
     registry: &HashMap<Hash256, String>,
     name_to_path: &HashMap<&'static str, &'static str>,
+    xbundle: &HashMap<Hash256, String>,
 ) -> Result<String, String> {
     match node {
         Node::CCall { target_identity, args, .. } => {
-            // Resolve: try builtin map first, then registry → name → builtin map
-            let path: String = if let Some(&p) = builtin.get(target_identity) {
-                p.to_string()
-            } else if let Some(name) = registry.get(target_identity) {
-                // registry name → look up bridge path
+            // Resolution priority: builtin → registry+bridge → §5b extern
+            if let Some(&p) = builtin.get(target_identity) {
+                let call = match args.len() {
+                    0 => format!("{}(Value::Unit)", p),
+                    1 => format!("{}({})", p, ref_clone(&args[0])),
+                    _ => {
+                        let arg_exprs: Vec<String> = args.iter().map(ref_clone).collect();
+                        format!("{}(Value::Tuple(vec![{}]))", p, arg_exprs.join(", "))
+                    }
+                };
+                return Ok(call);
+            }
+            if let Some(name) = registry.get(target_identity) {
                 if let Some(&p) = name_to_path.get(name.as_str()) {
-                    p.to_string()
+                    let call = match args.len() {
+                        0 => format!("{}(Value::Unit)", p),
+                        1 => format!("{}({})", p, ref_clone(&args[0])),
+                        _ => {
+                            let arg_exprs: Vec<String> = args.iter().map(ref_clone).collect();
+                            format!("{}(Value::Tuple(vec![{}]))", p, arg_exprs.join(", "))
+                        }
+                    };
+                    return Ok(call);
                 } else {
                     return Err(format!(
                         "CCall identity {} resolves to registry name '{}' but \
@@ -296,22 +313,23 @@ fn emit_node(
                         name
                     ));
                 }
-            } else {
-                return Err(format!(
-                    "unresolved CCall identity: {} — not in bridge built-ins or --reg files",
-                    hash256_to_hex(target_identity)
-                ));
-            };
-
-            let call = match args.len() {
-                0 => format!("{}(Value::Unit)", path),
-                1 => format!("{}({})", path, ref_clone(&args[0])),
-                _ => {
-                    let arg_exprs: Vec<String> = args.iter().map(ref_clone).collect();
-                    format!("{}(Value::Tuple(vec![{}]))", path, arg_exprs.join(", "))
-                }
-            };
-            Ok(call)
+            }
+            // §5b extern call via identity-derived symbol
+            if let Some(sym) = xbundle.get(target_identity) {
+                let call = match args.len() {
+                    0 => format!("unsafe {{ {}(Value::Unit) }}", sym),
+                    1 => format!("unsafe {{ {}({}) }}", sym, ref_clone(&args[0])),
+                    _ => {
+                        let arg_exprs: Vec<String> = args.iter().map(ref_clone).collect();
+                        format!("unsafe {{ {}(Value::Tuple(vec![{}])) }}", sym, arg_exprs.join(", "))
+                    }
+                };
+                return Ok(call);
+            }
+            Err(format!(
+                "unresolved CCall identity: {} — not in bridge built-ins, --reg files, or --lib providers",
+                hash256_to_hex(target_identity)
+            ))
         }
         Node::CIf { cond, then_, else_ } => {
             Ok(format!(
@@ -324,6 +342,11 @@ fn emit_node(
         // A determinacy gate has no operands and yields a Unit discharge token.
         Node::CDeterminate => Ok("Value::Unit".to_string()),
     }
+}
+
+/// Return true if `identity` resolves to a bridge built-in (not a §5b user fn).
+pub fn is_bridge_builtin(identity: &Hash256) -> bool {
+    bridge_builtin_map().contains_key(identity)
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -347,14 +370,18 @@ pub fn sanitise(name: &str) -> String {
 ///
 /// `fn_name` is the public symbol name for the generated Rust function.
 /// `registry_identity_map` maps CCall target identities (from `--reg` files) to function names.
+/// `xbundle_providers` maps §5b target identities to their identity-derived extern symbol names
+///   (`ax_fn_<64hex>`). Populated from `--lib` / `--lib-dir` bundles by the driver.
 ///
 /// The generated library exposes:
 ///   `#[no_mangle] pub extern "C" fn <fn_name>(args: Value) -> Value`
+///   `#[no_mangle] pub extern "C" fn ax_fn_<hex>(args: Value) -> Value`  ← identity export
 ///   `#[no_mangle] pub extern "C" fn _ax_exe_<fn_name>(args: Value) -> Value`
 pub fn emit_rust_lib_from_bundle(
     bundle: &CoreBundle,
     fn_name: &str,
     registry_identity_map: &HashMap<Hash256, String>,
+    xbundle_providers: &HashMap<Hash256, String>,
 ) -> Result<String, String> {
     let builtin = bridge_builtin_map();
     let name_to_path = symbol_map();
@@ -368,32 +395,61 @@ pub fn emit_rust_lib_from_bundle(
     );
 
     // Validate: check all CCall targets are resolvable before generating any code
-    let mut unresolved: Vec<String> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
     for node in &bundle.nodes {
-        if let Node::CCall { target_identity, .. } = node {
-            if !builtin.contains_key(target_identity) {
-                if let Some(name) = registry_identity_map.get(target_identity) {
-                    if !name_to_path.contains_key(name.as_str()) {
-                        unresolved.push(format!(
-                            "registry name '{}' (identity {}…)",
-                            name,
-                            &hash256_to_hex(target_identity)[..16]
-                        ));
-                    }
-                } else {
-                    unresolved.push(format!(
-                        "identity {}…",
+        if let Node::CCall { target_identity, target_name, .. } = node {
+            if builtin.contains_key(target_identity) {
+                // OK: bridge built-in
+            } else if let Some(name) = registry_identity_map.get(target_identity) {
+                if !name_to_path.contains_key(name.as_str()) {
+                    errors.push(format!(
+                        "registry name '{}' (identity {}…) has no bridge implementation",
+                        name,
                         &hash256_to_hex(target_identity)[..16]
                     ));
+                }
+            } else if xbundle_providers.contains_key(target_identity) {
+                // OK: §5b extern — provider supplied via --lib
+            } else if !target_name.is_empty()
+                && sha256_bytes(target_name.as_bytes()) == *target_identity
+            {
+                errors.push(format!(
+                    "UNRESOLVED_XBUNDLE: '{}' (identity {}…) — no provider in --lib set",
+                    target_name,
+                    &hash256_to_hex(target_identity)[..16]
+                ));
+            } else {
+                errors.push(format!(
+                    "UNKNOWN_GATE: identity {}… — not a bridge built-in, not a §5b identity",
+                    &hash256_to_hex(target_identity)[..16]
+                ));
+            }
+        }
+    }
+    if !errors.is_empty() {
+        return Err(format!("unresolved CCall targets:\n  {}", errors.join("\n  ")));
+    }
+
+    // Collect the distinct §5b extern symbols this bundle calls (for the extern block)
+    let mut extern_syms: Vec<String> = Vec::new();
+    let mut seen_extern: std::collections::HashSet<Hash256> = std::collections::HashSet::new();
+    for node in &bundle.nodes {
+        if let Node::CCall { target_identity, .. } = node {
+            if let Some(sym) = xbundle_providers.get(target_identity) {
+                if seen_extern.insert(*target_identity) {
+                    extern_syms.push(sym.clone());
                 }
             }
         }
     }
-    if !unresolved.is_empty() {
-        return Err(format!(
-            "unresolved CCall targets: {}",
-            unresolved.join(", ")
-        ));
+
+    // Emit extern block for §5b cross-bundle symbols
+    if !extern_syms.is_empty() {
+        out.push_str("#[allow(improper_ctypes)]\nextern \"C\" {\n");
+        for sym in &extern_syms {
+            out.push_str(&format!("    fn {}(args: Value) -> Value;\n", sym));
+        }
+        out.push_str("}\n\n");
     }
 
     // Emit main function
@@ -417,7 +473,7 @@ pub fn emit_rust_lib_from_bundle(
     // Nodes
     for (i, node) in bundle.nodes.iter().enumerate() {
         let expr =
-            emit_node(node, &builtin, registry_identity_map, &name_to_path)
+            emit_node(node, &builtin, registry_identity_map, &name_to_path, xbundle_providers)
                 .map_err(|e| format!("node[{}]: {}", i, e))?;
         out.push_str(&format!("    let node_{}: Value = {};\n", i, expr));
     }
@@ -431,6 +487,17 @@ pub fn emit_rust_lib_from_bundle(
         "Value::Unit".to_string()
     };
     out.push_str(&format!("    {}\n", result));
+    out.push_str("}\n\n");
+
+    // Identity-derived export: ax_fn_<hex(sha256(fn_name))>
+    // Callers in other bundles link against this symbol (LINK_BY_IDENTITY).
+    let fn_identity = sha256_bytes(fn_name.as_bytes());
+    let identity_sym = format!("ax_fn_{}", hash256_to_hex(&fn_identity));
+    out.push_str(&format!(
+        "#[no_mangle]\npub extern \"C\" fn {}(args: Value) -> Value {{\n",
+        identity_sym
+    ));
+    out.push_str(&format!("    {}(args)\n", safe_name));
     out.push_str("}\n\n");
 
     // Exe shim
