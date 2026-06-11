@@ -8,6 +8,11 @@ type Value = sum [ AsUnit(Unit) | AsBool(Bool) | AsInt(Int) | AsText(Text) ]
 type ResultText = sum [ Ok(Text) | Err(Text) ]
 type ResultUnit = sum [ Ok(Unit) | Err(Text) ]
 type TextList = list Text
+type ValueList = list Value
+// Fn-refs travel through the bridge as Value-tagged identity hashes; the
+// registry parser does not recognise `prim fn`, so we declare Fn as an alias
+// for the value primitive. Verifier semantics for HOF slots are unchanged.
+type Fn = prim value
 
 // ── Arithmetic (arith.rs) ─────────────────────────────────────────────────────
 fn int_add
