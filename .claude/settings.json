@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./target/release/axis-codegen-bridge inspect *)",
+      "Bash(/home/chris/dev/axis-codegen-bridge-rs/target/release/axis-codegen-bridge inspect *)"
+    ]
+  }
+}

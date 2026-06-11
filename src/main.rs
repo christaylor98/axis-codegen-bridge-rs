@@ -360,11 +360,20 @@ fn cmd_build(args: &[String]) {
             .collect();
 
         // Compile each provider in the closure to its own rlib.
-        let mut provider_rlibs: Vec<std::path::PathBuf> = Vec::new();
+        //
+        // Each rlib gets a UNIQUE Rust crate name (`ax_xb_<safe_pfn>`) so that
+        // its `StableCrateId` — and therefore the mangling of every internal
+        // monomorphization (`drop_in_place<Value>`, etc.) — is distinct from
+        // every other downstream rlib's. Combined with the `--extern`-based
+        // link at exe time (below), this is what makes multi-bundle --exe
+        // dedup structurally instead of colliding.
+        // (BRIDGE_XBUNDLE_LINK_DEDUP: SINGLE_DEFINITION_OF_DROP_GLUE.)
+        let mut provider_rlibs: Vec<(String, std::path::PathBuf)> = Vec::new();
         for pid in &all_providers {
             let (pfn, pbundle) = provider_map.get(pid).expect("provider in closure");
             let safe_pfn = rust_05::sanitise(pfn);
             let provider_lib = out_dir.join(format!("lib{}_xb.a", safe_pfn));
+            let provider_crate_name = format!("ax_xb_{}", safe_pfn);
             if !provider_lib.exists() {
                 let pcode = match rust_05::emit_rust_lib_from_bundle(pbundle, pfn, &registry_map, &xbundle_providers) {
                     Ok(c)  => c,
@@ -377,7 +386,7 @@ fn cmd_build(args: &[String]) {
                 let mut pcmd = std::process::Command::new("rustc");
                 pcmd.arg(&prs)
                     .arg("--crate-type=rlib")
-                    .arg("--crate-name=generated")
+                    .arg(format!("--crate-name={}", provider_crate_name))
                     .arg("--edition=2021")
                     .arg("-o").arg(&provider_lib)
                     .arg("-C").arg("embed-bitcode=no")
@@ -390,7 +399,23 @@ fn cmd_build(args: &[String]) {
                     Err(e) => { eprintln!("error: failed to invoke rustc for provider '{}': {}", pfn, e); std::process::exit(1); }
                 }
             }
-            provider_rlibs.push(provider_lib);
+            // rustc's --extern path requires `lib<crate_name>.rlib` / `.so`
+            // filenames. Mirror the .a archive under the canonical .rlib name
+            // so `--extern <provider_crate_name>=<.rlib>` resolves. The .a
+            // stays in place for the existing single-bundle test contract.
+            let provider_extern = out_dir.join(format!("lib{}.rlib", provider_crate_name));
+            if !provider_extern.exists() {
+                if let Err(e) = std::fs::copy(&provider_lib, &provider_extern) {
+                    eprintln!(
+                        "error: failed to mirror provider rlib {} -> {}: {}",
+                        provider_lib.display(),
+                        provider_extern.display(),
+                        e
+                    );
+                    std::process::exit(1);
+                }
+            }
+            provider_rlibs.push((provider_crate_name, provider_extern));
         }
         // ── end §5b provider resolution ─────────────────────────────────────
 
@@ -402,10 +427,15 @@ fn cmd_build(args: &[String]) {
         if let Err(e) = std::fs::write(&generated_rs, &rust_code) {
             eprintln!("error: cannot write generated_lib.rs: {}", e); std::process::exit(1);
         }
+        // Bundle rlib also gets a UNIQUE crate name so its mangling is
+        // distinct from any provider rlib's. The shim links it via
+        // `--extern <bundle_crate_name>=<rlib>` below.
+        let safe_name = rust_05::sanitise(&fn_name);
+        let bundle_crate_name = format!("ax_bundle_{}", safe_name);
         let mut cmd = std::process::Command::new("rustc");
         cmd.arg(&generated_rs)
            .arg("--crate-type=rlib")
-           .arg("--crate-name=generated")
+           .arg(format!("--crate-name={}", bundle_crate_name))
            .arg("--edition=2021")
            .arg("-o").arg(&lib_path)
            .arg("-C").arg("embed-bitcode=no")
@@ -421,13 +451,44 @@ fn cmd_build(args: &[String]) {
             Err(e) => { eprintln!("error: failed to invoke rustc: {}", e); std::process::exit(1); }
         }
         if !exe_flag { return; }
-        let safe_name = rust_05::sanitise(&fn_name);
+        // Mirror the bundle .a archive under the canonical lib<crate>.rlib
+        // filename rustc's --extern path requires.
+        let bundle_extern = out_dir.join(format!("lib{}.rlib", bundle_crate_name));
+        if !bundle_extern.exists() || std::fs::metadata(&bundle_extern).map(|m| m.len()).unwrap_or(0)
+            != std::fs::metadata(&lib_path).map(|m| m.len()).unwrap_or(0)
+        {
+            if let Err(e) = std::fs::copy(&lib_path, &bundle_extern) {
+                eprintln!(
+                    "error: failed to mirror bundle rlib {} -> {}: {}",
+                    lib_path.display(),
+                    bundle_extern.display(),
+                    e
+                );
+                std::process::exit(1);
+            }
+        }
+
+        // Render `extern crate <name>;` lines for every linked downstream
+        // rlib (bundle + all providers). This is what couples each rlib into
+        // the rustc dep graph so the final exe rustc resolves it via the
+        // metadata-aware path (and dedupes shared upstream monomorphizations
+        // like drop_in_place<Value>) instead of treating it as an opaque
+        // -C link-arg= archive. (BRIDGE_XBUNDLE_LINK_DEDUP.)
+        let extern_crate_lines: String = {
+            let mut s = String::new();
+            s += &format!("#[allow(unused_extern_crates)] extern crate {};\n", bundle_crate_name);
+            for (name, _) in &provider_rlibs {
+                s += &format!("#[allow(unused_extern_crates)] extern crate {};\n", name);
+            }
+            s
+        };
 
         let shim_code = if entry_names.is_empty() {
-            // Back-compat: single-root, byte-identical to pre-change behaviour.
+            // Back-compat: single-root.
             let shim_fn = format!("_ax_exe_{}", safe_name);
             format!(
                 "extern crate axis_codegen_bridge;\n\
+                 {extern_crates}\
                  use axis_codegen_bridge::runtime::value::{{Value, init_runtime, intern_str}};\n\n\
                  #[allow(improper_ctypes)]\n\
                  extern \"C-unwind\" {{\n\
@@ -441,6 +502,7 @@ fn cmd_build(args: &[String]) {
                      let result = unsafe {{ {fn}(Value::List(args)) }};\n\
                      if !matches!(result, Value::Unit) {{ println!(\"{{}}\", result); }}\n\
                  }}\n",
+                extern_crates = extern_crate_lines,
                 fn = shim_fn
             )
         } else {
@@ -451,6 +513,7 @@ fn cmd_build(args: &[String]) {
             // verdict 1u8 on success; main reads after join for per-entry PASS/FAIL.
             let mut s = String::new();
             s += "extern crate axis_codegen_bridge;\n";
+            s += &extern_crate_lines;
             s += "use axis_codegen_bridge::runtime::value::{Value, init_runtime, intern_str};\n";
             s += "use axis_codegen_bridge::runtime::non_blocking_memory::{AdaptiveCell, AdaptiveRegistry};\n";
             s += "use std::sync::{Arc, Mutex};\n\n";
@@ -532,19 +595,25 @@ fn cmd_build(args: &[String]) {
         if let Err(e) = std::fs::write(&shim_rs, &shim_code) {
             eprintln!("error: cannot write generated_main.rs: {}", e); std::process::exit(1);
         }
-        let lib_abs = std::fs::canonicalize(&lib_path).unwrap_or_else(|_| lib_path.clone());
+        let bundle_extern_abs = std::fs::canonicalize(&bundle_extern).unwrap_or_else(|_| bundle_extern.clone());
         let mut cmd = std::process::Command::new("rustc");
+        // Bundle + provider rlibs are linked as proper crate dependencies via
+        // `--extern <crate>=<rlib>` (BRIDGE_XBUNDLE_LINK_DEDUP). This is what
+        // makes rustc's metadata-aware linker logic dedup shared upstream
+        // monomorphizations like `drop_in_place<Value>` across all rlibs into
+        // a single definition at final link — the structural fix, NOT a
+        // duplicate-tolerating linker flag.
         cmd.arg(&shim_rs)
            .arg("--edition=2021")
            .arg("-o").arg(&output)
            .arg("-C").arg("strip=debuginfo")
            .arg("--extern").arg(format!("axis_codegen_bridge={}", find_bridge_rlib(&exe_dir).display()))
            .arg("-L").arg(format!("dependency={}/deps", exe_dir.display()))
-           .arg("-C").arg(format!("link-arg={}", lib_abs.display()));
-        // Link all provider rlibs so §5b extern symbols resolve at final link.
-        for prlib in &provider_rlibs {
+           .arg("-L").arg(format!("dependency={}", out_dir.display()))
+           .arg("--extern").arg(format!("{}={}", bundle_crate_name, bundle_extern_abs.display()));
+        for (name, prlib) in &provider_rlibs {
             let abs = std::fs::canonicalize(prlib).unwrap_or_else(|_| prlib.clone());
-            cmd.arg("-C").arg(format!("link-arg={}", abs.display()));
+            cmd.arg("--extern").arg(format!("{}={}", name, abs.display()));
         }
         for path in &link_search { cmd.arg("-L").arg(path); }
         for lib  in &link_libs   { cmd.arg("-l").arg(lib);  }

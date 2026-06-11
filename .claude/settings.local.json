@@ -13,7 +13,11 @@
       "Bash(git stash *)",
       "Bash(git push *)",
       "Bash(npm run *)",
-      "Bash(python3 -m json.tool)"
+      "Bash(python3 -m json.tool)",
+      "Bash(awk '{print $2}')",
+      "Bash(python3 /tmp/extract_tools.py)",
+      "Bash(python3 /tmp/show_inspect.py)",
+      "Bash(grep -rn \"ValueList\\\\|\\\\\"Fn\\\\\"\\\\| Fn$\\\\|: Fn\\\\|->[ ]*Fn\" /home/chris/dev/axis-codegen-bridge-rs/src/core_ir/ /home/chris/dev/axis-codegen-bridge-rs/src/emit/rust.rs)"
     ]
   }
 }
