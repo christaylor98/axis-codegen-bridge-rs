@@ -13,8 +13,8 @@ use std::collections::HashMap;
 
 use crate::core_ir_05::{
     bool_type_hash, decode_bool_payload, decode_int_payload, decode_text_payload,
-    hash256_to_hex, int_type_hash, sha256_bytes, text_type_hash, unit_type_hash,
-    ConstantPoolEntry, CoreBundle, Hash256, Node, NodeRef,
+    fn_type_hash, hash256_to_hex, int_type_hash, sha256_bytes, text_type_hash,
+    unit_type_hash, ConstantPoolEntry, CoreBundle, Hash256, Node, NodeRef,
 };
 
 // ── Symbol map (name → bridge path) ─────────────────────────────────────────
@@ -109,6 +109,39 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("value_1",    "axis_codegen_bridge::runtime::tuple::value_1");
     m.insert("value_2",    "axis_codegen_bridge::runtime::tuple::value_2");
     m.insert("list_make",  "axis_codegen_bridge::runtime::list::list_make");
+
+    // M1 iteration / list-builder primitives (BRIDGE_FOREIGN_FN_FNREF_M1).
+    // `foreach` and `loop_count` use the native multi-arg Rust calling
+    // convention — the callee is a bare fn path resolved from a Fn-typed
+    // pool entry. `range` is data-only and uses the unary Tuple convention.
+    m.insert("range",       "axis_codegen_bridge::runtime::iter::range");
+    m.insert("foreach",     "axis_codegen_bridge::runtime::iter::foreach");
+    m.insert("loop_count",  "axis_codegen_bridge::runtime::iter::loop_count");
+    m.insert("str_join",    "axis_codegen_bridge::runtime::str_ops::str_join");
+
+    // Phase 2 — P1 iteration / list vocabulary.
+    m.insert("flat_map",    "axis_codegen_bridge::runtime::iter::flat_map");
+    m.insert("any",         "axis_codegen_bridge::runtime::iter::any");
+    m.insert("all",         "axis_codegen_bridge::runtime::iter::all");
+    m.insert("find_index",  "axis_codegen_bridge::runtime::iter::find_index");
+    m.insert("count",       "axis_codegen_bridge::runtime::iter::count");
+    m.insert("loop_while",  "axis_codegen_bridge::runtime::iter::loop_while");
+    m.insert("range_step",  "axis_codegen_bridge::runtime::iter::range_step");
+    m.insert("repeat",      "axis_codegen_bridge::runtime::iter::repeat");
+    m.insert("enumerate",   "axis_codegen_bridge::runtime::iter::enumerate");
+    m.insert("zip",         "axis_codegen_bridge::runtime::iter::zip");
+    m.insert("take",        "axis_codegen_bridge::runtime::iter::take");
+    m.insert("drop",        "axis_codegen_bridge::runtime::iter::drop");
+    m.insert("slice",       "axis_codegen_bridge::runtime::iter::slice");
+    m.insert("flatten",     "axis_codegen_bridge::runtime::iter::flatten");
+
+    // Phase 3 — P1 text emit helpers.
+    m.insert("str_replace",  "axis_codegen_bridge::runtime::str_ops::str_replace");
+    m.insert("str_repeat",   "axis_codegen_bridge::runtime::str_ops::str_repeat");
+    m.insert("str_to_upper", "axis_codegen_bridge::runtime::str_ops::str_to_upper");
+    m.insert("str_to_lower", "axis_codegen_bridge::runtime::str_ops::str_to_lower");
+    m.insert("str_pad_left", "axis_codegen_bridge::runtime::str_ops::str_pad_left");
+    m.insert("str_pad_right","axis_codegen_bridge::runtime::str_ops::str_pad_right");
 
     // Option
     m.insert("option_none",    "axis_codegen_bridge::runtime::option::option_none_fn");
@@ -232,9 +265,66 @@ pub fn load_registry_identity_map(paths: &[String]) -> HashMap<Hash256, String> 
     map
 }
 
-// ── Pool constant decoding ────────────────────────────────────────────────────
+// ── Arg-kind metadata (Phase 0: HOF callee-slot signatures) ──────────────────
 
-fn decode_pool_entry(entry: &ConstantPoolEntry) -> Result<String, String> {
+/// Per-arg kind for a bridge fn.
+///
+/// `Data`  — an ordinary `Value` argument.
+/// `FnRef` — a callee/predicate slot. Must be a Pool ref to a `Fn`-typed entry;
+///           emits as a bare Rust fn path (resolved at emit time from the
+///           pool entry's 32-byte identity payload).
+///
+/// Any bridge fn NOT listed in [`fn_arg_kinds`] defaults to all-`Data` — a
+/// `Fn`-typed pool ref handed to such a fn fails the type gate. This is the
+/// "Fn-as-data is unrepresentable" invariant (intent
+/// BRIDGE_FOREIGN_FN_FNREF_M1, FN_REF_IS_CALLEE_ONLY).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArgKind {
+    Data,
+    FnRef,
+}
+
+/// Higher-order primitives — the *only* fns with Fn-typed arg slots.
+///
+/// A fn here gets emitted as a native multi-arg Rust call (e.g.
+/// `foreach(pool_0.clone(), io_println)`) instead of the unary
+/// `Value::Tuple`-packed call used for data-only fns.
+fn fn_arg_kinds() -> HashMap<&'static str, Vec<ArgKind>> {
+    use ArgKind::*;
+    let mut m: HashMap<&'static str, Vec<ArgKind>> = HashMap::new();
+    m.insert("foreach",    vec![Data, FnRef]);
+    m.insert("flat_map",   vec![Data, FnRef]);
+    m.insert("any",        vec![Data, FnRef]);
+    m.insert("all",        vec![Data, FnRef]);
+    m.insert("find_index", vec![Data, FnRef]);
+    m.insert("count",      vec![Data, FnRef]);
+    m.insert("loop_count", vec![Data, Data, FnRef]);
+    m.insert("loop_while", vec![Data, FnRef, FnRef, Data]);
+    m
+}
+
+// ── Pool constant classification ─────────────────────────────────────────────
+
+/// What a pool entry resolves to under Core IR 0.5.
+///
+/// `Data(expr)`  — emits `let pool_N: Value = <expr>;` and may be cloned into
+///                 any data position.
+/// `FnRef(path)` — a bridge symbol path. NO `let pool_N` is emitted. The path
+///                 may appear ONLY in a CCall callee/predicate slot (an
+///                 `ArgKind::FnRef` position). A reference from any data
+///                 position is a HARD ERROR.
+#[derive(Debug, Clone)]
+enum PoolKind {
+    Data(String),
+    FnRef(String),
+}
+
+fn classify_pool_entry(
+    entry: &ConstantPoolEntry,
+    builtin: &HashMap<Hash256, &'static str>,
+    registry: &HashMap<Hash256, String>,
+    name_to_path: &HashMap<&'static str, &'static str>,
+) -> Result<PoolKind, String> {
     let dh = &entry.def_hash;
     if dh == &[0u8; 32] {
         return Err(
@@ -245,22 +335,54 @@ fn decode_pool_entry(entry: &ConstantPoolEntry) -> Result<String, String> {
         );
     }
     if dh == &unit_type_hash() {
-        return Ok("Value::Unit".to_string());
+        return Ok(PoolKind::Data("Value::Unit".to_string()));
     }
     if dh == &bool_type_hash() {
         let v = decode_bool_payload(&entry.payload)?;
-        return Ok(format!("Value::Bool({})", v));
+        return Ok(PoolKind::Data(format!("Value::Bool({})", v)));
     }
     if dh == &int_type_hash() {
         let v = decode_int_payload(&entry.payload)?;
-        return Ok(format!("Value::Int({})", v));
+        return Ok(PoolKind::Data(format!("Value::Int({})", v)));
     }
     if dh == &text_type_hash() {
         let s = decode_text_payload(&entry.payload)?;
-        return Ok(format!("Value::Str(axis_codegen_bridge::runtime::value::intern_str({:?}))", s));
+        return Ok(PoolKind::Data(format!(
+            "Value::Str(axis_codegen_bridge::runtime::value::intern_str({:?}))",
+            s
+        )));
+    }
+    if dh == &fn_type_hash() {
+        if entry.payload.len() != 32 {
+            return Err(format!(
+                "Fn-typed pool entry has malformed payload: expected 32-byte identity, got {} bytes",
+                entry.payload.len()
+            ));
+        }
+        let mut id: Hash256 = [0u8; 32];
+        id.copy_from_slice(&entry.payload);
+        if let Some(&path) = builtin.get(&id) {
+            return Ok(PoolKind::FnRef(path.to_string()));
+        }
+        if let Some(name) = registry.get(&id) {
+            if let Some(&path) = name_to_path.get(name.as_str()) {
+                return Ok(PoolKind::FnRef(path.to_string()));
+            }
+            return Err(format!(
+                "Fn-typed pool entry resolves to registry name '{}' (identity {}) but \
+                 that name has no bridge implementation",
+                name,
+                hash256_to_hex(&id)
+            ));
+        }
+        return Err(format!(
+            "Fn-typed pool entry references unknown identity {} — \
+             not a bridge built-in, not in --reg files",
+            hash256_to_hex(&id)
+        ));
     }
     Err(format!(
-        "unknown pool entry type hash: {} (only Unit/Bool/Int/Text supported)",
+        "unknown pool entry type hash: {} (only Unit/Bool/Int/Text/Fn supported)",
         hash256_to_hex(dh)
     ))
 }
@@ -282,63 +404,129 @@ fn ref_clone(r: &NodeRef) -> String {
 
 fn emit_node(
     node: &Node,
+    pool_kinds: &[PoolKind],
+    arg_kind_table: &HashMap<&'static str, Vec<ArgKind>>,
     builtin: &HashMap<Hash256, &'static str>,
     registry: &HashMap<Hash256, String>,
     name_to_path: &HashMap<&'static str, &'static str>,
     xbundle: &HashMap<Hash256, String>,
 ) -> Result<String, String> {
     match node {
-        Node::CCall { target_identity, args, .. } => {
-            // Resolution priority: builtin → registry+bridge → §5b extern
-            if let Some(&p) = builtin.get(target_identity) {
-                let call = match args.len() {
-                    0 => format!("{}(Value::Unit)", p),
-                    1 => format!("{}({})", p, ref_clone(&args[0])),
-                    _ => {
-                        let arg_exprs: Vec<String> = args.iter().map(ref_clone).collect();
-                        format!("{}(Value::Tuple(vec![{}]))", p, arg_exprs.join(", "))
+        Node::CCall { target_identity, args, target_name } => {
+            // Resolve target → (name, callable_path, is_extern). target_name is
+            // mandatory per Core IR 0.5 §"Human Display Format" / CCall.
+            let (name, path, is_extern): (String, String, bool) =
+                if let Some(&p) = builtin.get(target_identity) {
+                    (target_name.clone(), p.to_string(), false)
+                } else if let Some(n) = registry.get(target_identity) {
+                    match name_to_path.get(n.as_str()) {
+                        Some(&p) => (n.clone(), p.to_string(), false),
+                        None => return Err(format!(
+                            "CCall identity {} resolves to registry name '{}' but \
+                             that name has no bridge implementation",
+                            hash256_to_hex(target_identity),
+                            n
+                        )),
                     }
-                };
-                return Ok(call);
-            }
-            if let Some(name) = registry.get(target_identity) {
-                if let Some(&p) = name_to_path.get(name.as_str()) {
-                    let call = match args.len() {
-                        0 => format!("{}(Value::Unit)", p),
-                        1 => format!("{}({})", p, ref_clone(&args[0])),
-                        _ => {
-                            let arg_exprs: Vec<String> = args.iter().map(ref_clone).collect();
-                            format!("{}(Value::Tuple(vec![{}]))", p, arg_exprs.join(", "))
-                        }
-                    };
-                    return Ok(call);
+                } else if let Some(sym) = xbundle.get(target_identity) {
+                    (target_name.clone(), sym.clone(), true)
                 } else {
                     return Err(format!(
-                        "CCall identity {} resolves to registry name '{}' but \
-                         that name has no bridge implementation",
-                        hash256_to_hex(target_identity),
-                        name
+                        "unresolved CCall identity: {} — not in bridge built-ins, --reg files, or --lib providers",
+                        hash256_to_hex(target_identity)
+                    ));
+                };
+
+            // Per-arg kind. Default = all Data; a fn with any Fn-slot MUST
+            // appear in [`fn_arg_kinds`].
+            let declared = arg_kind_table.get(name.as_str());
+            if let Some(kinds) = declared {
+                if kinds.len() != args.len() {
+                    return Err(format!(
+                        "CCall '{}' arg count mismatch: declared {} arg-kinds, got {} args",
+                        name, kinds.len(), args.len()
                     ));
                 }
             }
-            // §5b extern call via identity-derived symbol
-            if let Some(sym) = xbundle.get(target_identity) {
-                let call = match args.len() {
-                    0 => format!("unsafe {{ {}(Value::Unit) }}", sym),
-                    1 => format!("unsafe {{ {}({}) }}", sym, ref_clone(&args[0])),
-                    _ => {
-                        let arg_exprs: Vec<String> = args.iter().map(ref_clone).collect();
-                        format!("unsafe {{ {}(Value::Tuple(vec![{}])) }}", sym, arg_exprs.join(", "))
+            let kinds_owned: Vec<ArgKind> =
+                declared.cloned().unwrap_or_else(|| vec![ArgKind::Data; args.len()]);
+
+            // Type gate + per-arg expression.
+            let mut arg_exprs: Vec<String> = Vec::with_capacity(args.len());
+            let mut any_fn_ref = false;
+            for (i, arg) in args.iter().enumerate() {
+                match kinds_owned[i] {
+                    ArgKind::FnRef => {
+                        any_fn_ref = true;
+                        match arg {
+                            NodeRef::Pool(pi) => {
+                                let pi_us = *pi as usize;
+                                match pool_kinds.get(pi_us) {
+                                    Some(PoolKind::FnRef(path)) => arg_exprs.push(path.clone()),
+                                    Some(PoolKind::Data(_)) => return Err(format!(
+                                        "type gate: CCall '{}' arg[{}] expects Fn but pool[{}] is Data",
+                                        name, i, pi
+                                    )),
+                                    None => return Err(format!(
+                                        "CCall '{}' arg[{}]: pool[{}] out of range",
+                                        name, i, pi
+                                    )),
+                                }
+                            }
+                            NodeRef::Node(j) => return Err(format!(
+                                "type gate: CCall '{}' arg[{}] expects Fn but got node[{}] result — \
+                                 Fn refs originate from pool entries only",
+                                name, i, j
+                            )),
+                        }
                     }
-                };
-                return Ok(call);
+                    ArgKind::Data => {
+                        if let NodeRef::Pool(pi) = arg {
+                            let pi_us = *pi as usize;
+                            if let Some(PoolKind::FnRef(_)) = pool_kinds.get(pi_us) {
+                                return Err(format!(
+                                    "type gate: CCall '{}' arg[{}] is a Data slot but pool[{}] is \
+                                     Fn-typed — Fn refs are callee-only, never data \
+                                     (FN_REF_IS_CALLEE_ONLY)",
+                                    name, i, pi
+                                ));
+                            }
+                        }
+                        arg_exprs.push(ref_clone(arg));
+                    }
+                }
             }
-            Err(format!(
-                "unresolved CCall identity: {} — not in bridge built-ins, --reg files, or --lib providers",
-                hash256_to_hex(target_identity)
-            ))
+
+            // Calling convention:
+            //   any FnRef arg → native multi-arg Rust call (`f(a, b, c)`)
+            //   else          → existing Value::Tuple-packed call (data UNARY_INVARIANT)
+            let body = if any_fn_ref {
+                format!("{}({})", path, arg_exprs.join(", "))
+            } else {
+                match arg_exprs.len() {
+                    0 => format!("{}(Value::Unit)", path),
+                    1 => format!("{}({})", path, arg_exprs[0]),
+                    _ => format!("{}(Value::Tuple(vec![{}]))", path, arg_exprs.join(", ")),
+                }
+            };
+            Ok(if is_extern { format!("unsafe {{ {} }}", body) } else { body })
         }
         Node::CIf { cond, then_, else_ } => {
+            // cond / then / else are Data positions. A Fn-typed pool ref here
+            // would be "Fn as data" — reject.
+            for (label, r) in &[("cond", cond), ("then", then_), ("else", else_)] {
+                if let NodeRef::Pool(pi) = r {
+                    let pi_us = *pi as usize;
+                    if let Some(PoolKind::FnRef(_)) = pool_kinds.get(pi_us) {
+                        return Err(format!(
+                            "type gate: CIf {} slot is Data but pool[{}] is Fn-typed — \
+                             Fn refs are callee-only, never condition or branch value \
+                             (FN_REF_IS_CALLEE_ONLY)",
+                            label, pi
+                        ));
+                    }
+                }
+            }
             Ok(format!(
                 "if axis_codegen_bridge::runtime::value::truthy(&{}) {{ {} }} else {{ {} }}",
                 ref_expr(cond),
@@ -509,11 +697,21 @@ pub fn emit_rust_lib_from_bundle(
     ));
     out.push_str("    init_runtime();\n");
 
-    // Pool entries
+    // Classify all pool entries up front. Fn-typed entries are NOT emitted as
+    // `let pool_N` — they are resolved to bare Rust fn paths inside CCall.
+    let mut pool_kinds: Vec<PoolKind> = Vec::with_capacity(bundle.constant_pool.len());
     for (i, entry) in bundle.constant_pool.iter().enumerate() {
-        let value_expr = decode_pool_entry(entry)
-            .map_err(|e| format!("pool[{}]: {}", i, e))?;
-        out.push_str(&format!("    let pool_{}: Value = {};\n", i, value_expr));
+        let kind =
+            classify_pool_entry(entry, &builtin, registry_identity_map, &name_to_path)
+                .map_err(|e| format!("pool[{}]: {}", i, e))?;
+        pool_kinds.push(kind);
+    }
+
+    // Pool entries — Data only.
+    for (i, kind) in pool_kinds.iter().enumerate() {
+        if let PoolKind::Data(expr) = kind {
+            out.push_str(&format!("    let pool_{}: Value = {};\n", i, expr));
+        }
     }
     // Suppress unused-variable warnings for args if pool entries reference it
     if !bundle.constant_pool.is_empty() || !bundle.nodes.is_empty() {
@@ -521,18 +719,29 @@ pub fn emit_rust_lib_from_bundle(
     }
 
     // Nodes
+    let arg_kind_table = fn_arg_kinds();
     for (i, node) in bundle.nodes.iter().enumerate() {
-        let expr =
-            emit_node(node, &builtin, registry_identity_map, &name_to_path, xbundle_providers)
-                .map_err(|e| format!("node[{}]: {}", i, e))?;
+        let expr = emit_node(
+            node,
+            &pool_kinds,
+            &arg_kind_table,
+            &builtin,
+            registry_identity_map,
+            &name_to_path,
+            xbundle_providers,
+        )
+        .map_err(|e| format!("node[{}]: {}", i, e))?;
         out.push_str(&format!("    let node_{}: Value = {};\n", i, expr));
     }
 
-    // Result: last node, or first pool entry, or Unit
+    // Result: last node, or first Data pool entry, or Unit.
+    // Fn-typed pool entries are skipped — they have no `let pool_N` binding.
     let result = if !bundle.nodes.is_empty() {
         format!("node_{}", bundle.nodes.len() - 1)
-    } else if !bundle.constant_pool.is_empty() {
-        "pool_0".to_string()
+    } else if let Some(i) =
+        pool_kinds.iter().position(|k| matches!(k, PoolKind::Data(_)))
+    {
+        format!("pool_{}", i)
     } else {
         "Value::Unit".to_string()
     };

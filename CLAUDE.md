@@ -17,8 +17,20 @@ end
 ### VALID TYPE NAMES — only these, no others
 
 ```
-Int  Text  Bool  Unit  TextList  ResultText  ResultUnit  Value
+Int  Text  Bool  Unit  TextList  ResultText  ResultUnit  Value  ValueList  Fn
 ```
+
+`ValueList` is the homogeneous list-of-Value data type
+(`sha256([0x01, 0x03, value_type_hash])` per Core IR 0.5 — `PrimCode::Value=6`).
+It is **data-only**: every element is a `Value`.
+
+`Fn` is the foreign-fn reference type (`sha256([0x01, 0x00, 8])` per Core IR 0.5
+`PrimCode::Fn=8`). It is **callee-position only**: a `Fn` may appear only in the
+callee/predicate slot of a higher-order primitive (e.g. `foreach(ValueList, Fn)`).
+A `Fn` is NEVER a `Value`, NEVER a list element, NEVER a compound field,
+NEVER compared, NEVER returned as data. The emitter resolves a `Fn` pool entry's
+identity payload to a bare Rust fn path at translation time. The illegal state
+(`Fn` in a data position) is rejected at emit time as a HARD ERROR.
 
 ### FORBIDDEN FIELDS — never add these
 

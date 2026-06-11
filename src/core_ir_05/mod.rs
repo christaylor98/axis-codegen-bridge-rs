@@ -94,16 +94,18 @@ fn hex_nibble(c: u8) -> Option<u8> {
 //   encode_type(Primitive(code)) = [TAG_TYPE_DEF=0x01, shape_kind=0x00, prim_code]
 //   type_identity = sha256(encode_type(...))
 //
-// PrimCode: Unit=0, Bool=1, Int=2, Text=5
+// PrimCode: Unit=0, Bool=1, Int=2, Float=3, Bytes=4, Text=5, Value=6, Dec=7, Fn=8
 
 pub fn primitive_type_hash(prim_code: u8) -> Hash256 {
     sha256_bytes(&[0x01, 0x00, prim_code])
 }
 
-pub fn unit_type_hash() -> Hash256 { primitive_type_hash(0) }
-pub fn bool_type_hash() -> Hash256 { primitive_type_hash(1) }
-pub fn int_type_hash()  -> Hash256 { primitive_type_hash(2) }
-pub fn text_type_hash() -> Hash256 { primitive_type_hash(5) }
+pub fn unit_type_hash()  -> Hash256 { primitive_type_hash(0) }
+pub fn bool_type_hash()  -> Hash256 { primitive_type_hash(1) }
+pub fn int_type_hash()   -> Hash256 { primitive_type_hash(2) }
+pub fn text_type_hash()  -> Hash256 { primitive_type_hash(5) }
+pub fn value_type_hash() -> Hash256 { primitive_type_hash(6) }
+pub fn fn_type_hash()    -> Hash256 { primitive_type_hash(8) }
 
 /// List type hash: sha256([0x01, 0x03, element_type_hash...]).
 /// shape_kind 0x03 = list.
@@ -116,6 +118,11 @@ pub fn list_type_hash(element: &Hash256) -> Hash256 {
 /// TextList = List(Text).
 pub fn text_list_type_hash() -> Hash256 {
     list_type_hash(&text_type_hash())
+}
+
+/// ValueList = List(Value) — homogeneous list of `Value` (data only).
+pub fn value_list_type_hash() -> Hash256 {
+    list_type_hash(&value_type_hash())
 }
 
 // ── Payload codecs ────────────────────────────────────────────────────────────

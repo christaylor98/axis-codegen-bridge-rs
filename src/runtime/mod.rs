@@ -2,6 +2,7 @@ pub mod value;
 pub mod arith;
 pub mod str_ops;
 pub mod list;
+pub mod iter;
 pub mod tuple;
 pub mod option;
 pub mod bool_ops;

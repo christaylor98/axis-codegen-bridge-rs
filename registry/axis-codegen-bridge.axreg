@@ -1204,3 +1204,249 @@ fn pong_loop
   deterministic false
   idempotent    false
 end
+
+// ───────────── BRIDGE_FOREIGN_FN_FNREF_M1 — Phase 1 (P0) ─────────────
+
+fn foreach
+  identity 0x755b4274c42c72ddee35ecdb34b9ad4c8b5569e3094bcf85ca656cf50e7842d6
+  kind     leaf
+  in       (ValueList, Fn)
+  out      Unit
+  effect   fullIo
+  deterministic true
+  idempotent    false
+end
+
+fn range
+  identity 0x2269c0be009b610cfdbb8cfe9253ad37cf95062fb3f5a7560268ff259ea9f087
+  kind     leaf
+  in       (Int, Int)
+  out      ValueList
+  effect   pure
+  deterministic true
+  idempotent    false
+end
+
+fn loop_count
+  identity 0x834de35f072633dd50b8d8871a0867d689e1077d603fbec677a283871068756d
+  kind     leaf
+  in       (Int, Value, Fn)
+  out      Value
+  effect   pure
+  deterministic true
+  idempotent    false
+end
+
+fn str_join
+  identity 0x70178c74091f6d89e046f3aaa3ea3381b7d9d1203ecdf14135a580a647d38960
+  kind     leaf
+  in       (ValueList, Text)
+  out      Text
+  effect   pure
+  deterministic true
+  idempotent    false
+end
+
+// ───────────── BRIDGE_FOREIGN_FN_FNREF_M1 — Phase 2 (P1) ─────────────
+
+fn flat_map
+  identity 0x5b4f1f2835030f524537fbc29b28eb7703dea8b871d0773a4280a90e40e68326
+  kind     leaf
+  in       (ValueList, Fn)
+  out      ValueList
+  effect   pure
+  deterministic true
+  idempotent    false
+end
+
+fn any
+  identity 0xd6a7cd2a7371b1a15d543196979ff74fdb027023ebf187d5d329be11055c77fd
+  kind     leaf
+  in       (ValueList, Fn)
+  out      Bool
+  effect   pure
+  deterministic true
+  idempotent    false
+end
+
+fn all
+  identity 0x5ef5ef0364b6939c4ca61f34b393f7b368d1be8619647aaf83d5b395919ab629
+  kind     leaf
+  in       (ValueList, Fn)
+  out      Bool
+  effect   pure
+  deterministic true
+  idempotent    false
+end
+
+fn find_index
+  identity 0x399d6641c229db7c23652ddcee1b7e7349d6e6349dde21bcb95486115faecfbc
+  kind     leaf
+  in       (ValueList, Fn)
+  out      Int
+  effect   pure
+  deterministic true
+  idempotent    false
+end
+
+fn count
+  identity 0x6c35493a2b937829c9815c39e23af964bc84e5430a7dc104c700bbc0de2b59e3
+  kind     leaf
+  in       (ValueList, Fn)
+  out      Int
+  effect   pure
+  deterministic true
+  idempotent    false
+end
+
+fn loop_while
+  identity 0x0633886c2083c98e2cd70e396b0bab774127783082c3c5a84f541d4f1e5d3726
+  kind     leaf
+  in       (Value, Fn, Fn, Int)
+  out      Value
+  effect   pure
+  deterministic true
+  idempotent    false
+end
+
+fn range_step
+  identity 0x653f02c983b8f692ba49b85971e592f3672219fca6ce36f53f5da43adfe60ec9
+  kind     leaf
+  in       (Int, Int, Int)
+  out      ValueList
+  effect   pure
+  deterministic true
+  idempotent    false
+end
+
+fn repeat
+  identity 0x25e2b6b106523880e27763084ffa6a0756335be0d7106022535365b9ad39b4b1
+  kind     leaf
+  in       (Value, Int)
+  out      ValueList
+  effect   pure
+  deterministic true
+  idempotent    false
+end
+
+fn enumerate
+  identity 0x94826c502928b9e75480427f32c38ae08dbdf0dbf487a52e589944405de1ad59
+  kind     leaf
+  in       (ValueList)
+  out      ValueList
+  effect   pure
+  deterministic true
+  idempotent    false
+end
+
+fn zip
+  identity 0x4a70fe9aa6436e02c2dea340fbd1e352e4ef2d8ce6ca52ad25d4b95471fc8bf2
+  kind     leaf
+  in       (ValueList, ValueList)
+  out      ValueList
+  effect   pure
+  deterministic true
+  idempotent    false
+end
+
+fn take
+  identity 0xd1905cf90af29a5ac3f99e105830eecc5b3b415b24e2d166a7ce4cf72b2f32e6
+  kind     leaf
+  in       (ValueList, Int)
+  out      ValueList
+  effect   pure
+  deterministic true
+  idempotent    false
+end
+
+fn drop
+  identity 0xd90ee9ccf6bea1d2942a7b21319338198dec2a746f8a0d0771621f00da2e0864
+  kind     leaf
+  in       (ValueList, Int)
+  out      ValueList
+  effect   pure
+  deterministic true
+  idempotent    false
+end
+
+fn slice
+  identity 0x03fdb065d956f3fb9ccd85da1b15398f00a9958b715145ebf916dd91fd7b6361
+  kind     leaf
+  in       (ValueList, Int, Int)
+  out      ValueList
+  effect   pure
+  deterministic true
+  idempotent    false
+end
+
+fn flatten
+  identity 0x3ab675f2b94ec6889fc354439d5f31c7278f7a7ef414645c774017e1bdac24dc
+  kind     leaf
+  in       (ValueList)
+  out      ValueList
+  effect   pure
+  deterministic true
+  idempotent    false
+end
+
+// ───────────── BRIDGE_FOREIGN_FN_FNREF_M1 — Phase 3 (text helpers) ─────────────
+
+fn str_replace
+  identity 0x2e4da7b34307e6144698313153c6845459143378a5c5082705ee07930c419882
+  kind     leaf
+  in       (Text, Text, Text)
+  out      Text
+  effect   pure
+  deterministic true
+  idempotent    false
+end
+
+fn str_repeat
+  identity 0x51580fd10f5d91fa612c4cef41eefae0d5a56139489e242a5a137b6d2c716d56
+  kind     leaf
+  in       (Text, Int)
+  out      Text
+  effect   pure
+  deterministic true
+  idempotent    false
+end
+
+fn str_to_upper
+  identity 0xb6cfe9ffc01869f028c771b343df74d0a6c34cf8b7deef4fc3a2dd83042ced5e
+  kind     leaf
+  in       (Text)
+  out      Text
+  effect   pure
+  deterministic true
+  idempotent    true
+end
+
+fn str_to_lower
+  identity 0x45eb27c84094b07a08b9d8c9a926fa69fb3c3201cbfbd78731addd466ad0a80e
+  kind     leaf
+  in       (Text)
+  out      Text
+  effect   pure
+  deterministic true
+  idempotent    true
+end
+
+fn str_pad_left
+  identity 0x51cabd5a5d6a00d09a9f7c4606dc7d89f938d7291a9918ae50a6324ba32d4f36
+  kind     leaf
+  in       (Text, Int, Text)
+  out      Text
+  effect   pure
+  deterministic true
+  idempotent    false
+end
+
+fn str_pad_right
+  identity 0x173051246812605cb092517a0d8bd55539f7061903850dec0a878c606cd0e755
+  kind     leaf
+  in       (Text, Int, Text)
+  out      Text
+  effect   pure
+  deterministic true
+  idempotent    false
+end

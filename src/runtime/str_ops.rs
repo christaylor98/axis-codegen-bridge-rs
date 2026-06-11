@@ -247,3 +247,148 @@ pub fn chr(v: Value) -> Value {
         _ => panic!("chr: expected Int, got {:?}", v),
     }
 }
+
+/// `str_join(list, sep) -> Text` — join a `ValueList(Text)` with `sep`.
+#[track_caller]
+pub fn str_join(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() == 2 => {
+            let sep = match &es[1] {
+                Value::Str(h) => get_str(*h),
+                other => panic!("str_join: expected Str for sep, got {:?}", other),
+            };
+            let parts: Vec<String> = match &es[0] {
+                Value::List(items) => items
+                    .iter()
+                    .map(|v| match v {
+                        Value::Str(h) => get_str(*h),
+                        other => panic!(
+                            "str_join: ValueList element must be Str, got {:?}",
+                            other
+                        ),
+                    })
+                    .collect(),
+                other => panic!("str_join: expected ValueList of Str, got {:?}", other),
+            };
+            Value::Str(intern_str(&parts.join(&sep)))
+        }
+        _ => panic!("str_join: expected Tuple(ValueList, Text), got {:?}", args),
+    }
+}
+
+// ── Phase 3 — text emit helpers (BRIDGE_FOREIGN_FN_FNREF_M1) ─────────────────
+
+/// `str_replace(s, from, to) -> Text` — replace every occurrence of `from`
+/// in `s` with `to`.
+#[track_caller]
+pub fn str_replace(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() == 3 => match (&es[0], &es[1], &es[2]) {
+            (Value::Str(s), Value::Str(from), Value::Str(to)) => {
+                let result = get_str(*s).replace(&get_str(*from), &get_str(*to));
+                Value::Str(intern_str(&result))
+            }
+            (a, b, c) => panic!(
+                "str_replace: expected three Str values, got ({:?}, {:?}, {:?})",
+                a, b, c
+            ),
+        },
+        _ => panic!("str_replace: expected Tuple(Str, Str, Str), got {:?}", args),
+    }
+}
+
+/// `str_repeat(s, n) -> Text` — `n` copies of `s` concatenated.
+#[track_caller]
+pub fn str_repeat(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() == 2 => match (&es[0], &es[1]) {
+            (Value::Str(s), Value::Int(n)) => {
+                let count = if *n > 0 { *n as usize } else { 0 };
+                Value::Str(intern_str(&get_str(*s).repeat(count)))
+            }
+            (a, b) => panic!(
+                "str_repeat: expected Tuple(Str, Int), got ({:?}, {:?})",
+                a, b
+            ),
+        },
+        _ => panic!("str_repeat: expected Tuple(Str, Int), got {:?}", args),
+    }
+}
+
+/// `str_to_upper(s) -> Text` — ASCII / Unicode uppercase. Idempotent.
+#[track_caller]
+pub fn str_to_upper(v: Value) -> Value {
+    match v {
+        Value::Str(h) => Value::Str(intern_str(&get_str(h).to_uppercase())),
+        other => panic!("str_to_upper: expected Str, got {:?}", other),
+    }
+}
+
+/// `str_to_lower(s) -> Text` — ASCII / Unicode lowercase. Idempotent.
+#[track_caller]
+pub fn str_to_lower(v: Value) -> Value {
+    match v {
+        Value::Str(h) => Value::Str(intern_str(&get_str(h).to_lowercase())),
+        other => panic!("str_to_lower: expected Str, got {:?}", other),
+    }
+}
+
+/// `str_pad_left(s, width, pad) -> Text` — left-pad `s` with `pad` to total
+/// `width` chars. If `s` is already at least `width` chars long, returns `s`
+/// unchanged. `pad` is repeated and truncated as needed.
+#[track_caller]
+pub fn str_pad_left(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() == 3 => match (&es[0], &es[1], &es[2]) {
+            (Value::Str(s), Value::Int(width), Value::Str(pad)) => {
+                let s_str = get_str(*s);
+                let pad_str = get_str(*pad);
+                let cur = s_str.chars().count() as i64;
+                if cur >= *width || pad_str.is_empty() {
+                    return Value::Str(*s);
+                }
+                let need = (*width - cur) as usize;
+                let mut prefix = String::new();
+                let mut iter = pad_str.chars().cycle();
+                for _ in 0..need {
+                    prefix.push(iter.next().unwrap());
+                }
+                Value::Str(intern_str(&format!("{}{}", prefix, s_str)))
+            }
+            (a, b, c) => panic!(
+                "str_pad_left: expected Tuple(Str, Int, Str), got ({:?}, {:?}, {:?})",
+                a, b, c
+            ),
+        },
+        _ => panic!("str_pad_left: expected Tuple(Str, Int, Str), got {:?}", args),
+    }
+}
+
+/// `str_pad_right(s, width, pad) -> Text` — right-pad mirror of `str_pad_left`.
+#[track_caller]
+pub fn str_pad_right(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() == 3 => match (&es[0], &es[1], &es[2]) {
+            (Value::Str(s), Value::Int(width), Value::Str(pad)) => {
+                let s_str = get_str(*s);
+                let pad_str = get_str(*pad);
+                let cur = s_str.chars().count() as i64;
+                if cur >= *width || pad_str.is_empty() {
+                    return Value::Str(*s);
+                }
+                let need = (*width - cur) as usize;
+                let mut suffix = String::new();
+                let mut iter = pad_str.chars().cycle();
+                for _ in 0..need {
+                    suffix.push(iter.next().unwrap());
+                }
+                Value::Str(intern_str(&format!("{}{}", s_str, suffix)))
+            }
+            (a, b, c) => panic!(
+                "str_pad_right: expected Tuple(Str, Int, Str), got ({:?}, {:?}, {:?})",
+                a, b, c
+            ),
+        },
+        _ => panic!("str_pad_right: expected Tuple(Str, Int, Str), got {:?}", args),
+    }
+}
