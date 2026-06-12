@@ -17,7 +17,11 @@
       "Bash(awk '{print $2}')",
       "Bash(python3 /tmp/extract_tools.py)",
       "Bash(python3 /tmp/show_inspect.py)",
-      "Bash(grep -rn \"ValueList\\\\|\\\\\"Fn\\\\\"\\\\| Fn$\\\\|: Fn\\\\|->[ ]*Fn\" /home/chris/dev/axis-codegen-bridge-rs/src/core_ir/ /home/chris/dev/axis-codegen-bridge-rs/src/emit/rust.rs)"
+      "Bash(grep -rn \"ValueList\\\\|\\\\\"Fn\\\\\"\\\\| Fn$\\\\|: Fn\\\\|->[ ]*Fn\" /home/chris/dev/axis-codegen-bridge-rs/src/core_ir/ /home/chris/dev/axis-codegen-bridge-rs/src/emit/rust.rs)",
+      "Bash(git *)",
+      "Bash(cat)",
+      "Bash(python3 /tmp/dump_specific.py)",
+      "Bash(python3 -)"
     ]
   }
 }

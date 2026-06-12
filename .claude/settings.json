@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(./target/release/axis-codegen-bridge inspect *)",
-      "Bash(/home/chris/dev/axis-codegen-bridge-rs/target/release/axis-codegen-bridge inspect *)"
+      "Bash(/home/chris/dev/axis-codegen-bridge-rs/target/release/axis-codegen-bridge inspect *)",
+      "Bash(./target/debug/axis --help *)",
+      "Bash(/home/chris/dev/axis-lang-lab-working/target/release/axis --help *)"
     ]
   }
 }
