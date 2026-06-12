@@ -17,8 +17,12 @@ end
 ### VALID TYPE NAMES — only these, no others
 
 ```
-Int  Text  Bool  Unit  TextList  ResultText  ResultUnit  Value  ValueList  Fn
+Int  Text  Bool  Unit  Dec  Float  TextList  ResultText  ResultUnit  Value  ValueList  Fn
 ```
+
+`Dec` is `rust_decimal::Decimal` (128-bit fixed decimal, ~28 significant digits;
+PrimCode 7). `Float` is IEEE 754 f64 (PrimCode 3). Both are runtime `Value`
+variants (`Value::Dec`, `Value::Float`) — added by BRIDGE_VALUE_COERCION_V1.
 
 `ValueList` is the homogeneous list-of-Value data type
 (`sha256([0x01, 0x03, value_type_hash])` per Core IR 0.5 — `PrimCode::Value=6`).

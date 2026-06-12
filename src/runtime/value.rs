@@ -1,5 +1,6 @@
 use std::sync::{OnceLock, Mutex};
 use std::collections::HashMap;
+pub use rust_decimal::Decimal;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -10,6 +11,12 @@ pub enum Value {
     Tuple(Vec<Value>),
     List(Vec<Value>),
     Ctor { tag: u32, fields: Vec<Value> },
+    // BRIDGE_VALUE_COERCION_V1: numeric tags for the to_dec / to_float family.
+    // Dec is rust_decimal::Decimal (128-bit fixed decimal, ~28 significant digits).
+    // Float is IEEE 754 f64. Float-to-Dec via `Decimal::from_f64_retain` preserves
+    // significant digits within Decimal's range; values outside the range panic.
+    Dec(Decimal),
+    Float(f64),
 }
 
 impl Value {
@@ -37,6 +44,8 @@ impl std::fmt::Display for Value {
             Value::Bool(b)   => write!(f, "{}", b),
             Value::Str(h)    => write!(f, "{}", get_str(*h)),
             Value::Unit      => write!(f, "()"),
+            Value::Dec(d)    => write!(f, "{}", d),
+            Value::Float(x)  => write!(f, "{}", x),
             Value::Tuple(es) => {
                 write!(f, "(")?;
                 for (i, e) in es.iter().enumerate() {
@@ -75,6 +84,8 @@ pub fn truthy(v: &Value) -> bool {
         Value::Tuple(es)  => !es.is_empty(),
         Value::List(es)   => !es.is_empty(),
         Value::Ctor { .. } => true,
+        Value::Dec(d)     => !d.is_zero(),
+        Value::Float(x)   => *x != 0.0,
     }
 }
 

@@ -103,8 +103,10 @@ pub fn primitive_type_hash(prim_code: u8) -> Hash256 {
 pub fn unit_type_hash()  -> Hash256 { primitive_type_hash(0) }
 pub fn bool_type_hash()  -> Hash256 { primitive_type_hash(1) }
 pub fn int_type_hash()   -> Hash256 { primitive_type_hash(2) }
+pub fn float_type_hash() -> Hash256 { primitive_type_hash(3) }
 pub fn text_type_hash()  -> Hash256 { primitive_type_hash(5) }
 pub fn value_type_hash() -> Hash256 { primitive_type_hash(6) }
+pub fn dec_type_hash()   -> Hash256 { primitive_type_hash(7) }
 pub fn fn_type_hash()    -> Hash256 { primitive_type_hash(8) }
 
 /// List type hash: sha256([0x01, 0x03, element_type_hash...]).
@@ -227,4 +229,35 @@ pub fn decode_text_payload(payload: &[u8]) -> Result<String, String> {
     }
     String::from_utf8(payload[pos..pos + len].to_vec())
         .map_err(|e| format!("text UTF-8 error: {}", e))
+}
+
+// ── Float / Dec payload codecs (BRIDGE_VALUE_COERCION_V1) ────────────────────
+//
+//   float: 8 bytes, IEEE 754 binary64 little-endian.
+//   dec:   16 bytes, rust_decimal::Decimal::serialize() canonical form.
+
+pub fn encode_float_payload(v: f64) -> Vec<u8> {
+    v.to_le_bytes().to_vec()
+}
+
+pub fn decode_float_payload(payload: &[u8]) -> Result<f64, String> {
+    if payload.len() != 8 {
+        return Err(format!("invalid float payload: expected 8 bytes, got {}", payload.len()));
+    }
+    let mut buf = [0u8; 8];
+    buf.copy_from_slice(payload);
+    Ok(f64::from_le_bytes(buf))
+}
+
+pub fn encode_dec_payload(v: rust_decimal::Decimal) -> Vec<u8> {
+    v.serialize().to_vec()
+}
+
+pub fn decode_dec_payload(payload: &[u8]) -> Result<rust_decimal::Decimal, String> {
+    if payload.len() != 16 {
+        return Err(format!("invalid dec payload: expected 16 bytes, got {}", payload.len()));
+    }
+    let mut buf = [0u8; 16];
+    buf.copy_from_slice(payload);
+    Ok(rust_decimal::Decimal::deserialize(buf))
 }

@@ -4,6 +4,8 @@ type Unit = prim unit
 type Int  = prim int
 type Text = prim text
 type Bool = prim bool
+type Dec   = prim dec
+type Float = prim float
 type Value = sum [ AsUnit(Unit) | AsBool(Bool) | AsInt(Int) | AsText(Text) ]
 type ResultText = sum [ Ok(Text) | Err(Text) ]
 type ResultUnit = sum [ Ok(Unit) | Err(Text) ]
@@ -1454,4 +1456,33 @@ fn str_pad_right
   effect   pure
   deterministic true
   idempotent    false
+end
+
+// ───────────── BRIDGE_VALUE_COERCION_V1 — tag-dispatch primitives ─────────────
+//
+// Two tag-dispatching HOFs. Identity-keyed by sha256(name). Each takes a Value
+// plus one converter Fn-ref per numeric variant in positional tag order
+// (arg1=Int, arg2=Dec, arg3=Float). Non-numeric Value reaching a dispatcher
+// is a runtime panic (EXHAUSTIVE_OR_PANIC). The six converters
+// (int_to_dec / dec_id / float_to_dec / int_to_float / dec_to_float / float_id)
+// are lang-level — declared in registry/axis.axreg.
+
+fn bridge_to_dec
+  identity 0x6c5e593ae0a77c04589bea9560c4586c4721afb654713ae62b8e77e4102d02d7
+  kind     leaf
+  in       (Value, Fn, Fn, Fn)
+  out      Dec
+  effect   pure
+  deterministic true
+  idempotent    true
+end
+
+fn bridge_to_float
+  identity 0x64dfbefc573a439cc18f49cb49077f0e417e22e8b9d4b13cf3039d38711cc6a9
+  kind     leaf
+  in       (Value, Fn, Fn, Fn)
+  out      Float
+  effect   pure
+  deterministic true
+  idempotent    true
 end

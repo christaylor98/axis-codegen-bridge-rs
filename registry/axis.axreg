@@ -1,9 +1,11 @@
 registry axis 0.1
 
-type Unit = prim unit
-type Int  = prim int
-type Text = prim text
-type Bool = prim bool
+type Unit  = prim unit
+type Int   = prim int
+type Text  = prim text
+type Bool  = prim bool
+type Dec   = prim dec
+type Float = prim float
 type Value = sum [ AsUnit(Unit) | AsBool(Bool) | AsInt(Int) | AsText(Text) ]
 type ResultText = sum [ Ok(Text) | Err(Text) ]
 type ResultUnit = sum [ Ok(Unit) | Err(Text) ]
@@ -179,6 +181,73 @@ fn test_let
   kind     leaf
   in       (Value)
   out      Value
+  effect   pure
+  deterministic true
+  idempotent    true
+end
+
+// ───────────── BRIDGE_VALUE_COERCION_V1 — converter bundle ─────────────
+//
+// Six single-arm numeric converters. Identity-keyed by sha256(name). These are
+// the Fn-ref arguments to the bridge dispatchers (bridge_to_dec / bridge_to_float
+// — declared in registry/axis-codegen-bridge.axreg). The to_dec bundle is
+// lossless within Decimal's representable range; dec_to_float is lossy by design.
+
+fn int_to_dec
+  identity 0x16c175ec955c3fccefe88a38c25520ee794966733956b364158373b156c860e5
+  kind     leaf
+  in       (Int)
+  out      Dec
+  effect   pure
+  deterministic true
+  idempotent    true
+end
+
+fn dec_id
+  identity 0x8d027be4bfab3e3a83d387d7fb31fe87c1a0069465d98545ab4b9992f074bbc9
+  kind     leaf
+  in       (Dec)
+  out      Dec
+  effect   pure
+  deterministic true
+  idempotent    true
+end
+
+fn float_to_dec
+  identity 0x86d29372030bee49cb0582331078dbc680c895321e503f060b3c2f4cd1292a31
+  kind     leaf
+  in       (Float)
+  out      Dec
+  effect   pure
+  deterministic true
+  idempotent    true
+end
+
+fn int_to_float
+  identity 0xd0aa31dcda4acd1847b2bb40cf0644a6d00c8bc8a625e7a9ad78f72848fbb691
+  kind     leaf
+  in       (Int)
+  out      Float
+  effect   pure
+  deterministic true
+  idempotent    true
+end
+
+fn dec_to_float
+  identity 0xfbdac1bd04a419776b5c759896bb272b1a5b8fbe6092d86c131c3d5864a5c01f
+  kind     leaf
+  in       (Dec)
+  out      Float
+  effect   pure
+  deterministic true
+  idempotent    true
+end
+
+fn float_id
+  identity 0xcb82b69f4423599dbc6ebb33d2b9bbe7e872224cbaea848c568b1086b52670bb
+  kind     leaf
+  in       (Float)
+  out      Float
   effect   pure
   deterministic true
   idempotent    true

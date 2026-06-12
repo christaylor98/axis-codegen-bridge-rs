@@ -12,8 +12,8 @@
 use std::collections::HashMap;
 
 use crate::core_ir_05::{
-    bool_type_hash, decode_bool_payload, decode_int_payload, decode_text_payload,
-    fn_type_hash, hash256_to_hex, int_type_hash, sha256_bytes, text_type_hash,
+    bool_type_hash, dec_type_hash, decode_bool_payload, decode_int_payload, decode_text_payload,
+    float_type_hash, fn_type_hash, hash256_to_hex, int_type_hash, sha256_bytes, text_type_hash,
     unit_type_hash, ConstantPoolEntry, CoreBundle, Hash256, Node, NodeRef,
 };
 
@@ -178,6 +178,18 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("ping_loop", "axis_codegen_bridge::runtime::signals::ping_loop");
     m.insert("pong_loop", "axis_codegen_bridge::runtime::signals::pong_loop");
 
+    // Value coercion family (BRIDGE_VALUE_COERCION_V1 — coerce.rs).
+    // Six converters + two tag-dispatching HOFs. Dispatchers carry three FnRef
+    // slots — see `fn_arg_kinds()`. Resolution is identity-keyed = sha256(name).
+    m.insert("int_to_dec",      "axis_codegen_bridge::runtime::coerce::int_to_dec");
+    m.insert("dec_id",          "axis_codegen_bridge::runtime::coerce::dec_id");
+    m.insert("float_to_dec",    "axis_codegen_bridge::runtime::coerce::float_to_dec");
+    m.insert("int_to_float",    "axis_codegen_bridge::runtime::coerce::int_to_float");
+    m.insert("dec_to_float",    "axis_codegen_bridge::runtime::coerce::dec_to_float");
+    m.insert("float_id",        "axis_codegen_bridge::runtime::coerce::float_id");
+    m.insert("bridge_to_dec",   "axis_codegen_bridge::runtime::coerce::bridge_to_dec");
+    m.insert("bridge_to_float", "axis_codegen_bridge::runtime::coerce::bridge_to_float");
+
     // IR constructors / accessors (kept for backward compat)
     m.insert("ir_make_int_lit",  "axis_codegen_bridge::runtime::ir_constructors::ir_make_int_lit");
     m.insert("ir_make_bool_lit", "axis_codegen_bridge::runtime::ir_constructors::ir_make_bool_lit");
@@ -300,6 +312,10 @@ fn fn_arg_kinds() -> HashMap<&'static str, Vec<ArgKind>> {
     m.insert("count",      vec![Data, FnRef]);
     m.insert("loop_count", vec![Data, Data, FnRef]);
     m.insert("loop_while", vec![Data, FnRef, FnRef, Data]);
+    // Value-coercion dispatchers — runtime tag dispatch over three FnRef arms
+    // in positional Int/Dec/Float order (BRIDGE_VALUE_COERCION_V1).
+    m.insert("bridge_to_dec",   vec![Data, FnRef, FnRef, FnRef]);
+    m.insert("bridge_to_float", vec![Data, FnRef, FnRef, FnRef]);
     m
 }
 
@@ -350,6 +366,29 @@ fn classify_pool_entry(
         return Ok(PoolKind::Data(format!(
             "Value::Str(axis_codegen_bridge::runtime::value::intern_str({:?}))",
             s
+        )));
+    }
+    if dh == &float_type_hash() {
+        let v = crate::core_ir_05::decode_float_payload(&entry.payload)?;
+        // Use the bit pattern so NaN/sign-preserving values round-trip exactly.
+        return Ok(PoolKind::Data(format!(
+            "Value::Float(f64::from_bits({}u64))",
+            v.to_bits()
+        )));
+    }
+    if dh == &dec_type_hash() {
+        let v = crate::core_ir_05::decode_dec_payload(&entry.payload)?;
+        // Emit via the 16-byte canonical deserialize form so the source is
+        // representation-stable.
+        let bytes = v.serialize();
+        let bytes_lit = bytes
+            .iter()
+            .map(|b| format!("{}u8", b))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Ok(PoolKind::Data(format!(
+            "Value::Dec(axis_codegen_bridge::runtime::value::Decimal::deserialize([{}]))",
+            bytes_lit
         )));
     }
     if dh == &fn_type_hash() {
