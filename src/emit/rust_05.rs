@@ -333,6 +333,10 @@ fn fn_arg_kinds() -> HashMap<&'static str, Vec<ArgKind>> {
 enum PoolKind {
     Data(String),
     FnRef(String),
+    /// A parameter slot. The payload of the pool entry is `varint(slot_index)`
+    /// indicating which positional caller argument to substitute at codegen.
+    /// Treated as a `Value` at runtime — fully usable in Data positions.
+    Param(u32),
 }
 
 fn classify_pool_entry(
@@ -390,6 +394,15 @@ fn classify_pool_entry(
             "Value::Dec(axis_codegen_bridge::runtime::value::Decimal::deserialize([{}]))",
             bytes_lit
         )));
+    }
+    if dh == &crate::core_ir_05::param_type_hash() {
+        // Param slot — payload is an unsigned varint encoding the slot index.
+        let slot = crate::core_ir_05::decode_unsigned_varint(&entry.payload)
+            .map_err(|e| format!("Param pool entry: {}", e))?;
+        let slot_u32 = u32::try_from(slot).map_err(|_| {
+            format!("Param pool entry: slot index {} doesn't fit in u32", slot)
+        })?;
+        return Ok(PoolKind::Param(slot_u32));
     }
     if dh == &fn_type_hash() {
         if entry.payload.len() != 32 {
@@ -504,6 +517,12 @@ fn emit_node(
                                     Some(PoolKind::FnRef(path)) => arg_exprs.push(path.clone()),
                                     Some(PoolKind::Data(_)) => return Err(format!(
                                         "type gate: CCall '{}' arg[{}] expects Fn but pool[{}] is Data",
+                                        name, i, pi
+                                    )),
+                                    Some(PoolKind::Param(_)) => return Err(format!(
+                                        "type gate: CCall '{}' arg[{}] expects Fn but pool[{}] is a Param slot \
+                                         (Fn-by-name resolution requires a statically known identity, \
+                                         not a runtime Value)",
                                         name, i, pi
                                     )),
                                     None => return Err(format!(
@@ -746,14 +765,59 @@ pub fn emit_rust_lib_from_bundle(
         pool_kinds.push(kind);
     }
 
-    // Pool entries — Data only.
-    for (i, kind) in pool_kinds.iter().enumerate() {
-        if let PoolKind::Data(expr) = kind {
-            out.push_str(&format!("    let pool_{}: Value = {};\n", i, expr));
+    // Determine the parameter arity from Param-typed pool entries — the
+    // max slot index + 1. If no Param entries are present, the function
+    // takes no params (or it's a 0-arg / non-composite root bundle).
+    let param_count: u32 = pool_kinds
+        .iter()
+        .filter_map(|k| if let PoolKind::Param(i) = k { Some(*i + 1) } else { None })
+        .max()
+        .unwrap_or(0);
+
+    // Destructure `args` into `__param_0..__param_{N-1}` per the bridge's
+    // caller convention (see emit_node: 1-arg fns receive the arg directly,
+    // multi-arg fns receive a Value::Tuple).
+    match param_count {
+        0 => {}
+        1 => {
+            out.push_str("    let __param_0: Value = args.clone();\n");
+        }
+        n => {
+            out.push_str(&format!(
+                "    let (__params_vec): Vec<Value> = match args.clone() {{\n\
+                 \x20       Value::Tuple(es) if es.len() == {n} => es,\n\
+                 \x20       other => panic!(\"{safe_name}: expected Value::Tuple of {n} args, got {{:?}}\", other),\n\
+                 \x20   }};\n",
+                n = n, safe_name = safe_name,
+            ));
+            for i in 0..n {
+                out.push_str(&format!(
+                    "    let __param_{i}: Value = __params_vec[{i}].clone();\n", i = i,
+                ));
+            }
         }
     }
-    // Suppress unused-variable warnings for args if pool entries reference it
-    if !bundle.constant_pool.is_empty() || !bundle.nodes.is_empty() {
+
+    // Pool entries.
+    //   Data → `let pool_N = <constant expr>;`
+    //   Param(i) → `let pool_N = __param_i.clone();`
+    //   FnRef → no binding (resolved inline at callee position)
+    for (i, kind) in pool_kinds.iter().enumerate() {
+        match kind {
+            PoolKind::Data(expr) => {
+                out.push_str(&format!("    let pool_{}: Value = {};\n", i, expr));
+            }
+            PoolKind::Param(slot) => {
+                out.push_str(&format!(
+                    "    let pool_{}: Value = __param_{}.clone();\n",
+                    i, slot
+                ));
+            }
+            PoolKind::FnRef(_) => {}
+        }
+    }
+    // Suppress unused-variable warnings for args when not destructured.
+    if param_count == 0 && (!bundle.constant_pool.is_empty() || !bundle.nodes.is_empty()) {
         out.push_str("    let _ = &args;\n");
     }
 

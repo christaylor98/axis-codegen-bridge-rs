@@ -108,6 +108,10 @@ pub fn text_type_hash()  -> Hash256 { primitive_type_hash(5) }
 pub fn value_type_hash() -> Hash256 { primitive_type_hash(6) }
 pub fn dec_type_hash()   -> Hash256 { primitive_type_hash(7) }
 pub fn fn_type_hash()    -> Hash256 { primitive_type_hash(8) }
+/// `Param` type — a pool entry of this type is a parameter slot whose payload
+/// is `varint(slot_index)`. The bridge substitutes such pool entries with the
+/// caller's corresponding arg at codegen (see `emit_rust_lib_from_bundle`).
+pub fn param_type_hash() -> Hash256 { primitive_type_hash(9) }
 
 /// List type hash: sha256([0x01, 0x03, element_type_hash...]).
 /// shape_kind 0x03 = list.
@@ -184,6 +188,26 @@ pub fn decode_bool_payload(payload: &[u8]) -> Result<bool, String> {
         [0x01] => Ok(true),
         other => Err(format!("invalid bool payload: {:?}", other)),
     }
+}
+
+/// Decode a plain unsigned LEB128 varint (no zigzag). Matches the compiler's
+/// `fabric::codec::write_varint`. Used for `Param` pool entry payloads where
+/// the value is a slot index (always non-negative).
+pub fn decode_unsigned_varint(payload: &[u8]) -> Result<u64, String> {
+    let mut result: u64 = 0;
+    let mut shift: u32 = 0;
+    for &byte in payload {
+        let payload_bits = (byte & 0x7f) as u64;
+        result |= payload_bits << shift;
+        if byte & 0x80 == 0 {
+            return Ok(result);
+        }
+        shift += 7;
+        if shift >= 64 {
+            return Err("unsigned varint overflow".to_string());
+        }
+    }
+    Err("truncated unsigned varint".to_string())
 }
 
 pub fn decode_int_payload(payload: &[u8]) -> Result<i64, String> {
