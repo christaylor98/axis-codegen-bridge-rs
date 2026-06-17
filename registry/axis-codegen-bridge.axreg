@@ -607,6 +607,15 @@ fn fs_append_text
   out Value
   effect fullIo
 end
+fn fs_list_dir
+  identity 0x50407151cacc27ae2d4a8e518cb605425375ede1bcfd4d9cdea34d9bd86f0e2d
+  kind     leaf
+  deterministic false
+  idempotent    false
+  in (Text)
+  out TextList
+  effect fullIo
+end
 fn debug_trace
   identity 0x7dd29fd40ce882923f5620ac58ccb1121996014564a311f82cf1b43be13d35b1
   kind     leaf

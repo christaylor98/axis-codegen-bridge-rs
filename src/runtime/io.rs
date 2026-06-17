@@ -105,6 +105,24 @@ pub fn fs_append_text(args: Value) -> Value {
     }
 }
 
+#[track_caller]
+pub fn fs_list_dir(path: Value) -> Value {
+    let path_str = match path {
+        Value::Str(h) => get_str(h),
+        _ => panic!("fs_list_dir: expected Str path"),
+    };
+    let mut entries: Vec<Value> = std::fs::read_dir(&path_str)
+        .unwrap_or_else(|e| panic!("fs_list_dir: {}", e))
+        .filter_map(|e| e.ok())
+        .map(|e| Value::Str(intern_str(&e.file_name().to_string_lossy())))
+        .collect();
+    entries.sort_by(|a, b| match (a, b) {
+        (Value::Str(ah), Value::Str(bh)) => get_str(*ah).cmp(&get_str(*bh)),
+        _ => std::cmp::Ordering::Equal,
+    });
+    Value::List(entries)
+}
+
 /// Observational trace. Controlled by AXIS_TRACE=1. No semantic effect.
 #[track_caller]
 pub fn debug_trace(val: Value) -> Value {

@@ -161,6 +161,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("fs_read_text",  "axis_codegen_bridge::runtime::io::fs_read_text");
     m.insert("fs_write_text", "axis_codegen_bridge::runtime::io::fs_write_text");
     m.insert("fs_append_text","axis_codegen_bridge::runtime::io::fs_append_text");
+    m.insert("fs_list_dir",   "axis_codegen_bridge::runtime::io::fs_list_dir");
     m.insert("debug_trace",   "axis_codegen_bridge::runtime::io::debug_trace");
 
     // Process
