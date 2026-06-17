@@ -374,46 +374,44 @@ fn cmd_build(args: &[String]) {
             let safe_pfn = rust_05::sanitise(pfn);
             let provider_lib = out_dir.join(format!("lib{}_xb.a", safe_pfn));
             let provider_crate_name = format!("ax_xb_{}", safe_pfn);
-            if !provider_lib.exists() {
-                let pcode = match rust_05::emit_rust_lib_from_bundle(pbundle, pfn, &registry_map, &xbundle_providers) {
-                    Ok(c)  => c,
-                    Err(e) => { eprintln!("error (provider '{}'): {}", pfn, e); std::process::exit(1); }
-                };
-                let prs = out_dir.join(format!("generated_{}_xb.rs", safe_pfn));
-                if let Err(e) = std::fs::write(&prs, &pcode) {
-                    eprintln!("error: cannot write provider rs {}: {}", prs.display(), e); std::process::exit(1);
-                }
-                let mut pcmd = std::process::Command::new("rustc");
-                pcmd.arg(&prs)
-                    .arg("--crate-type=rlib")
-                    .arg(format!("--crate-name={}", provider_crate_name))
-                    .arg("--edition=2021")
-                    .arg("-o").arg(&provider_lib)
-                    .arg("-C").arg("embed-bitcode=no")
-                    .arg("-C").arg("strip=debuginfo")
-                    .arg("--extern").arg(format!("axis_codegen_bridge={}", find_bridge_rlib(&exe_dir).display()))
-                    .arg("-L").arg(format!("dependency={}/deps", exe_dir.display()));
-                match pcmd.status() {
-                    Ok(s) if s.success() => {}
-                    Ok(s) => { eprintln!("error: rustc (provider '{}') exited {:?}", pfn, s.code()); std::process::exit(1); }
-                    Err(e) => { eprintln!("error: failed to invoke rustc for provider '{}': {}", pfn, e); std::process::exit(1); }
-                }
+            // Always recompile — never cache. Stale _xb.a silently links old
+            // code when the source .coreir changes (build-always-recompiles).
+            let pcode = match rust_05::emit_rust_lib_from_bundle(pbundle, pfn, &registry_map, &xbundle_providers) {
+                Ok(c)  => c,
+                Err(e) => { eprintln!("error (provider '{}'): {}", pfn, e); std::process::exit(1); }
+            };
+            let prs = out_dir.join(format!("generated_{}_xb.rs", safe_pfn));
+            if let Err(e) = std::fs::write(&prs, &pcode) {
+                eprintln!("error: cannot write provider rs {}: {}", prs.display(), e); std::process::exit(1);
+            }
+            let mut pcmd = std::process::Command::new("rustc");
+            pcmd.arg(&prs)
+                .arg("--crate-type=rlib")
+                .arg(format!("--crate-name={}", provider_crate_name))
+                .arg("--edition=2021")
+                .arg("-o").arg(&provider_lib)
+                .arg("-C").arg("embed-bitcode=no")
+                .arg("-C").arg("strip=debuginfo")
+                .arg("--extern").arg(format!("axis_codegen_bridge={}", find_bridge_rlib(&exe_dir).display()))
+                .arg("-L").arg(format!("dependency={}/deps", exe_dir.display()));
+            match pcmd.status() {
+                Ok(s) if s.success() => {}
+                Ok(s) => { eprintln!("error: rustc (provider '{}') exited {:?}", pfn, s.code()); std::process::exit(1); }
+                Err(e) => { eprintln!("error: failed to invoke rustc for provider '{}': {}", pfn, e); std::process::exit(1); }
             }
             // rustc's --extern path requires `lib<crate_name>.rlib` / `.so`
             // filenames. Mirror the .a archive under the canonical .rlib name
             // so `--extern <provider_crate_name>=<.rlib>` resolves. The .a
             // stays in place for the existing single-bundle test contract.
             let provider_extern = out_dir.join(format!("lib{}.rlib", provider_crate_name));
-            if !provider_extern.exists() {
-                if let Err(e) = std::fs::copy(&provider_lib, &provider_extern) {
-                    eprintln!(
-                        "error: failed to mirror provider rlib {} -> {}: {}",
-                        provider_lib.display(),
-                        provider_extern.display(),
-                        e
-                    );
-                    std::process::exit(1);
-                }
+            if let Err(e) = std::fs::copy(&provider_lib, &provider_extern) {
+                eprintln!(
+                    "error: failed to mirror provider rlib {} -> {}: {}",
+                    provider_lib.display(),
+                    provider_extern.display(),
+                    e
+                );
+                std::process::exit(1);
             }
             provider_rlibs.push((provider_crate_name, provider_extern));
         }
@@ -453,19 +451,18 @@ fn cmd_build(args: &[String]) {
         if !exe_flag { return; }
         // Mirror the bundle .a archive under the canonical lib<crate>.rlib
         // filename rustc's --extern path requires.
+        // Always copy — never reuse a stale rlib. A cached .rlib compiled
+        // against an old bridge version causes E0460 at link time with no
+        // clear diagnostic (build-always-recompiles, same as provider path).
         let bundle_extern = out_dir.join(format!("lib{}.rlib", bundle_crate_name));
-        if !bundle_extern.exists() || std::fs::metadata(&bundle_extern).map(|m| m.len()).unwrap_or(0)
-            != std::fs::metadata(&lib_path).map(|m| m.len()).unwrap_or(0)
-        {
-            if let Err(e) = std::fs::copy(&lib_path, &bundle_extern) {
-                eprintln!(
-                    "error: failed to mirror bundle rlib {} -> {}: {}",
-                    lib_path.display(),
-                    bundle_extern.display(),
-                    e
-                );
-                std::process::exit(1);
-            }
+        if let Err(e) = std::fs::copy(&lib_path, &bundle_extern) {
+            eprintln!(
+                "error: failed to mirror bundle rlib {} -> {}: {}",
+                lib_path.display(),
+                bundle_extern.display(),
+                e
+            );
+            std::process::exit(1);
         }
 
         // Render `extern crate <name>;` lines for every linked downstream

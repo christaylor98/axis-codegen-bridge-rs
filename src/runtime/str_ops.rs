@@ -236,6 +236,15 @@ pub fn str_between(args: Value) -> Value {
     }
 }
 
+/// bool_to_str: Bool → Text. Returns "true" or "false".
+#[track_caller]
+pub fn bool_to_str(v: Value) -> Value {
+    match v {
+        Value::Bool(b) => Value::Str(intern_str(if b { "true" } else { "false" })),
+        _ => panic!("bool_to_str: expected Bool, got {:?}", v),
+    }
+}
+
 /// chr: takes Int (Unicode code point), returns single-char Str.
 #[track_caller]
 pub fn chr(v: Value) -> Value {

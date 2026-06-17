@@ -53,9 +53,10 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("seq_unit",   "axis_codegen_bridge::runtime::arith::seq_unit");
 
     // Boolean
-    m.insert("bool_and", "axis_codegen_bridge::runtime::bool_ops::bool_and");
-    m.insert("bool_or",  "axis_codegen_bridge::runtime::bool_ops::bool_or");
-    m.insert("bool_not", "axis_codegen_bridge::runtime::bool_ops::bool_not");
+    m.insert("bool_and",    "axis_codegen_bridge::runtime::bool_ops::bool_and");
+    m.insert("bool_or",     "axis_codegen_bridge::runtime::bool_ops::bool_or");
+    m.insert("bool_not",    "axis_codegen_bridge::runtime::bool_ops::bool_not");
+    m.insert("bool_to_str", "axis_codegen_bridge::runtime::str_ops::bool_to_str");
 
     // Test assertion (identity = sha256("assert") — BRIDGE_TESTKIT_FINALIZE_V1)
     m.insert("assert",   "axis_codegen_bridge::runtime::bool_ops::ax_assert");

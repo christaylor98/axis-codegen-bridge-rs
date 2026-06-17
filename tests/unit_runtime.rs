@@ -229,6 +229,67 @@ fn test_chr_unicode() {
     assert_eq!(str_ops::chr(Value::Int('é' as i64)), s("é"));
 }
 
+// ── Fix-4: chr(Int(10)) produces a real newline (0x0A), not backslash-n ──────
+//
+// M1 string literals do not process escape sequences. Text("\n") compiles to
+// a literal backslash + n. chr(Int(10)) is the only way to get a real newline.
+
+#[test]
+fn test_chr_newline_is_0x0a() {
+    setup();
+    let nl = str_ops::chr(Value::Int(10));
+    match &nl {
+        Value::Str(h) => {
+            let text = axis_codegen_bridge::runtime::value::get_str(*h);
+            assert_eq!(text.len(), 1, "chr(10) must be exactly 1 char");
+            assert_eq!(text.as_bytes()[0], 0x0A,
+                "chr(10) must be 0x0A (newline), got 0x{:02X}", text.as_bytes()[0]);
+        }
+        other => panic!("chr(10) returned non-Str: {:?}", other),
+    }
+}
+
+#[test]
+fn test_chr_tab_is_0x09() {
+    setup();
+    let tab = str_ops::chr(Value::Int(9));
+    match &tab {
+        Value::Str(h) => {
+            let text = axis_codegen_bridge::runtime::value::get_str(*h);
+            assert_eq!(text.as_bytes()[0], 0x09, "chr(9) must be 0x09 (tab)");
+        }
+        other => panic!("chr(9) returned non-Str: {:?}", other),
+    }
+}
+
+#[test]
+fn test_chr_newline_concat_roundtrip() {
+    setup();
+    let nl  = str_ops::chr(Value::Int(10));
+    let ab  = str_ops::str_concat(Value::Tuple(vec![s("a"), nl]));
+    match &ab {
+        Value::Str(h) => {
+            let text = axis_codegen_bridge::runtime::value::get_str(*h);
+            assert_eq!(text, "a\n", "concat with chr(10) should produce literal newline");
+        }
+        other => panic!("str_concat returned non-Str: {:?}", other),
+    }
+}
+
+// ── Fix-5: bool_to_str converts Bool → Text ──────────────────────────────────
+
+#[test]
+fn test_bool_to_str_true() {
+    setup();
+    assert_eq!(str_ops::bool_to_str(Value::Bool(true)), s("true"));
+}
+
+#[test]
+fn test_bool_to_str_false() {
+    setup();
+    assert_eq!(str_ops::bool_to_str(Value::Bool(false)), s("false"));
+}
+
 // ── list — untested functions ─────────────────────────────────────────────────
 
 #[test]

@@ -764,3 +764,114 @@ fn test_ping_pong_two_loops() {
     assert!(stdout.contains("ping: PASS"), "missing 'ping: PASS' in:\n{}", stdout);
     assert!(stdout.contains("pong: PASS"), "missing 'pong: PASS' in:\n{}", stdout);
 }
+
+// ── Fix-5: bool_to_str — CCall bundle builds and exe prints "true" / "false" ─
+
+fn make_bool_to_str_bundle(b: bool) -> CoreBundle {
+    // pool[0] = Bool(b), node[0] = CCall(bool_to_str, [pool[0]])
+    CoreBundle {
+        version: "0.5".to_string(),
+        constant_pool: vec![ConstantPoolEntry {
+            def_hash: bool_type_hash(),
+            payload: encode_bool_payload(b),
+        }],
+        nodes: vec![Node::CCall {
+            target_identity: sha256_bytes(b"bool_to_str"),
+            target_name: "bool_to_str".to_string(),
+            args: vec![NodeRef::Pool(0)],
+        }],
+    }
+}
+
+#[test]
+fn test_bool_to_str_true_builds() {
+    let dir = TempDir::new().unwrap();
+    let bundle = make_bool_to_str_bundle(true);
+    let fixture = write_05_bundle(&dir, "bool_to_str_t.coreir", &bundle);
+    let out = dir.path().join("bool_to_str_t");
+
+    let status = Command::new(bridge())
+        .args(["build", fixture.to_str().unwrap(), "--out", out.to_str().unwrap()])
+        .status()
+        .expect("bridge failed to run");
+    assert!(status.success(), "build failed for bool_to_str(true)");
+}
+
+#[test]
+fn test_bool_to_str_exe_true_prints_true() {
+    let dir = TempDir::new().unwrap();
+    let bundle = make_bool_to_str_bundle(true);
+    let fixture = write_05_bundle(&dir, "bts_true.coreir", &bundle);
+    let out = dir.path().join("bts_true");
+
+    let status = Command::new(bridge())
+        .args(["build", fixture.to_str().unwrap(), "--out", out.to_str().unwrap(), "--exe"])
+        .status()
+        .expect("bridge failed to run");
+    assert!(status.success(), "build failed");
+    assert!(out.exists(), "exe not produced");
+
+    let output = Command::new(&out).output().expect("failed to run exe");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "true",
+        "bool_to_str(true) must print 'true', got: {:?}", stdout);
+}
+
+#[test]
+fn test_bool_to_str_exe_false_prints_false() {
+    let dir = TempDir::new().unwrap();
+    let bundle = make_bool_to_str_bundle(false);
+    let fixture = write_05_bundle(&dir, "bts_false.coreir", &bundle);
+    let out = dir.path().join("bts_false");
+
+    let status = Command::new(bridge())
+        .args(["build", fixture.to_str().unwrap(), "--out", out.to_str().unwrap(), "--exe"])
+        .status()
+        .expect("bridge failed to run");
+    assert!(status.success(), "build failed");
+    assert!(out.exists(), "exe not produced");
+
+    let output = Command::new(&out).output().expect("failed to run exe");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "false",
+        "bool_to_str(false) must print 'false', got: {:?}", stdout);
+}
+
+// ── Fix-3: stale rlib regression — provider is always recompiled ──────────────
+//
+// Builds the same provider bundle twice into the same output directory.
+// With the old code the second build would skip recompilation (if !exists).
+// With fix-3 the bridge always recompiles, so both builds must succeed and
+// the final exe must run correctly.
+
+#[test]
+fn test_provider_always_recompiled_second_build_succeeds() {
+    let dir = TempDir::new().unwrap();
+
+    let negate = make_fn_negate_bundle();
+    let negate_coreir = write_05_bundle(&dir, "fn_negate.coreir", &negate);
+
+    let caller = make_two_fn_call_bundle();
+    let caller_coreir = write_05_bundle(&dir, "two_fn_call.coreir", &caller);
+    let exe_out = dir.path().join("stale_test_exe");
+
+    // First build
+    let s1 = Command::new(bridge())
+        .args(["build", caller_coreir.to_str().unwrap(),
+               "--out", exe_out.to_str().unwrap(),
+               "--lib", negate_coreir.to_str().unwrap(), "--exe"])
+        .status().expect("bridge failed on first build");
+    assert!(s1.success(), "first build failed");
+
+    // Second build into the same dir — bridge must recompile, not silently reuse stale rlibs.
+    let s2 = Command::new(bridge())
+        .args(["build", caller_coreir.to_str().unwrap(),
+               "--out", exe_out.to_str().unwrap(),
+               "--lib", negate_coreir.to_str().unwrap(), "--exe"])
+        .status().expect("bridge failed on second build");
+    assert!(s2.success(), "second build failed (stale rlib reuse would cause E0460 here)");
+
+    let output = Command::new(&exe_out).output().expect("failed to run exe");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "true", "exe after second build must still return 'true'");
+}
