@@ -208,6 +208,23 @@ fn collect_closure_dfs(
             }
         }
     }
+    // Fn-typed pool entries: an fn_ref to a composite is a live dependency
+    // (the HOF will call it at runtime), even though no Node::CCall targets
+    // it directly. Walk those too so the provider rlib is compiled and linked.
+    let fn_th = core_ir_05::fn_type_hash();
+    for entry in &bundle.constant_pool {
+        if entry.def_hash != fn_th || entry.payload.len() != 32 {
+            continue;
+        }
+        let mut id: Hash256 = [0u8; 32];
+        id.copy_from_slice(&entry.payload);
+        if rust_05::is_bridge_builtin(&id) { continue; }
+        if !visited.insert(id) { continue; }
+        if let Some((_, dep_bundle)) = available.get(&id) {
+            collect_closure_dfs(dep_bundle, available, visited, ordered);
+            ordered.push(id);
+        }
+    }
 }
 
 fn cmd_build(args: &[String]) {

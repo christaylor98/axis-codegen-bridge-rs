@@ -346,6 +346,7 @@ fn classify_pool_entry(
     builtin: &HashMap<Hash256, &'static str>,
     registry: &HashMap<Hash256, String>,
     name_to_path: &HashMap<&'static str, &'static str>,
+    xbundle: &HashMap<Hash256, String>,
 ) -> Result<PoolKind, String> {
     let dh = &entry.def_hash;
     if dh == &[0u8; 32] {
@@ -418,20 +419,28 @@ fn classify_pool_entry(
         if let Some(&path) = builtin.get(&id) {
             return Ok(PoolKind::FnRef(path.to_string()));
         }
+        // Composite M1 fn referenced as fn_ref: resolve to a safe wrapper
+        // around the xbundle extern. The extern is `unsafe extern "C-unwind" fn`
+        // and cannot coerce to the HOF's `fn(Value) -> Value` slot directly —
+        // emit_rust_lib_from_bundle generates one `{sym}_xfn` wrapper per
+        // xbundle fn-ref symbol; we point at the wrapper here.
+        if let Some(sym) = xbundle.get(&id) {
+            return Ok(PoolKind::FnRef(format!("{}_xfn", sym)));
+        }
         if let Some(name) = registry.get(&id) {
             if let Some(&path) = name_to_path.get(name.as_str()) {
                 return Ok(PoolKind::FnRef(path.to_string()));
             }
             return Err(format!(
                 "Fn-typed pool entry resolves to registry name '{}' (identity {}) but \
-                 that name has no bridge implementation",
+                 that name has no bridge implementation and no xbundle provider",
                 name,
                 hash256_to_hex(&id)
             ));
         }
         return Err(format!(
             "Fn-typed pool entry references unknown identity {} — \
-             not a bridge built-in, not in --reg files",
+             not a bridge built-in, not in --reg files, not in --lib providers",
             hash256_to_hex(&id)
         ));
     }
@@ -738,6 +747,28 @@ pub fn emit_rust_lib_from_bundle(
             }
         }
     }
+    // Also scan Fn-typed pool entries: an fn_ref to a composite needs its
+    // xbundle symbol declared so the bare path is callable as a fn pointer.
+    // We separately collect symbols that need a safe wrapper (fn-ref position)
+    // because `unsafe extern "C-unwind" fn` cannot coerce to `fn(Value) -> Value`.
+    let fn_th = fn_type_hash();
+    let mut xbundle_fnref_syms: Vec<String> = Vec::new();
+    let mut seen_xbundle_fnref: std::collections::HashSet<Hash256> = std::collections::HashSet::new();
+    for entry in &bundle.constant_pool {
+        if entry.def_hash != fn_th || entry.payload.len() != 32 {
+            continue;
+        }
+        let mut id: Hash256 = [0u8; 32];
+        id.copy_from_slice(&entry.payload);
+        if let Some(sym) = xbundle_providers.get(&id) {
+            if seen_extern.insert(id) {
+                extern_syms.push(sym.clone());
+            }
+            if seen_xbundle_fnref.insert(id) {
+                xbundle_fnref_syms.push(sym.clone());
+            }
+        }
+    }
 
     // Emit extern block for §5b cross-bundle symbols.
     // "C-unwind" allows Rust panics to propagate across the ABI boundary so
@@ -748,6 +779,19 @@ pub fn emit_rust_lib_from_bundle(
             out.push_str(&format!("    fn {}(args: Value) -> Value;\n", sym));
         }
         out.push_str("}\n\n");
+    }
+
+    // Safe wrappers for any xbundle symbol used as a HOF fn-ref. The HOFs
+    // declare `pred: fn(Value) -> Value` (safe Rust ABI); the extern is unsafe.
+    // Each wrapper is a one-liner that calls the extern inside `unsafe {}`.
+    if !xbundle_fnref_syms.is_empty() {
+        for sym in &xbundle_fnref_syms {
+            out.push_str(&format!(
+                "fn {sym}_xfn(args: Value) -> Value {{ unsafe {{ {sym}(args) }} }}\n",
+                sym = sym
+            ));
+        }
+        out.push_str("\n");
     }
 
     // Emit main function
@@ -761,9 +805,14 @@ pub fn emit_rust_lib_from_bundle(
     // `let pool_N` — they are resolved to bare Rust fn paths inside CCall.
     let mut pool_kinds: Vec<PoolKind> = Vec::with_capacity(bundle.constant_pool.len());
     for (i, entry) in bundle.constant_pool.iter().enumerate() {
-        let kind =
-            classify_pool_entry(entry, &builtin, registry_identity_map, &name_to_path)
-                .map_err(|e| format!("pool[{}]: {}", i, e))?;
+        let kind = classify_pool_entry(
+            entry,
+            &builtin,
+            registry_identity_map,
+            &name_to_path,
+            xbundle_providers,
+        )
+        .map_err(|e| format!("pool[{}]: {}", i, e))?;
         pool_kinds.push(kind);
     }
 
