@@ -21,7 +21,22 @@
       "Bash(git *)",
       "Bash(cat)",
       "Bash(python3 /tmp/dump_specific.py)",
-      "Bash(python3 -)"
+      "Bash(python3 -)",
+      "Bash(axis --help)",
+      "Bash(axis *)",
+      "Bash(grep *)",
+      "Bash(/home/chris/dev/axis-lang-lab-working/target/release/axis --file /home/chris/dev/M1-lang-test/harness/work/h_any.m1 --reg /home/chris/dev/axAI-axlang-gen-working/registries/axis-bridge.axreg --reg /home/chris/dev/axAI-axlang-gen-working/registries/gen-working.axreg --reg /home/chris/dev/axAI-axlang-gen-working/registries/m1-builtins.axreg)",
+      "Bash(/home/chris/dev/axis-lang-lab-working/target/release/axis --lexer /home/chris/dev/axis-lang-lab-working/axis-surface-m1-config/m1-lexer.yaml --parser /home/chris/dev/axis-lang-lab-working/axis-surface-m1-config/m1-parse.yaml --schema /home/chris/dev/axis-lang-lab-working/axis-surface-m1-config/m1-ast.yaml --lowering /home/chris/dev/axis-lang-lab-working/axis-surface-m1-config/m1-lowering.yaml --normalize /home/chris/dev/axis-lang-lab-working/axis-surface-m1-config/m1-normalize.yaml --file /home/chris/dev/M1-lang-test/harness/work/h_any.m1 --reg /home/chris/dev/axAI-axlang-gen-working/registries/axis-bridge.axreg --reg /home/chris/dev/axAI-axlang-gen-working/registries/gen-working.axreg --reg /home/chris/dev/axAI-axlang-gen-working/registries/m1-builtins.axreg --out /tmp/test_any.coreir)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(python3 *)",
+      "Bash(/home/chris/dev/axis-lang-lab-working/target/release/axis --lexer /home/chris/dev/axis-lang-lab-working/axis-surface-m1-config/m1-lexer.yaml --parser /home/chris/dev/axis-lang-lab-working/axis-surface-m1-config/m1-parse.yaml --schema /home/chris/dev/axis-lang-lab-working/axis-surface-m1-config/m1-ast.yaml --lowering /home/chris/dev/axis-lang-lab-working/axis-surface-m1-config/m1-lowering.yaml --normalize /home/chris/dev/axis-lang-lab-working/axis-surface-m1-config/m1-normalize.yaml --file /home/chris/dev/M1-lang-test/harness/work/test_list_head.m1 --reg /home/chris/dev/axAI-axlang-gen-working/registries/axis-bridge.axreg --reg /home/chris/dev/axAI-axlang-gen-working/registries/gen-working.axreg --reg /home/chris/dev/axAI-axlang-gen-working/registries/m1-builtins.axreg --out /home/chris/dev/M1-lang-test/harness/work/test_list_head.coreir)",
+      "Bash(/home/chris/dev/axis-codegen-bridge-rs/target/release/axis-codegen-bridge build *)",
+      "Bash(/home/chris/dev/M1-lang-test/harness/work/test_list_head_exe)",
+      "Bash(echo \"RUN OK \\(exit $?\\)\")",
+      "Bash(echo \"RUN FAIL \\(exit $?\\)\")",
+      "Skill(update-config)",
+      "Bash(/home/chris/dev/axis-lang-lab-working/target/release/axis --lexer /home/chris/dev/axis-lang-lab-working/axis-surface-m1-config/m1-lexer.yaml --parser /home/chris/dev/axis-lang-lab-working/axis-surface-m1-config/m1-parse.yaml --schema /home/chris/dev/axis-lang-lab-working/axis-surface-m1-config/m1-ast.yaml --lowering /home/chris/dev/axis-lang-lab-working/axis-surface-m1-config/m1-lowering.yaml --normalize /home/chris/dev/axis-lang-lab-working/axis-surface-m1-config/m1-normalize.yaml --file /home/chris/dev/M1-lang-test/harness/fnref_hof_test.ax --reg /home/chris/dev/axAI-axlang-gen-working/registries/axis-bridge.axreg --reg /home/chris/dev/axAI-axlang-gen-working/registries/gen-working.axreg --reg /home/chris/dev/axAI-axlang-gen-working/registries/m1-builtins.axreg --out /home/chris/dev/M1-lang-test/harness/work/fnref_hof_test.coreir)",
+      "Bash(echo \"compile exit: $?\")"
     ]
   }
 }
