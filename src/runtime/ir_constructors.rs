@@ -2,6 +2,25 @@ use crate::core_ir::{CoreTerm, Provenance, EffectClass, write_core_bundle_to_fil
 use crate::runtime::value::{Value, intern_str, intern_tag, get_str, get_tag_name};
 use std::rc::Rc;
 
+fn bytes_to_hex(b: &[u8]) -> String {
+    b.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+fn hex_to_bytes(s: &str) -> Result<Vec<u8>, String> {
+    if s.len() % 2 != 0 {
+        return Err(format!("hex_to_bytes: odd-length string ({} chars)", s.len()));
+    }
+    (0..s.len() / 2)
+        .map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16)
+            .map_err(|e| format!("hex_to_bytes: invalid byte '{}': {}", &s[2 * i..2 * i + 2], e)))
+        .collect()
+}
+
+fn hex_to_hash256(s: &str) -> Result<crate::core_ir_05::Hash256, String> {
+    let bytes = hex_to_bytes(s)?;
+    bytes.try_into().map_err(|_| format!("hex_to_hash256: expected 64 hex chars, got len {}", s.len()))
+}
+
 fn make_ctor(tag: &str, fields: Vec<Value>) -> Value {
     Value::Ctor { tag: intern_tag(tag), fields }
 }
@@ -161,6 +180,13 @@ fn term_to_str(v: &Value) -> String {
 
 #[track_caller]
 pub fn ir_to_string(v: Value) -> Value {
+    if let Value::Ctor { tag, .. } = &v {
+        if get_tag_name(*tag) == "Bundle05" {
+            if let Ok(bundle) = value_to_bundle_05(&v) {
+                return Value::Str(intern_str(&render_bundle_05_str(&bundle)));
+            }
+        }
+    }
     Value::Str(intern_str(&term_to_str(&v)))
 }
 
@@ -268,6 +294,13 @@ fn h1_expr(v: &Value, depth: usize) -> String {
 
 #[track_caller]
 pub fn ir_to_h1_string(v: Value) -> Value {
+    if let Value::Ctor { tag, .. } = &v {
+        if get_tag_name(*tag) == "Bundle05" {
+            if let Ok(bundle) = value_to_bundle_05(&v) {
+                return Value::Str(intern_str(&render_bundle_05_str(&bundle)));
+            }
+        }
+    }
     Value::Str(intern_str(&h1_block_body(&v, 0)))
 }
 
@@ -598,7 +631,57 @@ pub fn ir_write_bundle(v: Value) -> Value {
                 .unwrap_or_else(|e| panic!("ir_write_bundle write failed: {}", e));
             Value::Unit
         }
-        _ => panic!("ir_write_bundle: expected Tuple([term,path,effect,idem]) or Tuple([exports_list,path,idem]), got {:?}", v),
+        // Round-trip form: (bundle_value: Value, path: Text) → ResultUnit
+        // Accepts a Value produced by ir_read_bundle (Bundle05 or CoreTerm) and writes it.
+        // Returns Ctor("Ok", Unit) on success, Ctor("Err", Str) on any error. Never panics.
+        Value::Tuple(ref fields) if fields.len() == 2 => {
+            let bundle_val = &fields[0];
+            let path = match &fields[1] {
+                Value::Str(s) => get_str(*s),
+                other => return Value::Ctor {
+                    tag: intern_tag("Err"),
+                    fields: vec![Value::Str(intern_str(&format!(
+                        "ir_write_bundle: expected Str path, got {:?}", other
+                    )))],
+                },
+            };
+            let is_bundle05 = matches!(bundle_val,
+                Value::Ctor { tag, .. } if get_tag_name(*tag) == "Bundle05");
+            if is_bundle05 {
+                match value_to_bundle_05(bundle_val) {
+                    Ok(bundle) => match crate::core_ir_05::write_core_bundle_05_to_file(&bundle, &path) {
+                        Ok(()) => Value::Ctor { tag: intern_tag("Ok"), fields: vec![Value::Unit] },
+                        Err(e) => Value::Ctor {
+                            tag: intern_tag("Err"),
+                            fields: vec![Value::Str(intern_str(&e))],
+                        },
+                    },
+                    Err(e) => Value::Ctor {
+                        tag: intern_tag("Err"),
+                        fields: vec![Value::Str(intern_str(&format!("ir_write_bundle: {}", e)))],
+                    },
+                }
+            } else {
+                match value_to_core_term(bundle_val) {
+                    Ok(term) => match write_core_bundle_to_file(
+                        &term, "bundle", Provenance::Mechanical, EffectClass::FullIo, false, &path,
+                    ) {
+                        Ok(()) => Value::Ctor { tag: intern_tag("Ok"), fields: vec![Value::Unit] },
+                        Err(e) => Value::Ctor {
+                            tag: intern_tag("Err"),
+                            fields: vec![Value::Str(intern_str(&e))],
+                        },
+                    },
+                    Err(e) => Value::Ctor {
+                        tag: intern_tag("Err"),
+                        fields: vec![Value::Str(intern_str(&format!(
+                            "ir_write_bundle: cannot decode bundle: {}", e
+                        )))],
+                    },
+                }
+            }
+        }
+        _ => panic!("ir_write_bundle: expected Tuple([bundle,path]), Tuple([term,path,effect,idem]), or Tuple([exports_list,path,idem]), got {:?}", v),
     }
 }
 
@@ -626,87 +709,139 @@ pub fn ir_read_bundle(v: Value) -> Value {
 }
 
 fn value_from_bundle_05(bundle: &crate::core_ir_05::CoreBundle) -> Value {
-    // 0.5 convention: program result is the last node. When there are no nodes
-    // (e.g. a bundle that resolves to a single pool literal), the result is the
-    // last pool entry.
-    use crate::core_ir_05::NodeRef;
-    if !bundle.nodes.is_empty() {
-        return walk_node_05(bundle, bundle.nodes.len() - 1);
-    }
-    if !bundle.constant_pool.is_empty() {
-        return walk_ref_05(bundle, &NodeRef::Pool((bundle.constant_pool.len() - 1) as u32));
-    }
-    make_ctor("UnitLit", vec![])
-}
-
-fn walk_node_05(bundle: &crate::core_ir_05::CoreBundle, idx: usize) -> Value {
-    use crate::core_ir_05::{hash256_to_hex, Node};
-    match &bundle.nodes[idx] {
-        Node::CCall { target_identity, args, .. } => {
-            let hex = hash256_to_hex(target_identity);
-            let target = format!("#{}", &hex[..16]);
-            let arg_vals: Vec<Value> =
-                args.iter().map(|r| walk_ref_05(bundle, r)).collect();
-            make_ctor("Call", vec![
-                Value::Str(intern_str(&target)),
-                Value::List(arg_vals),
-            ])
-        }
-        Node::CIf { cond, then_, else_ } => make_ctor("If", vec![
-            walk_ref_05(bundle, cond),
-            walk_ref_05(bundle, then_),
-            walk_ref_05(bundle, else_),
+    use crate::core_ir_05::{hash256_to_hex, Node, NodeRef};
+    let nr = |r: &NodeRef| -> Value { match r {
+        NodeRef::Pool(i) => make_ctor("PoolRef", vec![Value::Int(*i as i64)]),
+        NodeRef::Node(i) => make_ctor("NodeRef", vec![Value::Int(*i as i64)]),
+    }};
+    let pool_vals: Vec<Value> = bundle.constant_pool.iter().map(|e| Value::Tuple(vec![
+        Value::Str(intern_str(&hash256_to_hex(&e.def_hash))),
+        Value::Str(intern_str(&bytes_to_hex(&e.payload))),
+    ])).collect();
+    let node_vals: Vec<Value> = bundle.nodes.iter().map(|node| match node {
+        Node::CCall { target_identity, target_name, args } => make_ctor("CCall", vec![
+            Value::Str(intern_str(&hash256_to_hex(target_identity))),
+            Value::Str(intern_str(target_name)),
+            Value::List(args.iter().map(|r| nr(r)).collect()),
         ]),
-        Node::CDeterminate => make_ctor("Determinate", vec![]),
-    }
+        Node::CIf { cond, then_, else_ } => make_ctor("CIf", vec![nr(cond), nr(then_), nr(else_)]),
+        Node::CDeterminate => make_ctor("CDeterminate", vec![]),
+    }).collect();
+    make_ctor("Bundle05", vec![Value::List(pool_vals), Value::List(node_vals)])
 }
 
-fn walk_ref_05(bundle: &crate::core_ir_05::CoreBundle, r: &crate::core_ir_05::NodeRef) -> Value {
+fn value_to_bundle_05(v: &Value) -> Result<crate::core_ir_05::CoreBundle, String> {
+    use crate::core_ir_05::{ConstantPoolEntry, CoreBundle, Node, NodeRef};
+    let (pool_list, node_list) = match v {
+        Value::Ctor { tag, fields } if get_tag_name(*tag) == "Bundle05" => match fields.as_slice() {
+            [Value::List(p), Value::List(n)] => (p, n),
+            _ => return Err("Bundle05: expected [List, List]".to_string()),
+        },
+        _ => return Err(format!("expected Ctor(Bundle05), got {:?}", v)),
+    };
+    let parse_nr = |r: &Value, ctx: &str| -> Result<NodeRef, String> {
+        match r {
+            Value::Ctor { tag, fields } => match (get_tag_name(*tag).as_str(), fields.as_slice()) {
+                ("PoolRef", [Value::Int(i)]) => Ok(NodeRef::Pool(*i as u32)),
+                ("NodeRef", [Value::Int(i)]) => Ok(NodeRef::Node(*i as u32)),
+                _ => Err(format!("{}: expected PoolRef/NodeRef, got {:?}", ctx, r)),
+            },
+            _ => Err(format!("{}: expected Ctor noderef, got {:?}", ctx, r)),
+        }
+    };
+    let constant_pool = pool_list.iter().enumerate().map(|(i, e)| match e {
+        Value::Tuple(fs) if fs.len() == 2 => {
+            let def_hash = match &fs[0] {
+                Value::Str(s) => hex_to_hash256(&get_str(*s))
+                    .map_err(|e| format!("pool[{}] def_hash: {}", i, e))?,
+                other => return Err(format!("pool[{}]: expected Str def_hash, got {:?}", i, other)),
+            };
+            let payload = match &fs[1] {
+                Value::Str(s) => hex_to_bytes(&get_str(*s))
+                    .map_err(|e| format!("pool[{}] payload: {}", i, e))?,
+                other => return Err(format!("pool[{}]: expected Str payload, got {:?}", i, other)),
+            };
+            Ok(ConstantPoolEntry { def_hash, payload })
+        }
+        _ => Err(format!("pool[{}]: expected Tuple([Str, Str]), got {:?}", i, e)),
+    }).collect::<Result<Vec<_>, String>>()?;
+    let nodes = node_list.iter().enumerate().map(|(i, n)| match n {
+        Value::Ctor { tag, fields } => match (get_tag_name(*tag).as_str(), fields.as_slice()) {
+            ("CCall", [Value::Str(hex_id), Value::Str(tgt_name), Value::List(arg_refs)]) => {
+                let target_identity = hex_to_hash256(&get_str(*hex_id))
+                    .map_err(|e| format!("node[{}] CCall identity: {}", i, e))?;
+                let target_name = get_str(*tgt_name);
+                let args = arg_refs.iter().enumerate()
+                    .map(|(j, r)| parse_nr(r, &format!("node[{}] arg[{}]", i, j)))
+                    .collect::<Result<Vec<_>, String>>()?;
+                Ok(Node::CCall { target_identity, target_name, args })
+            }
+            ("CIf", [cond, then_, else_]) => Ok(Node::CIf {
+                cond:  parse_nr(cond,  &format!("node[{}] CIf cond", i))?,
+                then_: parse_nr(then_, &format!("node[{}] CIf then", i))?,
+                else_: parse_nr(else_, &format!("node[{}] CIf else", i))?,
+            }),
+            ("CDeterminate", []) => Ok(Node::CDeterminate),
+            _ => Err(format!("node[{}]: unknown shape {:?}", i, n)),
+        },
+        _ => Err(format!("node[{}]: expected Ctor, got {:?}", i, n)),
+    }).collect::<Result<Vec<_>, String>>()?;
+    Ok(CoreBundle { version: "0.5".to_string(), constant_pool, nodes })
+}
+
+fn render_bundle_05_str(bundle: &crate::core_ir_05::CoreBundle) -> String {
     use crate::core_ir_05::{
         bool_type_hash, decode_bool_payload, decode_int_payload, decode_text_payload,
-        hash256_to_hex, int_type_hash, text_type_hash, unit_type_hash, NodeRef,
+        hash256_to_hex, int_type_hash, text_type_hash, unit_type_hash, Node, NodeRef,
     };
-    match r {
-        NodeRef::Node(i) => walk_node_05(bundle, *i as usize),
-        NodeRef::Pool(i) => {
-            let entry = match bundle.constant_pool.get(*i as usize) {
-                Some(e) => e,
-                None => return make_ctor("Var", vec![Value::Str(
-                    intern_str(&format!("<pool#{} oob>", i))
-                )]),
-            };
-            let dh = entry.def_hash;
-            if dh == unit_type_hash() {
-                make_ctor("UnitLit", vec![])
-            } else if dh == bool_type_hash() {
-                match decode_bool_payload(&entry.payload) {
-                    Ok(b) => make_ctor("BoolLit", vec![Value::Bool(b)]),
-                    Err(_) => make_ctor("Var", vec![Value::Str(intern_str("<bad-bool>"))]),
-                }
-            } else if dh == int_type_hash() {
-                match decode_int_payload(&entry.payload) {
-                    Ok(n) => make_ctor("IntLit", vec![Value::Int(n)]),
-                    Err(_) => make_ctor("Var", vec![Value::Str(intern_str("<bad-int>"))]),
-                }
-            } else if dh == text_type_hash() {
-                match decode_text_payload(&entry.payload) {
-                    // No CoreTerm text literal — represent as a Call("text", [Var(s)])
-                    // so term_to_str renders the contents instead of dropping them.
-                    Ok(s) => make_ctor("Call", vec![
-                        Value::Str(intern_str("text")),
-                        Value::List(vec![
-                            make_ctor("Var", vec![Value::Str(intern_str(&s))]),
-                        ]),
-                    ]),
-                    Err(_) => make_ctor("Var", vec![Value::Str(intern_str("<bad-text>"))]),
-                }
-            } else {
-                let hex = hash256_to_hex(&dh);
-                let name = format!("<pool#{}@{}>", i, &hex[..16]);
-                make_ctor("Var", vec![Value::Str(intern_str(&name))])
+    let mut out = String::from("CoreIR 0.5\n");
+    for (i, entry) in bundle.constant_pool.iter().enumerate() {
+        let dh = entry.def_hash;
+        let desc = if dh == unit_type_hash() {
+            "Unit".to_string()
+        } else if dh == bool_type_hash() {
+            match decode_bool_payload(&entry.payload) {
+                Ok(b) => format!("Bool({})", b),
+                Err(e) => format!("Bool(<err: {}>)", e),
             }
-        }
+        } else if dh == int_type_hash() {
+            match decode_int_payload(&entry.payload) {
+                Ok(n) => format!("Int({})", n),
+                Err(e) => format!("Int(<err: {}>)", e),
+            }
+        } else if dh == text_type_hash() {
+            match decode_text_payload(&entry.payload) {
+                Ok(s) => format!("Text({:?})", s),
+                Err(e) => format!("Text(<err: {}>)", e),
+            }
+        } else {
+            format!("Unknown(def={})", &hash256_to_hex(&dh)[..16])
+        };
+        out.push_str(&format!("pool[{}]: {}\n", i, desc));
     }
+    for (i, node) in bundle.nodes.iter().enumerate() {
+        let ref_str = |r: &NodeRef| match r {
+            NodeRef::Node(n) => format!("node[{}]", n),
+            NodeRef::Pool(p) => format!("pool[{}]", p),
+        };
+        let desc = match node {
+            Node::CCall { target_identity, target_name, args } => {
+                let hex = hash256_to_hex(target_identity);
+                let args_s: Vec<String> = args.iter().map(|r| ref_str(r)).collect();
+                if target_name.is_empty() {
+                    format!("CCall(target={}..., args=[{}])", &hex[..16], args_s.join(", "))
+                } else {
+                    format!("CCall({}, {}..., args=[{}])", target_name, &hex[..16], args_s.join(", "))
+                }
+            }
+            Node::CIf { cond, then_, else_ } => format!(
+                "CIf(cond={}, then={}, else={})", ref_str(cond), ref_str(then_), ref_str(else_)
+            ),
+            Node::CDeterminate => "CDeterminate".to_string(),
+        };
+        out.push_str(&format!("node[{}]: {}\n", i, desc));
+    }
+    out
 }
 
 /// ir_bundle_view: takes Str path.
@@ -721,65 +856,7 @@ pub fn ir_bundle_view(v: Value) -> Value {
 
     // Try 0.5 first (ratchet cache stores 0.5 bundles).
     match crate::core_ir_05::load_core_bundle(&path) {
-        Ok(bundle) => {
-            let mut out = String::from("CoreIR 0.5\n");
-            // Pool entries
-            for (i, entry) in bundle.constant_pool.iter().enumerate() {
-                use crate::core_ir_05::{
-                    bool_type_hash, decode_bool_payload, decode_int_payload,
-                    decode_text_payload, hash256_to_hex, int_type_hash,
-                    text_type_hash, unit_type_hash,
-                };
-                let dh = entry.def_hash;
-                let desc = if dh == unit_type_hash() {
-                    "Unit".to_string()
-                } else if dh == bool_type_hash() {
-                    match decode_bool_payload(&entry.payload) {
-                        Ok(b) => format!("Bool({})", b),
-                        Err(e) => format!("Bool(<err: {}>)", e),
-                    }
-                } else if dh == int_type_hash() {
-                    match decode_int_payload(&entry.payload) {
-                        Ok(n) => format!("Int({})", n),
-                        Err(e) => format!("Int(<err: {}>)", e),
-                    }
-                } else if dh == text_type_hash() {
-                    match decode_text_payload(&entry.payload) {
-                        Ok(s) => format!("Text({:?})", s),
-                        Err(e) => format!("Text(<err: {}>)", e),
-                    }
-                } else {
-                    let hex = hash256_to_hex(&dh);
-                    format!("Unknown(def={})", &hex[..16])
-                };
-                out.push_str(&format!("pool[{}]: {}\n", i, desc));
-            }
-            // Graph nodes
-            use crate::core_ir_05::{hash256_to_hex, Node, NodeRef};
-            for (i, node) in bundle.nodes.iter().enumerate() {
-                let desc = match node {
-                    Node::CCall { target_identity, args, .. } => {
-                        let hex = hash256_to_hex(target_identity);
-                        let args_str: Vec<String> = args.iter().map(|r| match r {
-                            NodeRef::Node(n) => format!("node[{}]", n),
-                            NodeRef::Pool(p) => format!("pool[{}]", p),
-                        }).collect();
-                        format!("CCall(target={}..., args=[{}])", &hex[..16], args_str.join(", "))
-                    }
-                    Node::CIf { cond, then_, else_ } => {
-                        let ref_str = |r: &NodeRef| match r {
-                            NodeRef::Node(n) => format!("node[{}]", n),
-                            NodeRef::Pool(p) => format!("pool[{}]", p),
-                        };
-                        format!("CIf(cond={}, then={}, else={})",
-                            ref_str(cond), ref_str(then_), ref_str(else_))
-                    }
-                    Node::CDeterminate => "CDeterminate".to_string(),
-                };
-                out.push_str(&format!("node[{}]: {}\n", i, desc));
-            }
-            Value::Str(intern_str(&out))
-        }
+        Ok(bundle) => Value::Str(intern_str(&render_bundle_05_str(&bundle))),
         Err(e05) => {
             // Fall back to 0.4 path and render via ir_to_string.
             match load_core_bundle(&path) {
@@ -1384,8 +1461,36 @@ transform_fn: my_t
             .join(format!("read_bundle_05_int_{}.coreir", std::process::id()));
         write_core_bundle_05_to_file(&bundle, path.to_str().unwrap()).expect("write");
         let v = ir_read_bundle(Value::Str(intern_str(path.to_str().unwrap())));
-        let lit = unwrap_ctor(&v, "IntLit");
-        assert!(matches!(lit[0], Value::Int(42)));
+        let (pool, nodes) = match &v {
+            Value::Ctor { tag, fields } if get_tag_name(*tag) == "Bundle05" => {
+                match fields.as_slice() {
+                    [Value::List(p), Value::List(n)] => (p, n),
+                    _ => panic!("Bundle05 shape wrong: {:?}", fields),
+                }
+            }
+            _ => panic!("expected Bundle05, got {:?}", v),
+        };
+        assert_eq!(nodes.len(), 0);
+        assert_eq!(pool.len(), 1);
+        // pool[0] = Tuple([hex_int_type_hash, hex_encode_int_payload(42)])
+        let entry = match &pool[0] {
+            Value::Tuple(fs) if fs.len() == 2 => fs,
+            _ => panic!("expected Tuple pool entry, got {:?}", pool[0]),
+        };
+        use crate::core_ir_05::{int_type_hash, hash256_to_hex, decode_int_payload, encode_int_payload};
+        let _ = encode_int_payload; // suppress unused warning
+        match &entry[0] {
+            Value::Str(s) => assert_eq!(get_str(*s), hash256_to_hex(&int_type_hash())),
+            other => panic!("expected Str def_hash, got {:?}", other),
+        }
+        match &entry[1] {
+            Value::Str(s) => {
+                let payload_bytes = hex_to_bytes(&get_str(*s)).expect("valid hex payload");
+                let n = decode_int_payload(&payload_bytes).expect("valid int payload");
+                assert_eq!(n, 42);
+            }
+            other => panic!("expected Str payload, got {:?}", other),
+        }
     }
 
     #[test]
@@ -1398,7 +1503,7 @@ transform_fn: my_t
             ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(7) },
             ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(35) },
         ];
-        // Target identity is arbitrary — only the hex prefix gets surfaced.
+        // Target identity is arbitrary — full 64-char hex gets surfaced.
         let target = [0xABu8; 32];
         let bundle = make_ccall_bundle(
             target, pool, vec![NodeRef::Pool(0), NodeRef::Pool(1)]
@@ -1407,18 +1512,57 @@ transform_fn: my_t
             .join(format!("read_bundle_05_ccall_{}.coreir", std::process::id()));
         write_core_bundle_05_to_file(&bundle, path.to_str().unwrap()).expect("write");
         let v = ir_read_bundle(Value::Str(intern_str(path.to_str().unwrap())));
-        let call = unwrap_ctor(&v, "Call");
-        // Target: "#" + first 16 hex chars of 0xAB-repeated.
-        assert_eq!(expect_str(&call[0]), format!("#{}", "ab".repeat(8)));
-        let args = match &call[1] {
-            Value::List(xs) => xs,
-            other => panic!("expected List args, got {:?}", other),
+        let (pool, nodes) = match &v {
+            Value::Ctor { tag, fields } if get_tag_name(*tag) == "Bundle05" => {
+                match fields.as_slice() {
+                    [Value::List(p), Value::List(n)] => (p, n),
+                    _ => panic!("Bundle05 shape wrong: {:?}", fields),
+                }
+            }
+            _ => panic!("expected Bundle05, got {:?}", v),
         };
-        assert_eq!(args.len(), 2);
-        let a0 = unwrap_ctor(&args[0], "IntLit");
-        assert!(matches!(a0[0], Value::Int(7)));
-        let a1 = unwrap_ctor(&args[1], "IntLit");
-        assert!(matches!(a1[0], Value::Int(35)));
+        assert_eq!(pool.len(), 2);
+        assert_eq!(nodes.len(), 1);
+        // Check the CCall node
+        let (hex_id, _tgt_name, arg_refs) = match &nodes[0] {
+            Value::Ctor { tag, fields } if get_tag_name(*tag) == "CCall" => {
+                match fields.as_slice() {
+                    [Value::Str(id), Value::Str(name), Value::List(args)] => (get_str(*id), get_str(*name), args),
+                    _ => panic!("CCall shape: {:?}", fields),
+                }
+            }
+            _ => panic!("expected CCall node, got {:?}", nodes[0]),
+        };
+        // Full 64-char hex of 0xAB * 32
+        assert_eq!(hex_id, "ab".repeat(32));
+        assert_eq!(arg_refs.len(), 2);
+        match &arg_refs[0] {
+            Value::Ctor { tag, fields } if get_tag_name(*tag) == "PoolRef" => {
+                assert!(matches!(fields[0], Value::Int(0)));
+            }
+            other => panic!("expected PoolRef(0), got {:?}", other),
+        }
+        match &arg_refs[1] {
+            Value::Ctor { tag, fields } if get_tag_name(*tag) == "PoolRef" => {
+                assert!(matches!(fields[0], Value::Int(1)));
+            }
+            other => panic!("expected PoolRef(1), got {:?}", other),
+        }
+        // Check pool entries are the two int pool entries (7 and 35)
+        use crate::core_ir_05::{hash256_to_hex, decode_int_payload};
+        let int_hash_hex = hash256_to_hex(&int_type_hash());
+        for (i, expected_n) in [(0usize, 7i64), (1, 35)] {
+            let (h, p) = match &pool[i] {
+                Value::Tuple(fs) => match fs.as_slice() {
+                    [Value::Str(h), Value::Str(p)] => (get_str(*h), get_str(*p)),
+                    _ => panic!("pool[{}] shape: {:?}", i, fs),
+                },
+                other => panic!("pool[{}]: expected Tuple, got {:?}", i, other),
+            };
+            assert_eq!(h, int_hash_hex, "pool[{}] def_hash", i);
+            let n = decode_int_payload(&hex_to_bytes(&p).unwrap()).unwrap();
+            assert_eq!(n, expected_n, "pool[{}] value", i);
+        }
     }
 
     #[test]

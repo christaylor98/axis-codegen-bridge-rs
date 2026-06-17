@@ -841,8 +841,8 @@ fn ir_write_bundle
   kind     leaf
   deterministic false
   idempotent    false
-  in (Unit)
-  out Unit
+  in (Value, Text)
+  out ResultUnit
   effect fullIo
 end
 fn ir_read_bundle
