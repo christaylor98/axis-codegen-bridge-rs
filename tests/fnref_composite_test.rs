@@ -233,3 +233,73 @@ fn leaf_fnref_still_works_after_fix() {
     );
     let _ = bool_type_hash(); // keep import for future bool-payload tests
 }
+
+// ── direct CCall to composite — xbundle fallback ─────────────────────────────
+// Before this fix, a CCall whose target identity was in the --reg map but had
+// no Rust impl errored "has no bridge implementation", even when an --lib
+// provider could resolve it. That forced callers to omit registry files at
+// eject time (e.g. axAGI-code-gen-working/scripts/build.sh:eject() previously
+// dropped GEN_REG). The fix mirrors the FnRef fallback added in
+// FNREF_COMPOSITE_RESOLVER_v0.1: registry lookup misses fall through to
+// xbundle before raising the error.
+
+/// Identical to `make_composite_gt0`, but called as a normal CCall (no fn-ref)
+/// from a caller bundle that has the composite name in --reg as well as in
+/// --lib. Used to exercise the new CCall xbundle fallback.
+fn make_caller_ccall_composite() -> CoreBundle {
+    CoreBundle {
+        version: "0.5".into(),
+        constant_pool: vec![
+            ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(7) },
+        ],
+        nodes: vec![Node::CCall {
+            target_identity: sha256_bytes(b"composite_gt0"),
+            args: vec![NodeRef::Pool(0)],
+            target_name: "composite_gt0".into(),
+        }],
+    }
+}
+
+#[test]
+fn ccall_to_composite_with_registry_entry_resolves_via_xbundle() {
+    let dir = TempDir::new().unwrap();
+    let prov_path = write_bundle(&dir, "composite_gt0.coreir", &make_composite_gt0());
+    let caller_path = write_bundle(&dir, "caller.coreir", &make_caller_ccall_composite());
+    let exe = dir.path().join("caller_exe");
+
+    // Test-local registry file that names the composite — analogous to
+    // axagi-working.axreg's `kind leaf` entries for composite M1 fns. The
+    // kind line is informational; the bridge ignores `kind` and resolves
+    // via name → Rust impl OR identity → xbundle.
+    let reg_path = dir.path().join("composite_gt0.axreg");
+    std::fs::write(
+        &reg_path,
+        "fn composite_gt0\n  kind leaf\n  in (Int)\n  out Bool\nend\n",
+    )
+    .unwrap();
+
+    let out = Command::new(bridge())
+        .args([
+            "build", caller_path.to_str().unwrap(),
+            "--out", exe.to_str().unwrap(),
+            "--lib", prov_path.to_str().unwrap(),
+            "--reg", reg_path.to_str().unwrap(),
+            "--exe",
+        ])
+        .output()
+        .expect("bridge invocation failed");
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "bridge build failed — CCall xbundle fallback regressed:\n{}",
+        stderr
+    );
+
+    let run = Command::new(&exe).output().expect("failed to run exe");
+    assert!(
+        run.status.success(),
+        "exe failed: stderr={:?}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+}

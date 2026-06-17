@@ -484,14 +484,23 @@ fn emit_node(
                 if let Some(&p) = builtin.get(target_identity) {
                     (target_name.clone(), p.to_string(), false)
                 } else if let Some(n) = registry.get(target_identity) {
-                    match name_to_path.get(n.as_str()) {
-                        Some(&p) => (n.clone(), p.to_string(), false),
-                        None => return Err(format!(
+                    // Registry has the name. Prefer the Rust impl (leaf path).
+                    // If there's no Rust impl, fall through to xbundle — the fn
+                    // may be a composite whose body lives in a --lib provider.
+                    // Mirrors classify_pool_entry's FnRef path
+                    // (FNREF_COMPOSITE_RESOLVER_v0.1).
+                    if let Some(&p) = name_to_path.get(n.as_str()) {
+                        (n.clone(), p.to_string(), false)
+                    } else if let Some(sym) = xbundle.get(target_identity) {
+                        (n.clone(), sym.clone(), true)
+                    } else {
+                        return Err(format!(
                             "CCall identity {} resolves to registry name '{}' but \
-                             that name has no bridge implementation",
+                             that name has no bridge implementation and no \
+                             xbundle provider",
                             hash256_to_hex(target_identity),
                             n
-                        )),
+                        ));
                     }
                 } else if let Some(sym) = xbundle.get(target_identity) {
                     (target_name.clone(), sym.clone(), true)
@@ -708,9 +717,15 @@ pub fn emit_rust_lib_from_bundle(
             if builtin.contains_key(target_identity) {
                 // OK: bridge built-in
             } else if let Some(name) = registry_identity_map.get(target_identity) {
-                if !name_to_path.contains_key(name.as_str()) {
+                // Prefer Rust impl; else fall through to xbundle (composite
+                // body via --lib). Symmetric with classify_pool_entry's
+                // FnRef path (FNREF_COMPOSITE_RESOLVER_v0.1).
+                if !name_to_path.contains_key(name.as_str())
+                    && !xbundle_providers.contains_key(target_identity)
+                {
                     errors.push(format!(
-                        "registry name '{}' (identity {}…) has no bridge implementation",
+                        "registry name '{}' (identity {}…) has no bridge \
+                         implementation and no xbundle provider",
                         name,
                         &hash256_to_hex(target_identity)[..16]
                     ));
