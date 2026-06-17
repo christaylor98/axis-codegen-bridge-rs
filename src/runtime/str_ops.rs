@@ -159,6 +159,24 @@ pub fn str_eq(args: Value) -> Value {
     }
 }
 
+/// text_eq(Text, Text) -> Bool. axis-canonical alias for str_eq (different
+/// registry name, identical semantics — Text is the canonical type label).
+#[track_caller]
+pub fn text_eq(args: Value) -> Value { str_eq(args) }
+
+/// text_lt(Text, Text) -> Bool — lexicographic less-than. The canonical
+/// registry declares this; the surface str_* family doesn't (no str_lt today).
+#[track_caller]
+pub fn text_lt(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Str(a), Value::Str(b)) => Value::Bool(get_str(*a) < get_str(*b)),
+            _ => panic!("text_lt: expected two Str values"),
+        },
+        _ => panic!("text_lt: expected Tuple(Str, Str)"),
+    }
+}
+
 /// Returns the char-index of the first occurrence of needle in haystack, or -1 if not found.
 #[track_caller]
 pub fn str_index_of(args: Value) -> Value {

@@ -75,6 +75,8 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("str_contains",    "axis_codegen_bridge::runtime::str_ops::str_contains");
     m.insert("str_index_of",    "axis_codegen_bridge::runtime::str_ops::str_index_of");
     m.insert("str_eq",          "axis_codegen_bridge::runtime::str_ops::str_eq");
+    m.insert("text_eq",         "axis_codegen_bridge::runtime::str_ops::text_eq");
+    m.insert("text_lt",         "axis_codegen_bridge::runtime::str_ops::text_lt");
     m.insert("str_before",      "axis_codegen_bridge::runtime::str_ops::str_before");
     m.insert("str_after",       "axis_codegen_bridge::runtime::str_ops::str_after");
     m.insert("str_between",     "axis_codegen_bridge::runtime::str_ops::str_between");

@@ -290,6 +290,38 @@ fn test_bool_to_str_false() {
     assert_eq!(str_ops::bool_to_str(Value::Bool(false)), s("false"));
 }
 
+// ── text_eq / text_lt (axis.axreg canonical names) ───────────────────────────
+
+#[test]
+fn test_text_eq_equal() {
+    setup();
+    assert_eq!(str_ops::text_eq(t2(s("abc"), s("abc"))), Value::Bool(true));
+}
+
+#[test]
+fn test_text_eq_not_equal() {
+    setup();
+    assert_eq!(str_ops::text_eq(t2(s("abc"), s("abd"))), Value::Bool(false));
+}
+
+#[test]
+fn test_text_lt_less() {
+    setup();
+    assert_eq!(str_ops::text_lt(t2(s("abc"), s("abd"))), Value::Bool(true));
+}
+
+#[test]
+fn test_text_lt_equal() {
+    setup();
+    assert_eq!(str_ops::text_lt(t2(s("abc"), s("abc"))), Value::Bool(false));
+}
+
+#[test]
+fn test_text_lt_greater() {
+    setup();
+    assert_eq!(str_ops::text_lt(t2(s("abd"), s("abc"))), Value::Bool(false));
+}
+
 // ── list — untested functions ─────────────────────────────────────────────────
 
 #[test]
