@@ -1,6 +1,4 @@
-use crate::core_ir::{CoreTerm, Provenance, EffectClass, write_core_bundle_to_file, write_core_bundle_multi_to_file, load_core_bundle};
 use crate::runtime::value::{Value, intern_str, intern_tag, get_str, get_tag_name};
-use std::rc::Rc;
 
 fn bytes_to_hex(b: &[u8]) -> String {
     b.iter().map(|b| format!("{:02x}", b)).collect()
@@ -547,93 +545,14 @@ pub fn ir_free_vars(v: Value) -> Value {
     Value::List(result)
 }
 
-/// Write a Core IR bundle to a file.
+/// Write a Core IR 0.5 bundle to a file.
 ///
-/// Single-export form (backward compatible):
-///   Tuple([term, Str path, Str effectClass, Bool idempotent])
-///
-/// Multi-export form:
-///   Tuple([List(Tuple([Str name, term, Str effectSig])), Str path, Bool idempotent])
+/// Round-trip form: Tuple([bundle_value: Value, path: Text]) → ResultUnit
+/// Accepts a Value produced by ir_read_bundle (Bundle05) and writes it.
+/// Returns Ctor("Ok", Unit) on success, Ctor("Err", Str) on any error. Never panics.
 #[track_caller]
 pub fn ir_write_bundle(v: Value) -> Value {
     match v {
-        // Multi-export: Tuple([List(Tuple([name, term, effectSig])), path, idempotent])
-        Value::Tuple(ref fields) if fields.len() == 3 => {
-            let exports_val  = &fields[0];
-            let path_val     = &fields[1];
-            let idempotent_val = &fields[2];
-            let path = match path_val {
-                Value::Str(s) => get_str(*s),
-                _ => panic!("ir_write_bundle(multi): expected Str path, got {:?}", path_val),
-            };
-            let idempotent = match idempotent_val {
-                Value::Bool(b) => *b,
-                _ => panic!("ir_write_bundle(multi): expected Bool idempotent, got {:?}", idempotent_val),
-            };
-            let export_list = match exports_val {
-                Value::List(items) => items,
-                _ => panic!("ir_write_bundle(multi): expected List exports, got {:?}", exports_val),
-            };
-            let mut entries: Vec<(String, CoreTerm, String)> = Vec::new();
-            for item in export_list {
-                match item {
-                    Value::Tuple(parts) if parts.len() == 3 => {
-                        let name = match &parts[0] {
-                            Value::Str(s) => get_str(*s).to_string(),
-                            other => panic!("ir_write_bundle(multi): export name must be Str, got {:?}", other),
-                        };
-                        let term = value_to_core_term(&parts[1])
-                            .unwrap_or_else(|e| panic!("ir_write_bundle(multi): {}", e));
-                        let effect_sig = match &parts[2] {
-                            Value::Str(s) => get_str(*s).to_string(),
-                            other => panic!("ir_write_bundle(multi): effectSig must be Str, got {:?}", other),
-                        };
-                        entries.push((name, term, effect_sig));
-                    }
-                    other => panic!("ir_write_bundle(multi): each export must be Tuple([name,term,effectSig]), got {:?}", other),
-                }
-            }
-            let refs: Vec<(&str, &CoreTerm, &str)> = entries.iter()
-                .map(|(n, t, e)| (n.as_str(), t, e.as_str()))
-                .collect();
-            write_core_bundle_multi_to_file(&refs, Provenance::Mechanical, idempotent, &path)
-                .unwrap_or_else(|e| panic!("ir_write_bundle(multi) write failed: {}", e));
-            Value::Unit
-        }
-        // Single-export: Tuple([term, path, effectClass, idempotent])
-        Value::Tuple(mut fields) if fields.len() == 4 => {
-            let idempotent_val   = fields.pop().unwrap();
-            let effect_class_val = fields.pop().unwrap();
-            let path_val         = fields.pop().unwrap();
-            let term_val         = fields.pop().unwrap();
-            let path = match &path_val {
-                Value::Str(s) => get_str(*s),
-                _ => panic!("ir_write_bundle: expected Str path, got {:?}", path_val),
-            };
-            let effect_class_str = match &effect_class_val {
-                Value::Str(s) => get_str(*s),
-                _ => panic!("ir_write_bundle: expected Str effectClass, got {:?}", effect_class_val),
-            };
-            let idempotent = match idempotent_val {
-                Value::Bool(b) => b,
-                _ => panic!("ir_write_bundle: expected Bool idempotent, got {:?}", idempotent_val),
-            };
-            let effect_class = match effect_class_str.as_str() {
-                "pure"    => EffectClass::Pure,
-                "reads"   => EffectClass::Reads,
-                "writes"  => EffectClass::Writes,
-                "full_io" => EffectClass::FullIo,
-                other     => panic!("ir_write_bundle: unknown effectClass {:?}", other),
-            };
-            let term = value_to_core_term(&term_val)
-                .unwrap_or_else(|e| panic!("ir_write_bundle: {}", e));
-            write_core_bundle_to_file(&term, "bundle", Provenance::Mechanical, effect_class, idempotent, &path)
-                .unwrap_or_else(|e| panic!("ir_write_bundle write failed: {}", e));
-            Value::Unit
-        }
-        // Round-trip form: (bundle_value: Value, path: Text) → ResultUnit
-        // Accepts a Value produced by ir_read_bundle (Bundle05 or CoreTerm) and writes it.
-        // Returns Ctor("Ok", Unit) on success, Ctor("Err", Str) on any error. Never panics.
         Value::Tuple(ref fields) if fields.len() == 2 => {
             let bundle_val = &fields[0];
             let path = match &fields[1] {
@@ -645,43 +564,21 @@ pub fn ir_write_bundle(v: Value) -> Value {
                     )))],
                 },
             };
-            let is_bundle05 = matches!(bundle_val,
-                Value::Ctor { tag, .. } if get_tag_name(*tag) == "Bundle05");
-            if is_bundle05 {
-                match value_to_bundle_05(bundle_val) {
-                    Ok(bundle) => match crate::core_ir_05::write_core_bundle_05_to_file(&bundle, &path) {
-                        Ok(()) => Value::Ctor { tag: intern_tag("Ok"), fields: vec![Value::Unit] },
-                        Err(e) => Value::Ctor {
-                            tag: intern_tag("Err"),
-                            fields: vec![Value::Str(intern_str(&e))],
-                        },
-                    },
+            match value_to_bundle_05(bundle_val) {
+                Ok(bundle) => match crate::core_ir_05::write_core_bundle_05_to_file(&bundle, &path) {
+                    Ok(()) => Value::Ctor { tag: intern_tag("Ok"), fields: vec![Value::Unit] },
                     Err(e) => Value::Ctor {
                         tag: intern_tag("Err"),
-                        fields: vec![Value::Str(intern_str(&format!("ir_write_bundle: {}", e)))],
+                        fields: vec![Value::Str(intern_str(&e))],
                     },
-                }
-            } else {
-                match value_to_core_term(bundle_val) {
-                    Ok(term) => match write_core_bundle_to_file(
-                        &term, "bundle", Provenance::Mechanical, EffectClass::FullIo, false, &path,
-                    ) {
-                        Ok(()) => Value::Ctor { tag: intern_tag("Ok"), fields: vec![Value::Unit] },
-                        Err(e) => Value::Ctor {
-                            tag: intern_tag("Err"),
-                            fields: vec![Value::Str(intern_str(&e))],
-                        },
-                    },
-                    Err(e) => Value::Ctor {
-                        tag: intern_tag("Err"),
-                        fields: vec![Value::Str(intern_str(&format!(
-                            "ir_write_bundle: cannot decode bundle: {}", e
-                        )))],
-                    },
-                }
+                },
+                Err(e) => Value::Ctor {
+                    tag: intern_tag("Err"),
+                    fields: vec![Value::Str(intern_str(&format!("ir_write_bundle: {}", e)))],
+                },
             }
         }
-        _ => panic!("ir_write_bundle: expected Tuple([bundle,path]), Tuple([term,path,effect,idem]), or Tuple([exports_list,path,idem]), got {:?}", v),
+        _ => panic!("ir_write_bundle: expected Tuple([bundle, path]), got {:?}", v),
     }
 }
 
@@ -691,20 +588,9 @@ pub fn ir_read_bundle(v: Value) -> Value {
         Value::Str(s) => get_str(s),
         _ => panic!("ir_read_bundle: expected Str path, got {:?}", v),
     };
-
-    // Try 0.4 first to preserve existing semantics on 0.3/0.4 bundles.
-    // On failure (including version mismatch), fall back to the 0.5 loader and
-    // lift its flat node graph into the CoreTerm-shaped Value tree that
-    // ir_to_string/ir_to_h1_string expect.
-    match load_core_bundle(&path) {
-        Ok(prog) => core_term_to_value(&prog.root_term),
-        Err(e04) => match crate::core_ir_05::load_core_bundle(&path) {
-            Ok(bundle) => value_from_bundle_05(&bundle),
-            Err(e05) => panic!(
-                "ir_read_bundle: failed as 0.4 ({}) and as 0.5 ({})",
-                e04, e05
-            ),
-        },
+    match crate::core_ir_05::load_core_bundle(&path) {
+        Ok(bundle) => value_from_bundle_05(&bundle),
+        Err(e) => panic!("ir_read_bundle: failed to load {}: {}", path, e),
     }
 }
 
@@ -845,35 +731,17 @@ fn render_bundle_05_str(bundle: &crate::core_ir_05::CoreBundle) -> String {
 }
 
 /// ir_bundle_view: takes Str path.
-/// Reads a .coreir file in either Core IR 0.4 or 0.5 format and returns a
-/// human-readable string. Never panics — on error, returns the error message.
+/// Reads a Core IR 0.5 bundle and returns a human-readable string.
+/// Never panics — on error, returns the error message.
 #[track_caller]
 pub fn ir_bundle_view(v: Value) -> Value {
     let path = match v {
         Value::Str(s) => get_str(s),
         other => return Value::Str(intern_str(&format!("ir_bundle_view: expected Str path, got {:?}", other))),
     };
-
-    // Try 0.5 first (ratchet cache stores 0.5 bundles).
     match crate::core_ir_05::load_core_bundle(&path) {
         Ok(bundle) => Value::Str(intern_str(&render_bundle_05_str(&bundle))),
-        Err(e05) => {
-            // Fall back to 0.4 path and render via ir_to_string.
-            match load_core_bundle(&path) {
-                Ok(prog) => {
-                    let term_val = core_term_to_value(&prog.root_term);
-                    let body = format!("CoreIR 0.4\n{}", term_to_str(&term_val));
-                    Value::Str(intern_str(&body))
-                }
-                Err(e04) => {
-                    let msg = format!(
-                        "ir_bundle_view: failed as 0.5 ({}) and as 0.4 ({})",
-                        e05, e04
-                    );
-                    Value::Str(intern_str(&msg))
-                }
-            }
-        }
+        Err(e) => Value::Str(intern_str(&format!("ir_bundle_view: failed to load {}: {}", path, e))),
     }
 }
 
@@ -1255,110 +1123,6 @@ pub fn ir_build_fold_from_spec(v: Value) -> Value {
     };
 
     Value::Tuple(vec![term, Value::Str(intern_str(&effect))])
-}
-
-// ── Internal conversions ─────────────────────────────────────────────────────
-
-fn value_to_core_term(v: &Value) -> Result<CoreTerm, String> {
-    match v {
-        Value::Ctor { tag, fields } => {
-            let kind = get_tag_name(*tag);
-            match kind.as_str() {
-                "IntLit" => match fields.as_slice() {
-                    [Value::Int(n)] => Ok(CoreTerm::IntLit(*n, None)),
-                    _ => Err(format!("IntLit: expected [Int], got {:?}", fields)),
-                },
-                "BoolLit" => match fields.as_slice() {
-                    [Value::Bool(b)] => Ok(CoreTerm::BoolLit(*b, None)),
-                    _ => Err(format!("BoolLit: expected [Bool], got {:?}", fields)),
-                },
-                "UnitLit" => Ok(CoreTerm::UnitLit(None)),
-                "Var" => match fields.as_slice() {
-                    [Value::Str(s)] => Ok(CoreTerm::Var(get_str(*s), None)),
-                    _ => Err(format!("Var: expected [Str], got {:?}", fields)),
-                },
-                "Lam" => match fields.as_slice() {
-                    [Value::Str(param), body] => {
-                        let b = value_to_core_term(body)?;
-                        Ok(CoreTerm::Lam(get_str(*param), Rc::new(b), None))
-                    }
-                    _ => Err(format!("Lam: expected [Str, term], got {:?}", fields)),
-                },
-                "Let" => match fields.as_slice() {
-                    [Value::Str(name), val, body] => {
-                        let v = value_to_core_term(val)?;
-                        let b = value_to_core_term(body)?;
-                        Ok(CoreTerm::Let(get_str(*name), Rc::new(v), Rc::new(b), None))
-                    }
-                    _ => Err(format!("Let: expected [Str, term, term], got {:?}", fields)),
-                },
-                "If" => match fields.as_slice() {
-                    [cond, then, els] => {
-                        let c = value_to_core_term(cond)?;
-                        let t = value_to_core_term(then)?;
-                        let e = value_to_core_term(els)?;
-                        Ok(CoreTerm::If(Rc::new(c), Rc::new(t), Rc::new(e), None))
-                    }
-                    _ => Err(format!("If: expected [term, term, term], got {:?}", fields)),
-                },
-                "App" => match fields.as_slice() {
-                    [func, arg] => {
-                        let f = value_to_core_term(func)?;
-                        let a = value_to_core_term(arg)?;
-                        Ok(CoreTerm::App(Rc::new(f), Rc::new(a), None))
-                    }
-                    _ => Err(format!("App: expected [term, term], got {:?}", fields)),
-                },
-                "Call" => match fields.as_slice() {
-                    [Value::Str(target), Value::List(args)] => {
-                        let tgt = get_str(*target);
-                        let mut cargs = Vec::with_capacity(args.len());
-                        for a in args {
-                            cargs.push(value_to_core_term(a)?);
-                        }
-                        Ok(CoreTerm::Call(tgt, cargs, None))
-                    }
-                    _ => Err(format!("Call: expected [Str, List], got {:?}", fields)),
-                },
-                other => Err(format!("unknown IR term kind: {}", other)),
-            }
-        }
-        _ => Err(format!("value_to_core_term: expected Ctor, got {:?}", v)),
-    }
-}
-
-fn core_term_to_value(t: &CoreTerm) -> Value {
-    match t {
-        CoreTerm::IntLit(n, _)  => make_ctor("IntLit",  vec![Value::Int(*n)]),
-        CoreTerm::BoolLit(b, _) => make_ctor("BoolLit", vec![Value::Bool(*b)]),
-        CoreTerm::UnitLit(_)    => make_ctor("UnitLit", vec![]),
-        CoreTerm::Var(name, _)  => make_ctor("Var",     vec![Value::Str(intern_str(name))]),
-        CoreTerm::Lam(param, body, _) => make_ctor("Lam", vec![
-            Value::Str(intern_str(param)),
-            core_term_to_value(body),
-        ]),
-        CoreTerm::Let(name, val, body, _) => make_ctor("Let", vec![
-            Value::Str(intern_str(name)),
-            core_term_to_value(val),
-            core_term_to_value(body),
-        ]),
-        CoreTerm::If(cond, then, els, _) => make_ctor("If", vec![
-            core_term_to_value(cond),
-            core_term_to_value(then),
-            core_term_to_value(els),
-        ]),
-        CoreTerm::App(func, arg, _) => make_ctor("App", vec![
-            core_term_to_value(func),
-            core_term_to_value(arg),
-        ]),
-        CoreTerm::Call(target, args, _) => {
-            let arg_vals: Vec<Value> = args.iter().map(core_term_to_value).collect();
-            make_ctor("Call", vec![
-                Value::Str(intern_str(target)),
-                Value::List(arg_vals),
-            ])
-        }
-    }
 }
 
 #[cfg(test)]
