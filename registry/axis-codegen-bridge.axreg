@@ -1495,3 +1495,31 @@ fn bridge_to_float
   deterministic true
   idempotent    true
 end
+
+
+// ───────────── AXBI_PARSE_V1 — Core IR 0.5 binary format parser ─────────────
+//
+// One bridge function. Takes a ValueList of raw .axbi bytes (each element Int
+// 0..=255). Returns a fully-structured Value tree that M1 can navigate with
+// standard list/tuple bridge functions (no opaque handles, no extra accessors).
+//
+// Returned shape:
+//   Value::Tuple([
+//     pool:  List<Tuple<Str(def_hash_hex), List<Int(byte)>>>,
+//     nodes: List<Ctor "CCall"|"CIf"|"CDeterminate">,
+//   ])
+// NodeRef args/edges: Tuple<Str("node"|"pool"), Int(index)>
+//
+// Hard-fails (UNKNOWN gate) on bad magic, wrong version, truncated data,
+// non-minimal varint, forward edge, or out-of-range pool index.
+// Impl: axis-codegen-bridge-rs/src/runtime/axbi.rs
+
+fn axbi_parse
+  identity 0x5493ec17ab42802b6ce813f9c9f295580ca60677a555aecbc74ebf55e5d80de7
+  kind     leaf
+  in       (ValueList)
+  out      Value
+  effect   reads
+  deterministic true
+  idempotent    true
+end
