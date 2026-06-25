@@ -19,5 +19,6 @@ pub mod coerce;
 #[allow(dead_code, unused_imports, unused_variables, unused_mut, non_upper_case_globals)]
 pub mod non_blocking_memory;
 pub mod axbi;
+pub mod hash;
 
 pub use value::Value;

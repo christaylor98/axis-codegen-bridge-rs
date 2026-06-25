@@ -223,6 +223,10 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("ir_get_then",      "axis_codegen_bridge::runtime::ir_accessors::ir_get_then");
     m.insert("ir_get_else",      "axis_codegen_bridge::runtime::ir_accessors::ir_get_else");
 
+    // ── Hash (BRIDGE_HASH_PRIMITIVE_M1 — resolves hld:axverity-hash-dependency) ─
+    m.insert("content_hash",  "axis_codegen_bridge::runtime::hash::content_hash");
+    m.insert("hash256_parse", "axis_codegen_bridge::runtime::hash::hash256_parse");
+
     m
 }
 
