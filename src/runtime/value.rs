@@ -17,6 +17,10 @@ pub enum Value {
     // significant digits within Decimal's range; values outside the range panic.
     Dec(Decimal),
     Float(f64),
+    // BRIDGE_BYTES_IO_M1: opaque byte blob (PrimCode::Bytes=4). Carrier for
+    // fs_read_bytes / fs_write_bytes / text_to_bytes. NOT a List<Int> — kept
+    // as Vec<u8> so the bridge can pass blobs without per-element overhead.
+    Bytes(Vec<u8>),
 }
 
 impl Value {
@@ -70,6 +74,7 @@ impl std::fmt::Display for Value {
                 }
                 write!(f, ")")
             }
+            Value::Bytes(bs) => write!(f, "<{} bytes>", bs.len()),
         }
     }
 }
@@ -86,6 +91,7 @@ pub fn truthy(v: &Value) -> bool {
         Value::Ctor { .. } => true,
         Value::Dec(d)     => !d.is_zero(),
         Value::Float(x)   => *x != 0.0,
+        Value::Bytes(bs)  => !bs.is_empty(),
     }
 }
 

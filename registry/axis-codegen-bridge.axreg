@@ -6,9 +6,11 @@ type Text = prim text
 type Bool = prim bool
 type Dec   = prim dec
 type Float = prim float
+type Bytes = prim bytes
 type Value = sum [ AsUnit(Unit) | AsBool(Bool) | AsInt(Int) | AsText(Text) ]
 type ResultText = sum [ Ok(Text) | Err(Text) ]
 type ResultUnit = sum [ Ok(Unit) | Err(Text) ]
+type ResultBytes = sum [ Ok(Bytes) | Err(Text) ]
 type TextList = list Text
 type ValueList = list Value
 // Fn-refs travel through the bridge as Value-tagged identity hashes; the
@@ -1553,5 +1555,51 @@ fn hash256_parse
   out      ResultText
   effect   pure
   deterministic true
+  idempotent    true
+end
+
+// ───────────── BRIDGE_BYTES_IO_M1 — resolves hld:axverity-text-to-bytes-dependency ─
+//
+// text_to_bytes(text: Text) -> Bytes
+//   UTF-8 encode the Text and return as an opaque Bytes blob.
+//
+// fs_write_bytes(path: Text, content: Bytes) -> ResultUnit
+//   Durable write — temp + fsync + rename + fsync parent dir. Returns
+//   Ok(Unit) on success, Err(Text) with the OS error on failure.
+//
+// fs_read_bytes(path: Text) -> ResultBytes
+//   Read the whole file as a Bytes blob. Returns Ok(Bytes) on success,
+//   Err(Text) on any OS error.
+//
+// Impl: axis-codegen-bridge-rs/src/runtime/bytes_io.rs
+// Identities are sha256(name_utf8) — DO NOT recompute.
+
+fn text_to_bytes
+  identity 0x6718a1f6e7e025ea0954c2bb9f420f34409fcef01492b4e36da10eb354c3d575
+  kind     leaf
+  in       (Text)
+  out      Bytes
+  effect   pure
+  deterministic true
+  idempotent    true
+end
+
+fn fs_write_bytes
+  identity 0x795fc0ae8360636a8d68dfddad86493ebe270b61d72617ee27870820ec159865
+  kind     leaf
+  in       (Text, Bytes)
+  out      ResultUnit
+  effect   fullIo
+  deterministic false
+  idempotent    true
+end
+
+fn fs_read_bytes
+  identity 0x664372f79b1d6383c3bade602551714fdca1295a0dd6b9c3d2364259b89c3c8a
+  kind     leaf
+  in       (Text)
+  out      ResultBytes
+  effect   fullIo
+  deterministic false
   idempotent    true
 end

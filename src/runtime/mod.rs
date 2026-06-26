@@ -20,5 +20,6 @@ pub mod coerce;
 pub mod non_blocking_memory;
 pub mod axbi;
 pub mod hash;
+pub mod bytes_io;
 
 pub use value::Value;

@@ -102,6 +102,7 @@ pub fn unit_type_hash()  -> Hash256 { primitive_type_hash(0) }
 pub fn bool_type_hash()  -> Hash256 { primitive_type_hash(1) }
 pub fn int_type_hash()   -> Hash256 { primitive_type_hash(2) }
 pub fn float_type_hash() -> Hash256 { primitive_type_hash(3) }
+pub fn bytes_type_hash() -> Hash256 { primitive_type_hash(4) }
 pub fn text_type_hash()  -> Hash256 { primitive_type_hash(5) }
 pub fn value_type_hash() -> Hash256 { primitive_type_hash(6) }
 pub fn dec_type_hash()   -> Hash256 { primitive_type_hash(7) }
@@ -282,4 +283,48 @@ pub fn decode_dec_payload(payload: &[u8]) -> Result<rust_decimal::Decimal, Strin
     let mut buf = [0u8; 16];
     buf.copy_from_slice(payload);
     Ok(rust_decimal::Decimal::deserialize(buf))
+}
+
+// ── Bytes payload codec (BRIDGE_BYTES_IO_M1) ─────────────────────────────────
+//
+//   bytes: length-prefixed (varint) opaque blob — same envelope shape as text,
+//          but no UTF-8 validation.
+
+pub fn encode_bytes_payload(v: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(v.len() + 5);
+    let mut len = v.len() as u64;
+    loop {
+        let byte = (len & 0x7f) as u8;
+        len >>= 7;
+        if len == 0 {
+            buf.push(byte);
+            break;
+        } else {
+            buf.push(byte | 0x80);
+        }
+    }
+    buf.extend_from_slice(v);
+    buf
+}
+
+pub fn decode_bytes_payload(payload: &[u8]) -> Result<Vec<u8>, String> {
+    let mut pos = 0usize;
+    let mut len: u64 = 0;
+    let mut shift: u32 = 0;
+    loop {
+        if pos >= payload.len() {
+            return Err("truncated bytes length".to_string());
+        }
+        let byte = payload[pos];
+        pos += 1;
+        len |= ((byte & 0x7f) as u64) << shift;
+        shift += 7;
+        if byte & 0x80 == 0 { break; }
+        if shift >= 64 { return Err("bytes length varint overflow".to_string()); }
+    }
+    let len = len as usize;
+    if pos + len > payload.len() {
+        return Err("truncated bytes payload".to_string());
+    }
+    Ok(payload[pos..pos + len].to_vec())
 }

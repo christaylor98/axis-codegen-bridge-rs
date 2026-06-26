@@ -17,12 +17,17 @@ end
 ### VALID TYPE NAMES — only these, no others
 
 ```
-Int  Text  Bool  Unit  Dec  Float  TextList  ResultText  ResultUnit  Value  ValueList  Fn
+Int  Text  Bool  Unit  Dec  Float  Bytes  TextList  ResultText  ResultUnit  ResultBytes  Value  ValueList  Fn
 ```
 
 `Dec` is `rust_decimal::Decimal` (128-bit fixed decimal, ~28 significant digits;
 PrimCode 7). `Float` is IEEE 754 f64 (PrimCode 3). Both are runtime `Value`
 variants (`Value::Dec`, `Value::Float`) — added by BRIDGE_VALUE_COERCION_V1.
+
+`Bytes` is an opaque byte blob (`Value::Bytes(Vec<u8>)`, PrimCode 4) — added by
+BRIDGE_BYTES_IO_M1. `ResultBytes` is `sum [Ok(Bytes) | Err(Text)]`. Not a
+`List<Int>` — kept as `Vec<u8>` so the bridge can pass blobs without
+per-element overhead.
 
 `ValueList` is the homogeneous list-of-Value data type
 (`sha256([0x01, 0x03, value_type_hash])` per Core IR 0.5 — `PrimCode::Value=6`).
@@ -54,7 +59,14 @@ identity payload to a bare Rust fn path at translation time. The illegal state
 ### When adding a new function
 
 1. Add `in (...)`, `out`, `effect` using types from the valid list only.
-2. Derive the identity hash using `registry_compound_id(name, contract)`.
+2. Derive the identity hash:
+   - **Leaf bridge fns** (`kind leaf`): `identity = sha256(utf8_name_bytes)` of
+     the function name string. This matches `bridge_builtin_map()` in
+     `src/emit/rust_05.rs` and every existing entry in
+     `axis-codegen-bridge.axreg` (verified: `content_hash`, `hash256_parse`,
+     `int_add`, `str_len`, …).
+   - **Composite fns** (`kind composite`): use
+     `registry_compound_id(name, contract)`.
 3. Do not invent an identity hash.
 4. If the correct type cannot be determined from the Rust source,
    leave the entry without `in`/`out` and report it as a gap.

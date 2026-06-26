@@ -227,6 +227,11 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("content_hash",  "axis_codegen_bridge::runtime::hash::content_hash");
     m.insert("hash256_parse", "axis_codegen_bridge::runtime::hash::hash256_parse");
 
+    // ── Bytes I/O (BRIDGE_BYTES_IO_M1 — resolves hld:axverity-text-to-bytes-dependency) ─
+    m.insert("text_to_bytes",  "axis_codegen_bridge::runtime::bytes_io::text_to_bytes");
+    m.insert("fs_write_bytes", "axis_codegen_bridge::runtime::bytes_io::fs_write_bytes");
+    m.insert("fs_read_bytes",  "axis_codegen_bridge::runtime::bytes_io::fs_read_bytes");
+
     m
 }
 
