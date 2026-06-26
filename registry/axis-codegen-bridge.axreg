@@ -479,24 +479,6 @@ fn ctor_field
   out Value
   effect fullIo
 end
-fn ctor_is_ok
-  identity 0x5b5aae3e461db97011018361d3a37e4d4b62c47d9291247bde3993b79830f8b2
-  kind     leaf
-  deterministic true
-  idempotent    false
-  in (Value)
-  out Bool
-  effect pure
-end
-fn result_text_unwrap
-  identity 0x9b806a35ffce133ab0b40ee24e6d5ff19bd7eb72c4453ed88b806c7451780c03
-  kind     leaf
-  deterministic true
-  idempotent    true
-  in (Value)
-  out Text
-  effect pure
-end
 
 // ── Option (option.rs) ────────────────────────────────────────────────────────
 fn option_none
@@ -588,7 +570,7 @@ fn fs_read_text
   deterministic false
   idempotent    false
   in (Text)
-  out Value
+  out Text
   effect fullIo
 end
 fn fs_write_text
@@ -597,7 +579,7 @@ fn fs_write_text
   deterministic false
   idempotent    false
   in (Text, Text)
-  out Value
+  out Unit
   effect fullIo
 end
 fn fs_append_text
@@ -606,7 +588,16 @@ fn fs_append_text
   deterministic false
   idempotent    false
   in (Text, Text)
-  out Value
+  out Unit
+  effect fullIo
+end
+fn fs_file_exists
+  identity 0xa66863b36e2c9f0058bc71c4391bbd23079aa8075eaef99c1fa76047361e9ae7
+  kind     leaf
+  deterministic false
+  idempotent    true
+  in (Text)
+  out Bool
   effect fullIo
 end
 fn fs_list_dir
@@ -1563,13 +1554,12 @@ end
 // text_to_bytes(text: Text) -> Bytes
 //   UTF-8 encode the Text and return as an opaque Bytes blob.
 //
-// fs_write_bytes(path: Text, content: Bytes) -> ResultUnit
-//   Durable write — temp + fsync + rename + fsync parent dir. Returns
-//   Ok(Unit) on success, Err(Text) with the OS error on failure.
+// fs_write_bytes(path: Text, content: Bytes) -> Unit
+//   Durable write — temp + fsync + rename + fsync parent dir. Panics on any
+//   OS error.
 //
-// fs_read_bytes(path: Text) -> ResultBytes
-//   Read the whole file as a Bytes blob. Returns Ok(Bytes) on success,
-//   Err(Text) on any OS error.
+// fs_read_bytes(path: Text) -> Bytes
+//   Read the whole file as a Bytes blob. Panics on any OS error.
 //
 // Impl: axis-codegen-bridge-rs/src/runtime/bytes_io.rs
 // Identities are sha256(name_utf8) — DO NOT recompute.
@@ -1588,7 +1578,7 @@ fn fs_write_bytes
   identity 0x795fc0ae8360636a8d68dfddad86493ebe270b61d72617ee27870820ec159865
   kind     leaf
   in       (Text, Bytes)
-  out      ResultUnit
+  out      Unit
   effect   fullIo
   deterministic false
   idempotent    true
@@ -1598,7 +1588,7 @@ fn fs_read_bytes
   identity 0x664372f79b1d6383c3bade602551714fdca1295a0dd6b9c3d2364259b89c3c8a
   kind     leaf
   in       (Text)
-  out      ResultBytes
+  out      Bytes
   effect   fullIo
   deterministic false
   idempotent    true
@@ -1606,29 +1596,16 @@ end
 
 // ───────────── BRIDGE_AXVERITY_BLOCKING_FNS_v0.1 — unblocks turn:axverity:0001 ─
 //
-// result_bytes_unwrap(ResultBytes) -> Bytes
-//   Unwrap Ok(Bytes) → Bytes. Panic on Err. Symmetric with result_text_unwrap.
-//
 // bytes_hash(Bytes) -> Text
 //   SHA-256 of a Bytes blob. Returns "sha256:{64-hex}". Same crypto as
 //   content_hash but consumes Value::Bytes directly (no list coercion).
 //
-// fs_mkdir_p(Text) -> ResultUnit
-//   Recursive idempotent directory create (std::fs::create_dir_all).
-//   Returns Ok(Unit) on success, Err(Text) with the OS error on failure.
+// fs_mkdir_p(Text) -> Unit
+//   Recursive idempotent directory create (std::fs::create_dir_all). Panics
+//   on any OS error.
 //
 // Impl: axis-codegen-bridge-rs/src/runtime/bytes_io.rs
 // Identities are sha256(name_utf8) per §5b bootstrap rule.
-
-fn result_bytes_unwrap
-  identity 0xee5c4784f0f861f523732fb8c0a616be734439539fd457162fd0023fd9afc264
-  kind     leaf
-  in       (ResultBytes)
-  out      Bytes
-  effect   pure
-  deterministic true
-  idempotent    true
-end
 
 fn bytes_hash
   identity 0x15d4428538f823db75cef637be2d3d28799c34982dc02194e010fc2e5f5e318c
@@ -1644,7 +1621,7 @@ fn fs_mkdir_p
   identity 0xb3d65aa0ee165c9048cb688f3f35b76bfafd51aae58358f0eacea849c3fb2dc6
   kind     leaf
   in       (Text)
-  out      ResultUnit
+  out      Unit
   effect   fullIo
   deterministic false
   idempotent    true
@@ -1652,9 +1629,9 @@ end
 
 // ───────────── BRIDGE_BYTES_TO_TEXT — resolves hld:m1-bytes-to-text ─
 //
-// bytes_to_text(Bytes) -> ResultText
-//   Checked UTF-8 decode. Ok(Text) on valid UTF-8, Err(Text) with the
-//   decode-error message otherwise. Inverse of text_to_bytes for valid UTF-8.
+// bytes_to_text(Bytes) -> Text
+//   Checked UTF-8 decode. Returns the decoded Text. Panics on invalid UTF-8.
+//   Inverse of text_to_bytes for valid UTF-8 inputs.
 //
 // Impl: axis-codegen-bridge-rs/src/runtime/bytes_io.rs
 // Identity = sha256(name_utf8) per §5b bootstrap rule.
@@ -1663,7 +1640,7 @@ fn bytes_to_text
   identity 0x710711e33d30ba96f33a640aa82b65321fbec0580481480e7ed139070afa3fd7
   kind     leaf
   in       (Bytes)
-  out      ResultText
+  out      Text
   effect   pure
   deterministic true
   idempotent    true

@@ -72,7 +72,6 @@ fn dispatch_table() -> &'static HashMap<&'static str, PrimFn> {
         // Tuple / Ctor
         m.insert("tuple_field",     super::tuple::tuple_field);
         m.insert("ctor_field",      super::tuple::ctor_field);
-        m.insert("ctor_is_ok",      super::tuple::ctor_is_ok);
 
         // Option
         m.insert("option_none",     super::option::option_none_fn);
@@ -89,6 +88,7 @@ fn dispatch_table() -> &'static HashMap<&'static str, PrimFn> {
         m.insert("fs_read_text",    super::io::fs_read_text);
         m.insert("fs_write_text",   super::io::fs_write_text);
         m.insert("fs_append_text",  super::io::fs_append_text);
+        m.insert("fs_file_exists",  super::io::fs_file_exists);
         m.insert("debug_trace",     super::io::debug_trace);
 
         // Process

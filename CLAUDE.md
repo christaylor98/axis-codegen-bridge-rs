@@ -17,17 +17,37 @@ end
 ### VALID TYPE NAMES — only these, no others
 
 ```
-Int  Text  Bool  Unit  Dec  Float  Bytes  TextList  ResultText  ResultUnit  ResultBytes  Value  ValueList  Fn
+Int  Text  Bool  Unit  Dec  Float  Bytes  TextList  Value  ValueList  Fn
 ```
+
+(The `ResultText` / `ResultUnit` / `ResultBytes` sum types are deprecated — see
+"Plain-return-type convention" below. They are only kept in the bridge axreg for
+two legacy fns; do not use them in new signatures.)
 
 `Dec` is `rust_decimal::Decimal` (128-bit fixed decimal, ~28 significant digits;
 PrimCode 7). `Float` is IEEE 754 f64 (PrimCode 3). Both are runtime `Value`
 variants (`Value::Dec`, `Value::Float`) — added by BRIDGE_VALUE_COERCION_V1.
 
 `Bytes` is an opaque byte blob (`Value::Bytes(Vec<u8>)`, PrimCode 4) — added by
-BRIDGE_BYTES_IO_M1. `ResultBytes` is `sum [Ok(Bytes) | Err(Text)]`. Not a
-`List<Int>` — kept as `Vec<u8>` so the bridge can pass blobs without
-per-element overhead.
+BRIDGE_BYTES_IO_M1. Not a `List<Int>` — kept as `Vec<u8>` so the bridge can pass
+blobs without per-element overhead.
+
+### Plain-return-type convention (IS_REMOVE_RESULT_TYPES_v0.1)
+
+Bridge functions return plain types. **No Result wrappers** in new fn signatures.
+A type mismatch is a compile-time error; runtime failures panic with a clear
+message. Pre-conditions own the rest. Examples:
+
+- `fs_read_text(Text) -> Text`        — panics on read error
+- `fs_read_bytes(Text) -> Bytes`      — panics on read error
+- `fs_write_bytes(Text, Bytes) -> Unit` — panics on write error
+- `fs_mkdir_p(Text) -> Unit`          — panics on mkdir error
+- `bytes_to_text(Bytes) -> Text`      — panics on invalid UTF-8
+
+Use `fs_file_exists(Text) -> Bool` for existence checks rather than probing with
+a read-and-catch pattern. The legacy `ResultText` / `ResultUnit` / `ResultBytes`
+sum types are retained only for the two historical fns that still emit them
+(`ir_write_bundle`, `hash256_parse`); do not introduce new fns that return them.
 
 `ValueList` is the homogeneous list-of-Value data type
 (`sha256([0x01, 0x03, value_type_hash])` per Core IR 0.5 — `PrimCode::Value=6`).

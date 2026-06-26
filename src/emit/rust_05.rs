@@ -103,8 +103,6 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     // Tuple / constructor
     m.insert("tuple_field", "axis_codegen_bridge::runtime::tuple::tuple_field");
     m.insert("ctor_field",  "axis_codegen_bridge::runtime::tuple::ctor_field");
-    m.insert("ctor_is_ok",  "axis_codegen_bridge::runtime::tuple::ctor_is_ok");
-    m.insert("result_text_unwrap", "axis_codegen_bridge::runtime::tuple::result_text_unwrap");
 
     // M1 compound-value constructors / accessors
     m.insert("value_make", "axis_codegen_bridge::runtime::tuple::value_make");
@@ -164,6 +162,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("fs_read_text",  "axis_codegen_bridge::runtime::io::fs_read_text");
     m.insert("fs_write_text", "axis_codegen_bridge::runtime::io::fs_write_text");
     m.insert("fs_append_text","axis_codegen_bridge::runtime::io::fs_append_text");
+    m.insert("fs_file_exists","axis_codegen_bridge::runtime::io::fs_file_exists");
     m.insert("fs_list_dir",   "axis_codegen_bridge::runtime::io::fs_list_dir");
     m.insert("debug_trace",   "axis_codegen_bridge::runtime::io::debug_trace");
 
@@ -231,7 +230,6 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("text_to_bytes",        "axis_codegen_bridge::runtime::bytes_io::text_to_bytes");
     m.insert("fs_write_bytes",       "axis_codegen_bridge::runtime::bytes_io::fs_write_bytes");
     m.insert("fs_read_bytes",        "axis_codegen_bridge::runtime::bytes_io::fs_read_bytes");
-    m.insert("result_bytes_unwrap",  "axis_codegen_bridge::runtime::bytes_io::result_bytes_unwrap");
     m.insert("bytes_hash",           "axis_codegen_bridge::runtime::bytes_io::bytes_hash");
     m.insert("fs_mkdir_p",           "axis_codegen_bridge::runtime::bytes_io::fs_mkdir_p");
     m.insert("bytes_to_text",        "axis_codegen_bridge::runtime::bytes_io::bytes_to_text");

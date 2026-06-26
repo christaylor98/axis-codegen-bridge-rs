@@ -1,42 +1,35 @@
 //! BRIDGE_BYTES_IO_M1 — text_to_bytes, fs_write_bytes, fs_read_bytes,
-//! result_bytes_unwrap, bytes_hash, fs_mkdir_p, bytes_to_text.
+//! bytes_hash, fs_mkdir_p, bytes_to_text.
 //!
 //! Leaf foreign primitives for the M1 surface to convert Text to a Bytes
-//! blob, round-trip blobs through the filesystem, unwrap ResultBytes,
-//! SHA-256 a Bytes blob, idempotently create directories, and decode a
-//! Bytes blob back to Text as a checked UTF-8 conversion.
+//! blob, round-trip blobs through the filesystem, SHA-256 a Bytes blob,
+//! idempotently create directories, and decode a Bytes blob back to Text.
 //!
 //!   * `text_to_bytes(Text) -> Bytes`
 //!         UTF-8 encode the Text and wrap as `Value::Bytes`.
 //!
-//!   * `fs_write_bytes(path: Text, content: Bytes) -> ResultUnit`
+//!   * `fs_write_bytes(path: Text, content: Bytes) -> Unit`
 //!         Durable write: write `<path>.tmp`, fsync the tmp file, rename
 //!         atomically over `<path>`, fsync the parent directory. The parent
 //!         directory fsync is not optional — without it the rename itself is
 //!         not durable across crash. If the parent dir cannot be fsynced
-//!         (e.g. read-only mount), surface as Err — never silently skip.
+//!         (e.g. read-only mount), the call panics — never silently skip.
 //!
-//!   * `fs_read_bytes(path: Text) -> ResultBytes`
-//!         `std::fs::read(path)` wrapped in Ok(Bytes) on success, Err(Text)
-//!         on any OS error.
-//!
-//!   * `result_bytes_unwrap(ResultBytes) -> Bytes`
-//!         Unwrap Ok(Bytes) → Bytes. Panic on Err. Symmetric with
-//!         `result_text_unwrap`.
+//!   * `fs_read_bytes(path: Text) -> Bytes`
+//!         `std::fs::read(path)`. Panics on any OS error.
 //!
 //!   * `bytes_hash(Bytes) -> Text`
 //!         SHA-256 of a Bytes blob, returned as `"sha256:{64-hex}"`. Same
 //!         crypto as `content_hash` but consumes `Value::Bytes` directly so
 //!         the bridge avoids the per-element `List<Int>` coercion.
 //!
-//!   * `fs_mkdir_p(Text) -> ResultUnit`
+//!   * `fs_mkdir_p(Text) -> Unit`
 //!         `std::fs::create_dir_all` — recursive idempotent directory create.
-//!         Ok(Unit) on success, Err(Text) with the OS error on failure.
+//!         Panics on any OS error.
 //!
-//!   * `bytes_to_text(Bytes) -> ResultText`
-//!         Checked UTF-8 decode. `Ok(Text)` on valid UTF-8, `Err(Text)` with
-//!         the decode-error message otherwise. Symmetric inverse of
-//!         `text_to_bytes` for valid UTF-8 inputs.
+//!   * `bytes_to_text(Bytes) -> Text`
+//!         Checked UTF-8 decode. Returns the decoded Text. Panics on invalid
+//!         UTF-8. Inverse of `text_to_bytes` for valid UTF-8 inputs.
 //!
 //! Identities are sha256(name_utf8) — same convention as the rest of the
 //! bridge leaf primitives.
@@ -47,21 +40,7 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use super::value::{Value, get_str, get_tag_name, intern_str, intern_tag};
-
-// ── Result constructors ──────────────────────────────────────────────────────
-
-fn ok_unit() -> Value {
-    Value::Ctor { tag: intern_tag("Ok"), fields: vec![Value::Unit] }
-}
-
-fn ok_bytes(bs: Vec<u8>) -> Value {
-    Value::Ctor { tag: intern_tag("Ok"), fields: vec![Value::Bytes(bs)] }
-}
-
-fn err_text(msg: String) -> Value {
-    Value::Ctor { tag: intern_tag("Err"), fields: vec![Value::Str(intern_str(&msg))] }
-}
+use super::value::{Value, get_str, intern_str};
 
 // ── text_to_bytes ────────────────────────────────────────────────────────────
 
@@ -92,10 +71,10 @@ pub fn fs_write_bytes(args: Value) -> Value {
         Value::Bytes(bs) => bs,
         other => panic!("fs_write_bytes: arg 1 expected Bytes, got {:?}", other),
     };
-    match write_durable(&path, &content) {
-        Ok(()) => ok_unit(),
-        Err(e) => err_text(format!("fs_write_bytes({}): {}", path, e)),
+    if let Err(e) = write_durable(&path, &content) {
+        panic!("fs_write_bytes({}): {}", path, e);
     }
+    Value::Unit
 }
 
 // ── fs_read_bytes ────────────────────────────────────────────────────────────
@@ -107,8 +86,8 @@ pub fn fs_read_bytes(path: Value) -> Value {
         other => panic!("fs_read_bytes: expected Text, got {:?}", other),
     };
     match std::fs::read(&path_str) {
-        Ok(bs) => ok_bytes(bs),
-        Err(e) => err_text(format!("fs_read_bytes({}): {}", path_str, e)),
+        Ok(bs) => Value::Bytes(bs),
+        Err(e) => panic!("fs_read_bytes({}): {}", path_str, e),
     }
 }
 
@@ -166,31 +145,6 @@ fn write_durable(path: &str, content: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
-// ── result_bytes_unwrap ──────────────────────────────────────────────────────
-
-/// Unwrap a Result(Bytes) (as produced by `fs_read_bytes`): returns the Ok
-/// payload, panics on Err with the message. Monomorphic over Bytes — mirrors
-/// `result_text_unwrap`.
-#[track_caller]
-pub fn result_bytes_unwrap(v: Value) -> Value {
-    match v {
-        Value::Ctor { tag, fields } if get_tag_name(tag) == "Ok" => {
-            fields.into_iter().next().unwrap_or(Value::Unit)
-        }
-        Value::Ctor { tag, fields } if get_tag_name(tag) == "Err" => {
-            let msg = match fields.into_iter().next() {
-                Some(Value::Str(h)) => get_str(h),
-                _ => "unknown error".to_string(),
-            };
-            panic!("result_bytes_unwrap: Err({})", msg)
-        }
-        other => panic!(
-            "result_bytes_unwrap: expected Result Ctor (Ok/Err), got {:?}",
-            other
-        ),
-    }
-}
-
 // ── bytes_hash ───────────────────────────────────────────────────────────────
 
 /// `bytes_hash(Bytes) -> Text`
@@ -212,38 +166,34 @@ pub fn bytes_hash(v: Value) -> Value {
 
 // ── fs_mkdir_p ───────────────────────────────────────────────────────────────
 
-/// `fs_mkdir_p(Text) -> ResultUnit`
+/// `fs_mkdir_p(Text) -> Unit`
 ///
-/// Recursive idempotent directory create (`std::fs::create_dir_all`).
-/// Returns `Ok(Unit)` on success, `Err(Text)` with the OS error on failure.
+/// Recursive idempotent directory create (`std::fs::create_dir_all`). Panics
+/// on any OS error.
 #[track_caller]
 pub fn fs_mkdir_p(v: Value) -> Value {
     let path = match v {
         Value::Str(h) => get_str(h),
         other => panic!("fs_mkdir_p: expected Text path, got {:?}", other),
     };
-    match std::fs::create_dir_all(&path) {
-        Ok(()) => ok_unit(),
-        Err(e) => err_text(format!("fs_mkdir_p({}): {}", path, e)),
+    if let Err(e) = std::fs::create_dir_all(&path) {
+        panic!("fs_mkdir_p({}): {}", path, e);
     }
+    Value::Unit
 }
 
 // ── bytes_to_text ────────────────────────────────────────────────────────────
 
-/// `bytes_to_text(Bytes) -> ResultText`
+/// `bytes_to_text(Bytes) -> Text`
 ///
-/// Checked UTF-8 decode. Returns `Ok(Text)` on valid UTF-8, `Err(Text)` with
-/// the decode-error message otherwise. Symmetric inverse of `text_to_bytes`
-/// for valid UTF-8 inputs.
+/// Checked UTF-8 decode. Returns the decoded Text. Panics on invalid UTF-8.
+/// Symmetric inverse of `text_to_bytes` for valid UTF-8 inputs.
 #[track_caller]
 pub fn bytes_to_text(v: Value) -> Value {
     match v {
         Value::Bytes(b) => match String::from_utf8(b) {
-            Ok(s) => Value::Ctor {
-                tag: intern_tag("Ok"),
-                fields: vec![Value::Str(intern_str(&s))],
-            },
-            Err(e) => err_text(e.to_string()),
+            Ok(s) => Value::Str(intern_str(&s)),
+            Err(e) => panic!("bytes_to_text: invalid UTF-8: {}", e),
         },
         other => panic!("bytes_to_text: expected Bytes, got {:?}", other),
     }

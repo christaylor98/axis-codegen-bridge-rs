@@ -1,5 +1,5 @@
 use std::io::{BufRead, Write};
-use super::value::{Value, intern_str, intern_tag, get_str};
+use super::value::{Value, intern_str, get_str};
 
 #[track_caller]
 pub fn io_print(val: Value) -> Value {
@@ -54,14 +54,8 @@ pub fn fs_read_text(path: Value) -> Value {
         _ => panic!("fs_read_text: expected Str path"),
     };
     match std::fs::read_to_string(&path_str) {
-        Ok(content) => Value::Ctor {
-            tag: intern_tag("Ok"),
-            fields: vec![Value::Str(intern_str(&content))],
-        },
-        Err(e) => Value::Ctor {
-            tag: intern_tag("Err"),
-            fields: vec![Value::Str(intern_str(&e.to_string()))],
-        },
+        Ok(content) => Value::Str(intern_str(&content)),
+        Err(e) => panic!("fs_read_text({}): {}", path_str, e),
     }
 }
 
@@ -72,10 +66,10 @@ pub fn fs_write_text(args: Value) -> Value {
             (Value::Str(path_h), Value::Str(content_h)) => {
                 let path    = get_str(*path_h);
                 let content = get_str(*content_h);
-                match std::fs::write(&path, &content) {
-                    Ok(_)  => Value::Ctor { tag: intern_tag("Ok"),  fields: vec![Value::Unit] },
-                    Err(e) => Value::Ctor { tag: intern_tag("Err"), fields: vec![Value::Str(intern_str(&e.to_string()))] },
+                if let Err(e) = std::fs::write(&path, &content) {
+                    panic!("fs_write_text({}): {}", path, e);
                 }
+                Value::Unit
             }
             _ => panic!("fs_write_text: expected Tuple(Str, Str)"),
         },
@@ -94,15 +88,24 @@ pub fn fs_append_text(args: Value) -> Value {
                 let result = std::fs::OpenOptions::new()
                     .append(true).create(true).open(&path)
                     .and_then(|mut f| f.write_all(content.as_bytes()));
-                match result {
-                    Ok(_)  => Value::Ctor { tag: intern_tag("Ok"),  fields: vec![Value::Unit] },
-                    Err(e) => Value::Ctor { tag: intern_tag("Err"), fields: vec![Value::Str(intern_str(&e.to_string()))] },
+                if let Err(e) = result {
+                    panic!("fs_append_text({}): {}", path, e);
                 }
+                Value::Unit
             }
             _ => panic!("fs_append_text: expected Tuple(Str, Str)"),
         },
         _ => panic!("fs_append_text: expected Tuple(path, content)"),
     }
+}
+
+#[track_caller]
+pub fn fs_file_exists(path: Value) -> Value {
+    let path_str = match path {
+        Value::Str(h) => get_str(h),
+        _ => panic!("fs_file_exists: expected Str path"),
+    };
+    Value::Bool(std::path::Path::new(&path_str).exists())
 }
 
 #[track_caller]

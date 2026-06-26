@@ -1,4 +1,4 @@
-use super::value::{Value, get_tag_name, get_str, intern_tag};
+use super::value::{Value, intern_tag};
 
 /// Recover a variadic field list from the bridge calling convention:
 /// 0 args -> Unit -> [], 1 arg -> bare value -> [v], N args -> Tuple(xs) -> xs.
@@ -67,29 +67,3 @@ pub fn ctor_field(args: Value) -> Value {
     }
 }
 
-#[track_caller]
-pub fn ctor_is_ok(v: Value) -> Value {
-    match v {
-        Value::Ctor { tag, .. } if get_tag_name(tag) == "Ok" => Value::Bool(true),
-        _ => Value::Bool(false),
-    }
-}
-
-/// Unwrap a Result(Text) (as produced by fs_read_text): returns the Ok payload,
-/// panics on Err with the message. Monomorphic over Text — mirrors option_unwrap.
-#[track_caller]
-pub fn result_text_unwrap(v: Value) -> Value {
-    match v {
-        Value::Ctor { tag, fields } if get_tag_name(tag) == "Ok" => {
-            fields.into_iter().next().unwrap_or(Value::Unit)
-        }
-        Value::Ctor { tag, fields } if get_tag_name(tag) == "Err" => {
-            let msg = match fields.into_iter().next() {
-                Some(Value::Str(h)) => get_str(h),
-                _ => "unknown error".to_string(),
-            };
-            panic!("result_text_unwrap: Err({})", msg)
-        }
-        _ => panic!("result_text_unwrap: expected Result Ctor (Ok/Err), got {:?}", v),
-    }
-}
