@@ -1649,3 +1649,22 @@ fn fs_mkdir_p
   deterministic false
   idempotent    true
 end
+
+// ───────────── BRIDGE_BYTES_TO_TEXT — resolves hld:m1-bytes-to-text ─
+//
+// bytes_to_text(Bytes) -> ResultText
+//   Checked UTF-8 decode. Ok(Text) on valid UTF-8, Err(Text) with the
+//   decode-error message otherwise. Inverse of text_to_bytes for valid UTF-8.
+//
+// Impl: axis-codegen-bridge-rs/src/runtime/bytes_io.rs
+// Identity = sha256(name_utf8) per §5b bootstrap rule.
+
+fn bytes_to_text
+  identity 0x710711e33d30ba96f33a640aa82b65321fbec0580481480e7ed139070afa3fd7
+  kind     leaf
+  in       (Bytes)
+  out      ResultText
+  effect   pure
+  deterministic true
+  idempotent    true
+end

@@ -1,9 +1,10 @@
 //! BRIDGE_BYTES_IO_M1 — text_to_bytes, fs_write_bytes, fs_read_bytes,
-//! result_bytes_unwrap, bytes_hash, fs_mkdir_p.
+//! result_bytes_unwrap, bytes_hash, fs_mkdir_p, bytes_to_text.
 //!
 //! Leaf foreign primitives for the M1 surface to convert Text to a Bytes
 //! blob, round-trip blobs through the filesystem, unwrap ResultBytes,
-//! SHA-256 a Bytes blob, and idempotently create directories.
+//! SHA-256 a Bytes blob, idempotently create directories, and decode a
+//! Bytes blob back to Text as a checked UTF-8 conversion.
 //!
 //!   * `text_to_bytes(Text) -> Bytes`
 //!         UTF-8 encode the Text and wrap as `Value::Bytes`.
@@ -31,6 +32,11 @@
 //!   * `fs_mkdir_p(Text) -> ResultUnit`
 //!         `std::fs::create_dir_all` — recursive idempotent directory create.
 //!         Ok(Unit) on success, Err(Text) with the OS error on failure.
+//!
+//!   * `bytes_to_text(Bytes) -> ResultText`
+//!         Checked UTF-8 decode. `Ok(Text)` on valid UTF-8, `Err(Text)` with
+//!         the decode-error message otherwise. Symmetric inverse of
+//!         `text_to_bytes` for valid UTF-8 inputs.
 //!
 //! Identities are sha256(name_utf8) — same convention as the rest of the
 //! bridge leaf primitives.
@@ -219,5 +225,26 @@ pub fn fs_mkdir_p(v: Value) -> Value {
     match std::fs::create_dir_all(&path) {
         Ok(()) => ok_unit(),
         Err(e) => err_text(format!("fs_mkdir_p({}): {}", path, e)),
+    }
+}
+
+// ── bytes_to_text ────────────────────────────────────────────────────────────
+
+/// `bytes_to_text(Bytes) -> ResultText`
+///
+/// Checked UTF-8 decode. Returns `Ok(Text)` on valid UTF-8, `Err(Text)` with
+/// the decode-error message otherwise. Symmetric inverse of `text_to_bytes`
+/// for valid UTF-8 inputs.
+#[track_caller]
+pub fn bytes_to_text(v: Value) -> Value {
+    match v {
+        Value::Bytes(b) => match String::from_utf8(b) {
+            Ok(s) => Value::Ctor {
+                tag: intern_tag("Ok"),
+                fields: vec![Value::Str(intern_str(&s))],
+            },
+            Err(e) => err_text(e.to_string()),
+        },
+        other => panic!("bytes_to_text: expected Bytes, got {:?}", other),
     }
 }

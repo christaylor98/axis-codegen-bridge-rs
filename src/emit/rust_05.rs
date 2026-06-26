@@ -234,6 +234,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("result_bytes_unwrap",  "axis_codegen_bridge::runtime::bytes_io::result_bytes_unwrap");
     m.insert("bytes_hash",           "axis_codegen_bridge::runtime::bytes_io::bytes_hash");
     m.insert("fs_mkdir_p",           "axis_codegen_bridge::runtime::bytes_io::fs_mkdir_p");
+    m.insert("bytes_to_text",        "axis_codegen_bridge::runtime::bytes_io::bytes_to_text");
 
     m
 }

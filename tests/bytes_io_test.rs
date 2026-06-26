@@ -1,11 +1,12 @@
-//! BRIDGE_BYTES_IO_M1 acceptance — text_to_bytes, fs_write_bytes, fs_read_bytes.
+//! BRIDGE_BYTES_IO_M1 acceptance — text_to_bytes, fs_write_bytes, fs_read_bytes,
+//! bytes_to_text.
 
 use std::process::id as pid;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axis_codegen_bridge::runtime::bytes_io::{
-    fs_read_bytes, fs_write_bytes, text_to_bytes,
+    bytes_to_text, fs_read_bytes, fs_write_bytes, text_to_bytes,
 };
 use axis_codegen_bridge::runtime::value::{get_str, get_tag_name, intern_str, Value};
 
@@ -169,4 +170,54 @@ fn t11_fs_write_bytes_to_bad_dir_returns_err() {
 fn t12_fs_write_bytes_rejects_non_bytes_content() {
     let path = unique_tmp_path("typecheck");
     fs_write_bytes(Value::Tuple(vec![s(&path), s("not bytes")]));
+}
+
+// ── T13..T17: bytes_to_text ────────────────────────────────────────────────
+
+#[test]
+fn t13_bytes_to_text_round_trips_ascii() {
+    // result_text_unwrap(bytes_to_text(text_to_bytes("hello"))) == "hello"
+    let r = bytes_to_text(text_to_bytes(s("hello")));
+    assert_eq!(ctor_tag(&r), "Ok");
+    match ctor_field0(&r) {
+        Value::Str(h) => assert_eq!(get_str(*h), "hello"),
+        other => panic!("Ok payload should be Text, got {:?}", other),
+    }
+}
+
+#[test]
+fn t14_bytes_to_text_round_trips_utf8() {
+    let r = bytes_to_text(text_to_bytes(s("héllo, 世界")));
+    assert_eq!(ctor_tag(&r), "Ok");
+    match ctor_field0(&r) {
+        Value::Str(h) => assert_eq!(get_str(*h), "héllo, 世界"),
+        other => panic!("Ok payload should be Text, got {:?}", other),
+    }
+}
+
+#[test]
+fn t15_bytes_to_text_empty() {
+    let r = bytes_to_text(Value::Bytes(vec![]));
+    assert_eq!(ctor_tag(&r), "Ok");
+    match ctor_field0(&r) {
+        Value::Str(h) => assert_eq!(get_str(*h), ""),
+        other => panic!("Ok payload should be Text, got {:?}", other),
+    }
+}
+
+#[test]
+fn t16_bytes_to_text_invalid_utf8_returns_err() {
+    // 0xFF on its own is not valid UTF-8.
+    let r = bytes_to_text(Value::Bytes(vec![0xFF]));
+    assert_eq!(ctor_tag(&r), "Err");
+    match ctor_field0(&r) {
+        Value::Str(_) => {} // any message is fine
+        other => panic!("Err payload should be Text, got {:?}", other),
+    }
+}
+
+#[test]
+#[should_panic(expected = "bytes_to_text: expected Bytes")]
+fn t17_bytes_to_text_rejects_non_bytes() {
+    bytes_to_text(s("not bytes"));
 }
