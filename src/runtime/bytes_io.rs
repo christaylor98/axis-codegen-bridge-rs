@@ -1,7 +1,9 @@
-//! BRIDGE_BYTES_IO_M1 — text_to_bytes, fs_write_bytes, fs_read_bytes.
+//! BRIDGE_BYTES_IO_M1 — text_to_bytes, fs_write_bytes, fs_read_bytes,
+//! result_bytes_unwrap, bytes_hash, fs_mkdir_p.
 //!
-//! Three leaf foreign primitives for the M1 surface to convert Text to a
-//! Bytes blob and to round-trip blobs through the filesystem.
+//! Leaf foreign primitives for the M1 surface to convert Text to a Bytes
+//! blob, round-trip blobs through the filesystem, unwrap ResultBytes,
+//! SHA-256 a Bytes blob, and idempotently create directories.
 //!
 //!   * `text_to_bytes(Text) -> Bytes`
 //!         UTF-8 encode the Text and wrap as `Value::Bytes`.
@@ -17,6 +19,19 @@
 //!         `std::fs::read(path)` wrapped in Ok(Bytes) on success, Err(Text)
 //!         on any OS error.
 //!
+//!   * `result_bytes_unwrap(ResultBytes) -> Bytes`
+//!         Unwrap Ok(Bytes) → Bytes. Panic on Err. Symmetric with
+//!         `result_text_unwrap`.
+//!
+//!   * `bytes_hash(Bytes) -> Text`
+//!         SHA-256 of a Bytes blob, returned as `"sha256:{64-hex}"`. Same
+//!         crypto as `content_hash` but consumes `Value::Bytes` directly so
+//!         the bridge avoids the per-element `List<Int>` coercion.
+//!
+//!   * `fs_mkdir_p(Text) -> ResultUnit`
+//!         `std::fs::create_dir_all` — recursive idempotent directory create.
+//!         Ok(Unit) on success, Err(Text) with the OS error on failure.
+//!
 //! Identities are sha256(name_utf8) — same convention as the rest of the
 //! bridge leaf primitives.
 
@@ -24,7 +39,9 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 
-use super::value::{Value, get_str, intern_str, intern_tag};
+use sha2::{Digest, Sha256};
+
+use super::value::{Value, get_str, get_tag_name, intern_str, intern_tag};
 
 // ── Result constructors ──────────────────────────────────────────────────────
 
@@ -141,4 +158,66 @@ fn write_durable(path: &str, content: &[u8]) -> std::io::Result<()> {
     dir.sync_all()?;
 
     Ok(())
+}
+
+// ── result_bytes_unwrap ──────────────────────────────────────────────────────
+
+/// Unwrap a Result(Bytes) (as produced by `fs_read_bytes`): returns the Ok
+/// payload, panics on Err with the message. Monomorphic over Bytes — mirrors
+/// `result_text_unwrap`.
+#[track_caller]
+pub fn result_bytes_unwrap(v: Value) -> Value {
+    match v {
+        Value::Ctor { tag, fields } if get_tag_name(tag) == "Ok" => {
+            fields.into_iter().next().unwrap_or(Value::Unit)
+        }
+        Value::Ctor { tag, fields } if get_tag_name(tag) == "Err" => {
+            let msg = match fields.into_iter().next() {
+                Some(Value::Str(h)) => get_str(h),
+                _ => "unknown error".to_string(),
+            };
+            panic!("result_bytes_unwrap: Err({})", msg)
+        }
+        other => panic!(
+            "result_bytes_unwrap: expected Result Ctor (Ok/Err), got {:?}",
+            other
+        ),
+    }
+}
+
+// ── bytes_hash ───────────────────────────────────────────────────────────────
+
+/// `bytes_hash(Bytes) -> Text`
+///
+/// SHA-256 of a Bytes blob. Always returns exactly 71 chars: `"sha256:"`
+/// + 64 lowercase hex chars. Same crypto as `content_hash`, but consumes
+/// `Value::Bytes` directly without per-element list coercion.
+#[track_caller]
+pub fn bytes_hash(v: Value) -> Value {
+    match v {
+        Value::Bytes(b) => {
+            let digest = Sha256::digest(&b);
+            let hex: String = digest.iter().map(|byte| format!("{:02x}", byte)).collect();
+            Value::Str(intern_str(&format!("sha256:{}", hex)))
+        }
+        other => panic!("bytes_hash: expected Bytes, got {:?}", other),
+    }
+}
+
+// ── fs_mkdir_p ───────────────────────────────────────────────────────────────
+
+/// `fs_mkdir_p(Text) -> ResultUnit`
+///
+/// Recursive idempotent directory create (`std::fs::create_dir_all`).
+/// Returns `Ok(Unit)` on success, `Err(Text)` with the OS error on failure.
+#[track_caller]
+pub fn fs_mkdir_p(v: Value) -> Value {
+    let path = match v {
+        Value::Str(h) => get_str(h),
+        other => panic!("fs_mkdir_p: expected Text path, got {:?}", other),
+    };
+    match std::fs::create_dir_all(&path) {
+        Ok(()) => ok_unit(),
+        Err(e) => err_text(format!("fs_mkdir_p({}): {}", path, e)),
+    }
 }

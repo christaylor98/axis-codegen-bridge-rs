@@ -1603,3 +1603,49 @@ fn fs_read_bytes
   deterministic false
   idempotent    true
 end
+
+// ───────────── BRIDGE_AXVERITY_BLOCKING_FNS_v0.1 — unblocks turn:axverity:0001 ─
+//
+// result_bytes_unwrap(ResultBytes) -> Bytes
+//   Unwrap Ok(Bytes) → Bytes. Panic on Err. Symmetric with result_text_unwrap.
+//
+// bytes_hash(Bytes) -> Text
+//   SHA-256 of a Bytes blob. Returns "sha256:{64-hex}". Same crypto as
+//   content_hash but consumes Value::Bytes directly (no list coercion).
+//
+// fs_mkdir_p(Text) -> ResultUnit
+//   Recursive idempotent directory create (std::fs::create_dir_all).
+//   Returns Ok(Unit) on success, Err(Text) with the OS error on failure.
+//
+// Impl: axis-codegen-bridge-rs/src/runtime/bytes_io.rs
+// Identities are sha256(name_utf8) per §5b bootstrap rule.
+
+fn result_bytes_unwrap
+  identity 0xee5c4784f0f861f523732fb8c0a616be734439539fd457162fd0023fd9afc264
+  kind     leaf
+  in       (ResultBytes)
+  out      Bytes
+  effect   pure
+  deterministic true
+  idempotent    true
+end
+
+fn bytes_hash
+  identity 0x15d4428538f823db75cef637be2d3d28799c34982dc02194e010fc2e5f5e318c
+  kind     leaf
+  in       (Bytes)
+  out      Text
+  effect   pure
+  deterministic true
+  idempotent    true
+end
+
+fn fs_mkdir_p
+  identity 0xb3d65aa0ee165c9048cb688f3f35b76bfafd51aae58358f0eacea849c3fb2dc6
+  kind     leaf
+  in       (Text)
+  out      ResultUnit
+  effect   fullIo
+  deterministic false
+  idempotent    true
+end
