@@ -5,16 +5,17 @@
 //!   * `content_hash(bytes: ValueList) -> Text`
 //!       SHA-256 of the byte sequence, returned as `"sha256:{64-hex}"` (71 chars).
 //!
-//!   * `hash256_parse(text: Text) -> ResultText`
-//!       Validates `"sha256:{64-hex}"`. `Ok(text)` on match, `Err(msg)` otherwise.
-//!       A 63-char hex portion MUST return Err (axVerity criterion).
+//!   * `hash256_parse(text: Text) -> Text`
+//!       Validates `"sha256:{64-hex}"`. Returns the input verbatim on match,
+//!       panics on any other shape. A 63-char hex portion MUST panic
+//!       (axVerity criterion).
 //!
 //! Reference impl (read-only): axis-lang-lab-working/src/fabric/hash.rs
 //! Bridge produces the same SHA-256 bytes — both use the `sha2` crate.
 
 use sha2::{Digest, Sha256};
 
-use super::value::{get_str, intern_str, intern_tag, Value};
+use super::value::{get_str, intern_str, Value};
 
 // ── Byte extractor (UNKNOWN gate — panic, no silent coercion) ────────────────
 //
@@ -57,10 +58,11 @@ pub fn content_hash(v: Value) -> Value {
 
 // ── hash256_parse ────────────────────────────────────────────────────────────
 
-/// `hash256_parse(text: Text) -> ResultText`
+/// `hash256_parse(text: Text) -> Text`
 ///
-/// Returns `Ok(text)` if input is exactly `"sha256:"` + 64 lowercase hex chars,
-/// else `Err(msg)`. Hex portion of any other length (including 63) -> Err.
+/// Returns the input verbatim if it is exactly `"sha256:"` + 64 lowercase hex
+/// chars. Panics on any other shape — hex portion of any other length
+/// (including 63), missing prefix, or non-hex character.
 #[track_caller]
 pub fn hash256_parse(v: Value) -> Value {
     let s = match v {
@@ -68,33 +70,21 @@ pub fn hash256_parse(v: Value) -> Value {
         _ => panic!("hash256_parse UNKNOWN gate: input must be Text"),
     };
 
-    let check: Result<(), String> = (|| {
-        let hex = s
-            .strip_prefix("sha256:")
-            .ok_or_else(|| {
-                let head = &s[..s.len().min(20)];
-                format!("expected 'sha256:' prefix, got: {}", head)
-            })?;
-        if hex.len() != 64 {
-            return Err(format!(
-                "expected 64 hex chars after 'sha256:', got {}",
-                hex.len()
-            ));
+    let hex = match s.strip_prefix("sha256:") {
+        Some(h) => h,
+        None => {
+            let head = &s[..s.len().min(20)];
+            panic!("hash256_parse: invalid input: expected 'sha256:' prefix, got: {}", head);
         }
-        if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err("non-hex character in hash".to_string());
-        }
-        Ok(())
-    })();
-
-    match check {
-        Ok(()) => Value::Ctor {
-            tag: intern_tag("Ok"),
-            fields: vec![Value::Str(intern_str(&s))],
-        },
-        Err(e) => Value::Ctor {
-            tag: intern_tag("Err"),
-            fields: vec![Value::Str(intern_str(&e))],
-        },
+    };
+    if hex.len() != 64 {
+        panic!(
+            "hash256_parse: invalid input: expected 64 hex chars after 'sha256:', got {}",
+            hex.len()
+        );
     }
+    if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        panic!("hash256_parse: invalid input: non-hex character in hash");
+    }
+    Value::Str(intern_str(&s))
 }

@@ -547,9 +547,9 @@ pub fn ir_free_vars(v: Value) -> Value {
 
 /// Write a Core IR 0.5 bundle to a file.
 ///
-/// Round-trip form: Tuple([bundle_value: Value, path: Text]) → ResultUnit
-/// Accepts a Value produced by ir_read_bundle (Bundle05) and writes it.
-/// Returns Ctor("Ok", Unit) on success, Ctor("Err", Str) on any error. Never panics.
+/// Input: Tuple([bundle_value: Value, path: Text]). Accepts a Value produced
+/// by ir_read_bundle (Bundle05) and writes it. Returns Unit on success;
+/// panics with the OS / encode message on any error.
 #[track_caller]
 pub fn ir_write_bundle(v: Value) -> Value {
     match v {
@@ -557,26 +557,16 @@ pub fn ir_write_bundle(v: Value) -> Value {
             let bundle_val = &fields[0];
             let path = match &fields[1] {
                 Value::Str(s) => get_str(*s),
-                other => return Value::Ctor {
-                    tag: intern_tag("Err"),
-                    fields: vec![Value::Str(intern_str(&format!(
-                        "ir_write_bundle: expected Str path, got {:?}", other
-                    )))],
-                },
+                other => panic!("ir_write_bundle: expected Str path, got {:?}", other),
             };
-            match value_to_bundle_05(bundle_val) {
-                Ok(bundle) => match crate::core_ir_05::write_core_bundle_05_to_file(&bundle, &path) {
-                    Ok(()) => Value::Ctor { tag: intern_tag("Ok"), fields: vec![Value::Unit] },
-                    Err(e) => Value::Ctor {
-                        tag: intern_tag("Err"),
-                        fields: vec![Value::Str(intern_str(&e))],
-                    },
-                },
-                Err(e) => Value::Ctor {
-                    tag: intern_tag("Err"),
-                    fields: vec![Value::Str(intern_str(&format!("ir_write_bundle: {}", e)))],
-                },
+            let bundle = match value_to_bundle_05(bundle_val) {
+                Ok(b) => b,
+                Err(e) => panic!("ir_write_bundle: {}", e),
+            };
+            if let Err(e) = crate::core_ir_05::write_core_bundle_05_to_file(&bundle, &path) {
+                panic!("ir_write_bundle({}): {}", path, e);
             }
+            Value::Unit
         }
         _ => panic!("ir_write_bundle: expected Tuple([bundle, path]), got {:?}", v),
     }

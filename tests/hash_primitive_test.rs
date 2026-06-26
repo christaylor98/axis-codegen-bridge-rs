@@ -3,7 +3,7 @@
 //! Tests T1..T15 enumerated in the BRIDGE_HASH_PRIMITIVE_M1 intent.
 
 use axis_codegen_bridge::runtime::hash::{content_hash, hash256_parse};
-use axis_codegen_bridge::runtime::value::{get_str, get_tag_name, intern_str, Value};
+use axis_codegen_bridge::runtime::value::{get_str, intern_str, Value};
 use sha2::{Digest, Sha256};
 
 fn bytes_value(bytes: &[u8]) -> Value {
@@ -14,13 +14,6 @@ fn str_of(v: &Value) -> String {
     match v {
         Value::Str(h) => get_str(*h),
         _ => panic!("expected Str, got {:?}", v),
-    }
-}
-
-fn tag_of(v: &Value) -> String {
-    match v {
-        Value::Ctor { tag, .. } => get_tag_name(*tag),
-        _ => panic!("expected Ctor, got {:?}", v),
     }
 }
 
@@ -82,49 +75,44 @@ fn t5_content_hash_deterministic() {
 fn t6_hash256_parse_accepts_valid_address() {
     let valid = format!("sha256:{}", "a".repeat(64));
     let r = hash256_parse(Value::Str(intern_str(&valid)));
-    assert_eq!(tag_of(&r), "Ok");
-    if let Value::Ctor { fields, .. } = &r {
-        assert_eq!(str_of(&fields[0]), valid);
-    } else {
-        panic!("not Ctor");
-    }
+    assert_eq!(str_of(&r), valid);
 }
 
 // ── T7: 63-char hex must reject (explicit axVerity criterion) ──────────────
 
 #[test]
+#[should_panic(expected = "hash256_parse: invalid input")]
 fn t7_hash256_parse_rejects_63_hex_chars() {
     let short = format!("sha256:{}", "a".repeat(63));
-    let r = hash256_parse(Value::Str(intern_str(&short)));
-    assert_eq!(tag_of(&r), "Err");
+    hash256_parse(Value::Str(intern_str(&short)));
 }
 
 // ── T8: missing prefix rejected ────────────────────────────────────────────
 
 #[test]
+#[should_panic(expected = "hash256_parse: invalid input")]
 fn t8_hash256_parse_rejects_missing_prefix() {
     let no_prefix = "a".repeat(64);
-    let r = hash256_parse(Value::Str(intern_str(&no_prefix)));
-    assert_eq!(tag_of(&r), "Err");
+    hash256_parse(Value::Str(intern_str(&no_prefix)));
 }
 
 // ── T9: 65-char hex rejected ───────────────────────────────────────────────
 
 #[test]
+#[should_panic(expected = "hash256_parse: invalid input")]
 fn t9_hash256_parse_rejects_65_hex_chars() {
     let long = format!("sha256:{}", "a".repeat(65));
-    let r = hash256_parse(Value::Str(intern_str(&long)));
-    assert_eq!(tag_of(&r), "Err");
+    hash256_parse(Value::Str(intern_str(&long)));
 }
 
 // ── T10: non-hex char in body rejected ─────────────────────────────────────
 
 #[test]
+#[should_panic(expected = "hash256_parse: invalid input")]
 fn t10_hash256_parse_rejects_non_hex_chars_in_body() {
     // 63 'a' + one 'z' = 64 chars total, but 'z' is not hex.
     let bad = format!("sha256:{}z", "a".repeat(63));
-    let r = hash256_parse(Value::Str(intern_str(&bad)));
-    assert_eq!(tag_of(&r), "Err");
+    hash256_parse(Value::Str(intern_str(&bad)));
 }
 
 // ── T11: byte > 255 panics ─────────────────────────────────────────────────
@@ -159,11 +147,11 @@ fn t14_hash256_parse_rejects_non_text_input() {
     hash256_parse(Value::Int(0));
 }
 
-// ── T15: round-trip — content_hash output parses as Ok ─────────────────────
+// ── T15: round-trip — content_hash output parses cleanly ───────────────────
 
 #[test]
-fn t15_content_hash_output_feeds_hash256_parse_as_ok() {
+fn t15_content_hash_output_feeds_hash256_parse() {
     let addr = content_hash(Value::List(vec![Value::Int(1), Value::Int(2)]));
-    let r = hash256_parse(addr);
-    assert_eq!(tag_of(&r), "Ok");
+    let parsed = hash256_parse(addr.clone());
+    assert_eq!(parsed, addr);
 }

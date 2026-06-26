@@ -7,8 +7,6 @@ type Bool  = prim bool
 type Dec   = prim dec
 type Float = prim float
 type Value = sum [ AsUnit(Unit) | AsBool(Bool) | AsInt(Int) | AsText(Text) ]
-type ResultText = sum [ Ok(Text) | Err(Text) ]
-type ResultUnit = sum [ Ok(Unit) | Err(Text) ]
 type TextList = list Text
 
 // ── Stdlib (AI2-written) ──────────────────────────────────────────────────────

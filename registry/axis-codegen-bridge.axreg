@@ -8,9 +8,6 @@ type Dec   = prim dec
 type Float = prim float
 type Bytes = prim bytes
 type Value = sum [ AsUnit(Unit) | AsBool(Bool) | AsInt(Int) | AsText(Text) ]
-type ResultText = sum [ Ok(Text) | Err(Text) ]
-type ResultUnit = sum [ Ok(Unit) | Err(Text) ]
-type ResultBytes = sum [ Ok(Bytes) | Err(Text) ]
 type TextList = list Text
 type ValueList = list Value
 // Fn-refs travel through the bridge as Value-tagged identity hashes; the
@@ -835,7 +832,7 @@ fn ir_write_bundle
   deterministic false
   idempotent    false
   in (Value, Text)
-  out ResultUnit
+  out Unit
   effect fullIo
 end
 fn ir_read_bundle
@@ -1522,9 +1519,10 @@ end
 // content_hash(bytes: ValueList) -> Text
 //   SHA-256 of the byte sequence, returned as "sha256:{64-hex}" (71 chars).
 //
-// hash256_parse(text: Text) -> ResultText
-//   Validates "sha256:" + 64 lowercase hex chars. Ok(text) on match, Err(msg) otherwise.
-//   A 63-char hex portion returns Err (axVerity criterion).
+// hash256_parse(text: Text) -> Text
+//   Validates "sha256:" + 64 lowercase hex chars. Returns the input verbatim on
+//   match; panics on any other shape. A 63-char hex portion panics (axVerity
+//   criterion).
 //
 // Impl: axis-codegen-bridge-rs/src/runtime/hash.rs
 // Identities are sha256(name_utf8) — DO NOT recompute.
@@ -1543,7 +1541,7 @@ fn hash256_parse
   identity 0x9d62979a292e1b7d3ae6de19ec31a1d5f640ed36816af198ddddeee81a305590
   kind     leaf
   in       (Text)
-  out      ResultText
+  out      Text
   effect   pure
   deterministic true
   idempotent    true
