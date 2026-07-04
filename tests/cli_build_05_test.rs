@@ -1017,6 +1017,109 @@ fn test_cif_else_taken_runs_else_side_effect() {
     assert_eq!(contents, "side effect ran\n");
 }
 
+// ── (BUG2_RESULT_FIELD_V1) result must not be inferred as "the last node" ────
+//
+// Regression test for the bug where the bridge guessed a bundle's return
+// value as `node_{last}` (or, failing that, the first Data pool entry) with
+// no `CoreBundle.result` field to consult. That guess is simply wrong
+// whenever the source's tail expression is a bare literal or `VarRef`
+// following a real call — neither pushes a node of its own, so the call's
+// own value silently became the bundle's return instead. The reported repro
+// was `fn se2(addr: Text) -> Bool { let _ = fs_append_text(...); Bool(false) }`,
+// which printed `()` (fs_append_text's Unit) instead of `false`.
+//
+// Both tests build+run the real compiled binary end-to-end, not just the
+// emitted Rust source, so a reintroduced guess-chain fails loudly here.
+
+#[test]
+fn test_result_points_past_discarded_call_to_literal_tail() {
+    let dir = TempDir::new().unwrap();
+    // pool[0]=Int(3), pool[1]=Int(4)  -- args to the discarded call
+    // pool[2]=Bool(false)             -- the actual tail value
+    // node[0] = int_add(pool[0], pool[1])  -- discarded; evaluates to Int(7)
+    // result = pool[2]  -- NOT node[0]
+    let bundle = CoreBundle {
+        version: "0.5".to_string(),
+        constant_pool: vec![
+            ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(3) },
+            ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(4) },
+            ConstantPoolEntry { def_hash: bool_type_hash(), payload: encode_bool_payload(false) },
+        ],
+        nodes: vec![Node::CCall {
+            target_identity: sha256_bytes(b"int_add"),
+            target_name: "int_add".to_string(),
+            args: vec![NodeRef::Pool(0), NodeRef::Pool(1)],
+        }],
+        result: NodeRef::Pool(2),
+    };
+    let fixture = write_05_bundle(&dir, "discard_then_literal.coreir", &bundle);
+    let out = dir.path().join("discard_then_literal");
+
+    let status = Command::new(bridge())
+        .args(["build", fixture.to_str().unwrap(), "--out", out.to_str().unwrap(), "--exe"])
+        .status()
+        .expect("bridge failed to run");
+    assert!(status.success(), "build failed");
+
+    let output = Command::new(&out).output().expect("failed to run exe");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.trim(), "false",
+        "BUG2_RESULT_FIELD regression: expected the literal tail 'false', \
+         got the discarded call's own value instead: {:?}",
+        stdout
+    );
+}
+
+#[test]
+fn test_result_points_past_discarded_call_to_earlier_node() {
+    // Mirrors the axVerity `push_object` gotcha (documented pre-fix
+    // workaround: wrapping a bare trailing VarRef in an identity CCall)
+    // taken one step further: the tail VarRef aliases an EARLIER node, with
+    // a second, discarded call pushed after it. `result` must point at the
+    // earlier node directly — not "the last node", which here is neither
+    // the discarded call NOR the intended value.
+    let dir = TempDir::new().unwrap();
+    let bundle = CoreBundle {
+        version: "0.5".to_string(),
+        constant_pool: vec![
+            ConstantPoolEntry { def_hash: bool_type_hash(), payload: encode_bool_payload(true) },
+        ],
+        nodes: vec![
+            // node[0]: bool_not(pool[0]) -- the real tail value (Bool(false))
+            Node::CCall {
+                target_identity: sha256_bytes(b"bool_not"),
+                target_name: "bool_not".to_string(),
+                args: vec![NodeRef::Pool(0)],
+            },
+            // node[1]: bool_not(node[0]) -- discarded; evaluates to Bool(true)
+            Node::CCall {
+                target_identity: sha256_bytes(b"bool_not"),
+                target_name: "bool_not".to_string(),
+                args: vec![NodeRef::Node(0)],
+            },
+        ],
+        result: NodeRef::Node(0),
+    };
+    let fixture = write_05_bundle(&dir, "discard_then_earlier_node.coreir", &bundle);
+    let out = dir.path().join("discard_then_earlier_node");
+
+    let status = Command::new(bridge())
+        .args(["build", fixture.to_str().unwrap(), "--out", out.to_str().unwrap(), "--exe"])
+        .status()
+        .expect("bridge failed to run");
+    assert!(status.success(), "build failed");
+
+    let output = Command::new(&out).output().expect("failed to run exe");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.trim(), "false",
+        "BUG2_RESULT_FIELD regression: expected node[0]'s value 'false', \
+         got the last-pushed node's value instead: {:?}",
+        stdout
+    );
+}
+
 // ── Fix-3: stale rlib regression — provider is always recompiled ──────────────
 //
 // Builds the same provider bundle twice into the same output directory.
