@@ -99,6 +99,9 @@ fn read_edge(data: &[u8], pos: usize, node_idx: u32, pool_len: u32) -> (Value, u
 //              Value::Ctor { tag:"CDeterminate", fields:[] },
 //              ...
 //            ]),
+//     result: Tuple<Str("node"|"pool"), Int(index)>  -- the bundle's semantic
+//              value; unconstrained by node kind, may reference any node or
+//              a bare pool entry directly. See CoreBundle::result upstream.
 //   ])
 
 fn parse_canonical(data: &[u8]) -> Value {
@@ -164,7 +167,9 @@ fn parse_canonical(data: &[u8]) -> Value {
         }
     }
 
-    Value::Tuple(vec![Value::List(pool), Value::List(nodes)])
+    let (result, _pos) = read_edge(data, pos, node_count as u32, pool_len);
+
+    Value::Tuple(vec![Value::List(pool), Value::List(nodes), result])
 }
 
 // ── Public bridge function ────────────────────────────────────────────────────
@@ -225,6 +230,8 @@ mod tests {
         write_varint_test(&mut canonical, 1);        // arg_count
         write_varint_test(&mut canonical, 1);        // pool(0) → (0<<1)|1
 
+        write_varint_test(&mut canonical, 0);        // result: node(0) → (0<<1)|0
+
         let mut out = Vec::new();
         out.extend_from_slice(b"AXCI");
         out.push(0x00); out.push(0x05);
@@ -240,10 +247,10 @@ mod tests {
     fn parse_structure() {
         let bundle = axbi_parse(as_list(&make_axbi()));
 
-        let (pool, nodes) = match bundle {
-            Value::Tuple(ref es) => match (&es[0], &es[1]) {
-                (Value::List(p), Value::List(n)) => (p, n),
-                _ => panic!("expected Tuple([List, List])"),
+        let (pool, nodes, result) = match bundle {
+            Value::Tuple(ref es) => match (&es[0], &es[1], &es[2]) {
+                (Value::List(p), Value::List(n), r) => (p, n, r),
+                _ => panic!("expected Tuple([List, List, Tuple])"),
             },
             _ => panic!("expected Tuple"),
         };
@@ -282,6 +289,15 @@ mod tests {
                 }
             }
             _ => panic!("node not Ctor"),
+        }
+
+        // result: node(0) — the CCall itself.
+        match result {
+            Value::Tuple(es) => {
+                assert_eq!(es[0], Value::Str(intern_str("node")));
+                assert_eq!(es[1], Value::Int(0));
+            }
+            _ => panic!("result not Tuple"),
         }
     }
 

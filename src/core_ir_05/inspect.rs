@@ -42,6 +42,7 @@ fn format_bundle(path: &str, bundle: &CoreBundle) -> String {
         };
         out.push_str(&format!("    node[{}]: {}\n", i, desc));
     }
+    out.push_str(&format!("  result:        {}\n", format_ref(&bundle.result)));
     out
 }
 

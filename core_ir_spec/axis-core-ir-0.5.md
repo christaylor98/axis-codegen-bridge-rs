@@ -40,8 +40,9 @@ lowering phase, where it belongs.
 ### Structure: recursive tree → flat indexed table
 
 0.4 encoded a `CoreTerm` as a recursive struct. 0.5 encodes a `CoreBundle` as
-two flat arrays: `constantPool` and `nodes`. Edges are integer indices
-(`NodeRef`), not nested structs.
+two flat arrays — `constantPool` and `nodes` — plus a single `result: NodeRef`
+naming the bundle's semantic value (see §Bundle Result). Edges are integer
+indices (`NodeRef`), not nested structs.
 
 **Topological invariant** (checked by the Verifier): for every `NodeRef.node(i)`
 appearing in the argument list of the node at index `j`, `i < j`. This makes
@@ -174,6 +175,36 @@ bundles directly. Lowering integration is a deferred phase.
 
 ---
 
+## Bundle Result
+
+Every `CoreBundle` carries a single `result: NodeRef` — the ref whose value
+*is* the bundle's meaning. A consumer executing or interpreting a bundle must
+emit/return exactly this ref's value; it must never be inferred positionally.
+
+`result` is unconstrained by kind: it may point at a `CCall`, a `CIf`, a
+`CDeterminate` (whose value is `Unit`), or directly at a bare pool entry —
+the last of these is the common case whenever the source's tail expression is
+a literal or an unadorned variable reference, since neither pushes a node of
+its own.
+
+**Why this is a dedicated field and not "the last node in `nodes`":** a bare
+literal or variable-reference tail following at least one earlier node (e.g.
+`let _ = some_call(...); Bool(false)`) never gets a node slot of its own —
+`some_call`'s node remains the last entry in `nodes` even though it isn't
+what the program returns. Treating "the last node" as the result silently
+returns the wrong value whenever this shape occurs. `result` removes the
+ambiguity by recording the answer explicitly, exactly as the producer
+computed it — lowering always knows the true tail ref; only the flat table
+representation risked losing it.
+
+`result` is subject to the same range check as any other `NodeRef`:
+`Pool(i)` requires `i < pool_count`; `Node(i)` requires `i < node_count`. It
+is not otherwise ordering-constrained — nothing in the bundle depends on
+`result` itself, so it may point at any node or pool entry regardless of
+position.
+
+---
+
 ## Human Display Format
 
 A bundle displayed for human inspection MUST lead with `targetName` on each
@@ -188,6 +219,7 @@ node[0]  CCall      int_add          0xabcd1234…   [pool[0], pool[1]]
 node[1]  CCall      compare_int_lt   0x1a2b3c4d…   [node[0], pool[0]]
 node[2]  CIf        cond=node[1]  then=pool[0]  else=pool[1]
 node[3]  CDeterminate
+result:  node[2]
 ```
 
 A bundle where any CCall displays only a hash and no name is non-conforming
@@ -209,6 +241,10 @@ This invariant:
 The Verifier checks this invariant on every bundle. A bundle that violates it
 is rejected before any other check.
 
+`result` (see §Bundle Result) is checked the same way, treated as if it were
+one more edge trailing the node table: `NodeRef.node(i)` requires
+`i < node_count`; `NodeRef.pool(i)` requires `i < pool_count`.
+
 ---
 
 ## Bundle Identity
@@ -216,6 +252,200 @@ is rejected before any other check.
 The bundle's identity is the content hash of its canonical encoding. There is
 no declared identity field — it is computed by the consumer. The `version` field
 is a wire-format transport marker only; it is not part of the meaning hash.
+
+The canonical encoding includes `constant_pool`, `nodes`, **and** `result` —
+two bundles with identical pool/node tables but different `result` refs are
+different programs, and must hash differently.
+
+---
+
+## Wire Formats
+
+Three formats exist for a `CoreBundle`. They are semantically equivalent and
+fully roundtrippable. The **canonical binary** form is authoritative: bundle
+identity is the SHA-256 of its canonical bytes. The other two formats are
+transport/interop conveniences.
+
+| Format | Extension | Use |
+|---|---|---|
+| Canonical binary | `.axbi` | On-disk storage, cross-language embedding, identity hashing |
+| JSON | `.axbi.json` | Debugging, tooling, web consumers, human authoring |
+| Cap'n Proto | — | **Deprecated.** Kept for backward compatibility only. Do not use in new consumers. |
+
+---
+
+### Primitive Encoding Rules
+
+All binary formats use these building blocks. Decoders MUST reject non-canonical
+encodings.
+
+| Primitive | Encoding |
+|---|---|
+| `varint(n)` | Unsigned LEB128, minimal form. Non-minimal encodings (redundant continuation bytes) are a hard error. |
+| `hash256(h)` | 32 raw bytes, big-endian, no length prefix. |
+| `bytes(b)` | `varint(len)` followed by `len` raw bytes. |
+| `NodeRef` | Single `varint`. Low bit selects space: `node(i)` → `i << 1`; `pool(i)` → `(i << 1) \| 1`. |
+
+---
+
+### Canonical Binary Layout
+
+This is the layout produced and consumed by `serialize_canonical` /
+`deserialize_canonical`. It is the ONLY input to the bundle identity hash.
+The `version` field is excluded.
+
+```
+varint(pool_count)
+for each pool entry:
+    hash256(def_hash)          // 32 bytes — type identity
+    bytes(payload)             // varint(len) + payload bytes
+
+varint(node_count)
+for each node:
+    varint(kind_tag)           // 0 = CCall, 1 = CIf, 2 = CDeterminate
+
+    // kind_tag = 0 (CCall)
+    bytes(target_name_utf8)    // varint(len) + UTF-8 bytes
+    hash256(target_identity)   // 32 bytes — function identity
+    varint(arg_count)
+    NodeRef * arg_count        // each a tagged varint per §Primitive Encoding Rules
+
+    // kind_tag = 1 (CIf)
+    NodeRef(cond)
+    NodeRef(then)
+    NodeRef(else)
+
+    // kind_tag = 2 (CDeterminate)
+    // no bytes
+
+NodeRef(result)                // trailing — the bundle's semantic value (§Bundle Result), always present
+```
+
+Topological invariant is enforced at decode time: any `NodeRef.node(i)` where
+`i >= current_node_index` is a hard error. Any `NodeRef.pool(i)` where
+`i >= pool_count` is a hard error. The trailing `NodeRef(result)` is checked
+against the fully-decoded table: `node(i)` requires `i < node_count`;
+`pool(i)` requires `i < pool_count`.
+
+---
+
+### Axial Binary File Format (.axbi)
+
+The `.axbi` file wraps the canonical payload with a 6-byte header for
+format identification. The header is NOT included in the identity hash.
+
+```
+offset  size  value
+0       4     magic: 0x41 0x58 0x43 0x49  ('A','X','C','I')
+4       1     ir_major: 0x00
+5       1     ir_minor: 0x05
+6       *     canonical payload (serialize_canonical output)
+```
+
+A reader MUST reject files where magic ≠ `AXCI`. A reader SHOULD reject
+files where `(ir_major, ir_minor) ≠ (0x00, 0x05)` unless it explicitly
+supports that version.
+
+The canonical payload starting at offset 6 is byte-identical to the output of
+`serialize_canonical`. Identity is `SHA-256(bytes[6..])`.
+
+---
+
+### JSON Format (.axbi.json)
+
+JSON is the human-readable, debug-friendly equivalent of `.axbi`. Semantics
+are identical; only the encoding differs.
+
+**Top-level object:**
+
+```json
+{
+  "axis_core_ir": "0.5",
+  "constant_pool": [ ... ],
+  "nodes": [ ... ],
+  "result": { "space": "node", "index": 0 }
+}
+```
+
+**Pool entry:**
+
+```json
+{
+  "def_hash": "a3f9...64 lowercase hex chars...c2b1",
+  "payload":  "base64-encoded payload bytes (RFC 4648 §4, with = padding)"
+}
+```
+
+**NodeRef** (used wherever a `NodeRef` appears in a node):
+
+```json
+{ "space": "node", "index": 0 }
+{ "space": "pool", "index": 2 }
+```
+
+**Node — CCall:**
+
+```json
+{
+  "kind":            "CCall",
+  "target_name":     "int_add",
+  "target_identity": "abcd...64 lowercase hex chars...1234",
+  "args": [
+    { "space": "pool", "index": 0 },
+    { "space": "node", "index": 0 }
+  ]
+}
+```
+
+**Node — CIf:**
+
+```json
+{
+  "kind": "CIf",
+  "cond": { "space": "node", "index": 1 },
+  "then": { "space": "pool", "index": 0 },
+  "else": { "space": "pool", "index": 1 }
+}
+```
+
+**Node — CDeterminate:**
+
+```json
+{ "kind": "CDeterminate" }
+```
+
+**Encoding rules for JSON:**
+
+- Hashes are 64-character lowercase hex strings. No `0x` prefix.
+- Payload bytes are standard base64 with `=` padding (RFC 4648 §4). Empty payloads encode as `""`.
+- Node and pool arrays are ordered; index in the array IS the `NodeRef` index.
+- All fields shown above are mandatory. Unknown fields MUST be ignored by readers.
+- Topological invariant applies identically: `node.index` must be less than the
+  position of the referencing node in the `nodes` array.
+- `result` is mandatory and uses the same `NodeRef` shape as everywhere else
+  (see §Bundle Result); a reader missing this key MUST reject the document.
+
+**Computing identity from JSON:** parse to in-memory `CoreBundle`, then
+`SHA-256(serialize_canonical(bundle))`. Do not hash the JSON bytes directly.
+
+---
+
+### Cap'n Proto (Deprecated)
+
+Cap'n Proto framing (`encode_capnp` / `decode_capnp`) was the original
+transport format and remains supported for backward compatibility. It is
+**not** used for identity hashing — identity is always computed from the
+canonical binary form, never from capnp bytes.
+
+`result` was added here too (`CoreBundle.result @3 :NodeRef`) for schema
+completeness, even though this format is deprecated — a capnp-encoded bundle
+predating this field decodes with a schema-default (incorrect) `result` and
+will silently mis-hash; regenerate any such bundle rather than relying on it.
+
+New consumers MUST NOT adopt capnp as their interchange format. Use `.axbi`
+(canonical binary) for performance-sensitive or embedded targets, or `.axbi.json`
+for interop and tooling. Capnp support will be removed in a future version
+once all existing consumers have migrated.
 
 ---
 

@@ -50,6 +50,7 @@ fn make_composite_gt0() -> CoreBundle {
             args: vec![NodeRef::Pool(0), NodeRef::Pool(1)],
             target_name: "int_gt".into(),
         }],
+        result: NodeRef::Node(0),
     }
 }
 
@@ -79,6 +80,7 @@ fn make_caller_any() -> CoreBundle {
                 target_name: "any".into(),
             },
         ],
+        result: NodeRef::Node(1),
     }
 }
 
@@ -147,6 +149,7 @@ fn make_caller_all() -> CoreBundle {
                 target_name: "all".into(),
             },
         ],
+        result: NodeRef::Node(1),
     }
 }
 
@@ -208,6 +211,7 @@ fn make_caller_leaf_fnref() -> CoreBundle {
                 target_name: "foreach".into(),
             },
         ],
+        result: NodeRef::Node(1),
     }
 }
 
@@ -257,6 +261,7 @@ fn make_caller_ccall_composite() -> CoreBundle {
             args: vec![NodeRef::Pool(0)],
             target_name: "composite_gt0".into(),
         }],
+        result: NodeRef::Node(0),
     }
 }
 

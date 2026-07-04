@@ -86,6 +86,11 @@ pub fn create_core_bundle_05(bundle: &CoreBundle) -> Vec<u8> {
                 }
             }
         }
+
+        {
+            let rb = root.reborrow().init_result();
+            set_noderef(rb, &bundle.result);
+        }
     }
     let mut buf = Vec::new();
     serialize::write_message(&mut buf, &msg).unwrap();
@@ -107,6 +112,7 @@ pub fn make_unit_bundle() -> CoreBundle {
             payload: vec![],
         }],
         nodes: vec![],
+        result: NodeRef::Pool(0),
     }
 }
 
@@ -118,6 +124,7 @@ pub fn make_bool_bundle(v: bool) -> CoreBundle {
             payload: super::encode_bool_payload(v),
         }],
         nodes: vec![],
+        result: NodeRef::Pool(0),
     }
 }
 
@@ -129,6 +136,7 @@ pub fn make_int_bundle(v: i64) -> CoreBundle {
             payload: super::encode_int_payload(v),
         }],
         nodes: vec![],
+        result: NodeRef::Pool(0),
     }
 }
 
@@ -141,5 +149,6 @@ pub fn make_ccall_bundle(
         version: "0.5".to_string(),
         constant_pool: pool,
         nodes: vec![Node::CCall { target_identity, args, target_name: String::new() }],
+        result: NodeRef::Node(0),
     }
 }

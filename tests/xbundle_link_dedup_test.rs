@@ -41,6 +41,7 @@ fn make_prov_a() -> CoreBundle {
             args: vec![NodeRef::Pool(0)],
             target_name: "bool_not".into(),
         }],
+        result: NodeRef::Node(0),
     }
 }
 
@@ -65,6 +66,7 @@ fn make_prov_b() -> CoreBundle {
                 target_name: "bool_not".into(),
             },
         ],
+        result: NodeRef::Node(1),
     }
 }
 
@@ -78,6 +80,7 @@ fn make_caller() -> CoreBundle {
             args: vec![],
             target_name: "prov_b".into(),
         }],
+        result: NodeRef::Node(0),
     }
 }
 

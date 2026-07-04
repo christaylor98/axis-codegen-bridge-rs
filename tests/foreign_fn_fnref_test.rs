@@ -258,6 +258,7 @@ fn type_gate_rejects_fn_pool_ref_in_data_slot() {
                 args: vec![NodeRef::Pool(0), NodeRef::Pool(1)],
             },
         ],
+        result: NodeRef::Node(0),
     };
 
     let err = emit_rust_lib_from_bundle(
@@ -301,6 +302,7 @@ fn type_gate_rejects_data_pool_ref_in_fn_slot() {
             target_name: "foreach".into(),
             args: vec![NodeRef::Pool(0), NodeRef::Pool(1)],
         }],
+        result: NodeRef::Node(0),
     };
 
     let err = emit_rust_lib_from_bundle(
@@ -345,6 +347,7 @@ fn fn_slot_emits_native_multi_arg_call() {
             target_name: "foreach".into(),
             args: vec![NodeRef::Pool(0), NodeRef::Pool(1)],
         }],
+        result: NodeRef::Node(0),
     };
 
     let src = emit_rust_lib_from_bundle(

@@ -136,5 +136,10 @@ fn load_from_reader<R: std::io::Read>(r: &mut R) -> Result<CoreBundle, String> {
         nodes.push(node);
     }
 
-    Ok(CoreBundle { version, constant_pool, nodes })
+    let result = read_node_ref(
+        bundle.get_result().map_err(|e| format!("get_result failed: {}", e))?,
+    )
+    .map_err(|e| format!("result ref: {}", e))?;
+
+    Ok(CoreBundle { version, constant_pool, nodes, result })
 }

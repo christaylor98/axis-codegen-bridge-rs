@@ -44,6 +44,7 @@ fn bridge_to_dec_emits_native_four_arg_call() {
                 NodeRef::Pool(3),
             ],
         }],
+        result: NodeRef::Node(0),
     };
 
     let src = emit_rust_lib_from_bundle(&bundle, "to_dec_smoke", &HashMap::new(), &HashMap::new())
@@ -90,6 +91,7 @@ fn bridge_to_float_emits_native_four_arg_call() {
                 NodeRef::Pool(3),
             ],
         }],
+        result: NodeRef::Node(0),
     };
 
     let src = emit_rust_lib_from_bundle(&bundle, "to_float_smoke", &HashMap::new(), &HashMap::new())

@@ -22,6 +22,7 @@ fn main() {
             payload: encode_int_payload(42),
         }],
         nodes: vec![],
+        result: NodeRef::Pool(0),
     };
     fs::write(out.join("loop_a.coreir"), create_core_bundle_05(&loop_a)).unwrap();
     println!("wrote loop_a.coreir  (returns 42)");
@@ -34,6 +35,7 @@ fn main() {
             payload: encode_int_payload(99),
         }],
         nodes: vec![],
+        result: NodeRef::Pool(0),
     };
     fs::write(out.join("loop_b.coreir"), create_core_bundle_05(&loop_b)).unwrap();
     println!("wrote loop_b.coreir  (returns 99)");
@@ -50,6 +52,7 @@ fn main() {
             target_name: "option_unwrap".to_string(),
             args: vec![NodeRef::Pool(0)],
         }],
+        result: NodeRef::Node(0),
     };
     fs::write(out.join("panicky.coreir"), create_core_bundle_05(&panicky)).unwrap();
     println!("wrote panicky.coreir (panics via option_unwrap(Unit))");
@@ -62,6 +65,7 @@ fn main() {
             payload: vec![],
         }],
         nodes: vec![],
+        result: NodeRef::Pool(0),
     };
     fs::write(out.join("root.coreir"), create_core_bundle_05(&root)).unwrap();
     println!("wrote root.coreir    (unit; root bundle placeholder)");

@@ -49,6 +49,13 @@ pub struct CoreBundle {
     pub version: String,
     pub constant_pool: Vec<ConstantPoolEntry>,
     pub nodes: Vec<Node>,
+    /// The bundle's semantic value — the ref this bundle's consumer must
+    /// emit/return. Unconstrained by kind: may point at any node (CCall/
+    /// CIf/CDeterminate) or directly at a bare pool entry. Without this
+    /// field, codegen had to guess "the last node in `nodes`," which is
+    /// wrong whenever the source's tail is a bare literal/VarRef following
+    /// a real call (see BRANCH_SCOPING_V1's sibling bug in emit/rust_05.rs).
+    pub result: NodeRef,
 }
 
 // ── Hash utilities ───────────────────────────────────────────────────────────

@@ -556,8 +556,11 @@ fn longest_common_prefix(paths: &[ScopePath]) -> ScopePath {
 fn compute_branch_paths(bundle: &CoreBundle) -> Result<Vec<ScopePath>, String> {
     let n = bundle.nodes.len();
     let mut uses: Vec<Vec<Use>> = (0..n).map(|_| Vec::new()).collect();
-    if n > 0 {
-        uses[n - 1].push(Use::Result);
+    // `bundle.result` — not "the last node" — is the authoritative root (see
+    // BUG2_RESULT_FIELD_V1). A Pool ref needs no Use entry: pool entries are
+    // always hoisted constants, never branch-scoped.
+    if let NodeRef::Node(i) = bundle.result {
+        uses[i as usize].push(Use::Result);
     }
     for (j, node) in bundle.nodes.iter().enumerate() {
         match node {
@@ -1169,18 +1172,20 @@ pub fn emit_rust_lib_from_bundle(
         xbundle_providers,
     )?);
 
-    // Result: last node, or first Data pool entry, or Unit.
-    // Fn-typed pool entries are skipped — they have no `let pool_N` binding.
-    let result = if !bundle.nodes.is_empty() {
-        format!("node_{}", bundle.nodes.len() - 1)
-    } else if let Some(i) =
-        pool_kinds.iter().position(|k| matches!(k, PoolKind::Data(_)))
-    {
-        format!("pool_{}", i)
-    } else {
-        "Value::Unit".to_string()
-    };
-    out.push_str(&format!("    {}\n", result));
+    // Result: the bundle's own authoritative `result` ref (BUG2_RESULT_FIELD_V1)
+    // — never guessed from "the last node in `nodes`", which is wrong whenever
+    // the source's tail is a bare literal/VarRef following a real call.
+    if let NodeRef::Pool(i) = bundle.result {
+        if let Some(PoolKind::FnRef(_)) = pool_kinds.get(i as usize) {
+            return Err(format!(
+                "type gate: bundle result is a bare pool ref but pool[{}] is \
+                 Fn-typed — Fn refs are callee-only, never returned as data \
+                 (FN_REF_IS_CALLEE_ONLY)",
+                i
+            ));
+        }
+    }
+    out.push_str(&format!("    {}\n", ref_expr(&bundle.result)));
     out.push_str("}\n\n");
 
     // Identity-derived export: ax_fn_<hex(sha256(fn_name))>

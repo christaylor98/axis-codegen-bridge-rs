@@ -210,6 +210,13 @@ struct CoreBundle {
   #   For every NodeRef.node(i) appearing in node at index j: i < j.
   # This makes cycles unrepresentable and all analysis linear.
   nodes        @2 :List(Node);
+
+  # The bundle's semantic value. Unconstrained by kind — may reference any
+  # node (CCall/CIf/CDeterminate) or a bare pool entry directly. Consumers
+  # must emit/return this ref, not assume "the last node in `nodes`" (that
+  # assumption is wrong whenever the source's tail is a bare literal/VarRef
+  # following a real call).
+  result       @3 :NodeRef;
 }
 
 

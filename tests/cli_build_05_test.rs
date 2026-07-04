@@ -173,6 +173,7 @@ fn test_05_build_cif_node() {
             then_: NodeRef::Pool(1),
             else_: NodeRef::Pool(2),
         }],
+        result: NodeRef::Node(0),
     };
     let fixture = write_05_bundle(&dir, "cif_fn.coreir", &bundle);
     let out = dir.path().join("cif_fn");
@@ -205,6 +206,7 @@ fn make_fn_negate_bundle() -> CoreBundle {
             args: vec![NodeRef::Pool(0)],
             target_name: "bool_not".to_string(),
         }],
+        result: NodeRef::Node(0),
     }
 }
 
@@ -218,6 +220,7 @@ fn make_two_fn_call_bundle() -> CoreBundle {
             args: vec![],
             target_name: "fn_negate".to_string(),
         }],
+        result: NodeRef::Node(0),
     }
 }
 
@@ -332,6 +335,7 @@ fn make_entry_a_bundle() -> CoreBundle {
         version: "0.5".to_string(),
         constant_pool: vec![ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(42) }],
         nodes: vec![],
+        result: NodeRef::Pool(0),
     }
 }
 
@@ -341,6 +345,7 @@ fn make_entry_b_bundle() -> CoreBundle {
         version: "0.5".to_string(),
         constant_pool: vec![ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(99) }],
         nodes: vec![],
+        result: NodeRef::Pool(0),
     }
 }
 
@@ -354,6 +359,7 @@ fn make_panicky_bundle() -> CoreBundle {
             target_name: "option_unwrap".to_string(),
             args: vec![NodeRef::Pool(0)],
         }],
+        result: NodeRef::Node(0),
     }
 }
 
@@ -610,6 +616,7 @@ fn make_assert_pass_bundle() -> CoreBundle {
             target_name: "assert".to_string(),
             args: vec![NodeRef::Pool(0)],
         }],
+        result: NodeRef::Node(0),
     }
 }
 
@@ -623,6 +630,7 @@ fn make_assert_fail_bundle() -> CoreBundle {
             target_name: "assert".to_string(),
             args: vec![NodeRef::Pool(0)],
         }],
+        result: NodeRef::Node(0),
     }
 }
 
@@ -692,6 +700,7 @@ fn make_ping_bundle() -> CoreBundle {
             target_name: "ping_loop".to_string(),
             args: vec![NodeRef::Pool(0)],
         }],
+        result: NodeRef::Node(0),
     }
 }
 
@@ -704,6 +713,7 @@ fn make_pong_bundle() -> CoreBundle {
             target_name: "pong_loop".to_string(),
             args: vec![NodeRef::Pool(0)],
         }],
+        result: NodeRef::Node(0),
     }
 }
 
@@ -780,6 +790,7 @@ fn make_bool_to_str_bundle(b: bool) -> CoreBundle {
             target_name: "bool_to_str".to_string(),
             args: vec![NodeRef::Pool(0)],
         }],
+        result: NodeRef::Node(0),
     }
 }
 
@@ -868,6 +879,7 @@ fn make_side_effect_bundle(log_path: &str) -> CoreBundle {
             target_name: "fs_append_text".to_string(),
             args: vec![NodeRef::Pool(0), NodeRef::Pool(1)],
         }],
+        result: NodeRef::Node(0),
     }
 }
 
@@ -892,6 +904,7 @@ fn make_iftest_bundle(cond: bool) -> CoreBundle {
                 else_: NodeRef::Node(0),
             },
         ],
+        result: NodeRef::Node(1),
     }
 }
 
@@ -960,6 +973,7 @@ fn test_orphan_before_unanchored_cif_then_is_rejected() {
                 else_: NodeRef::Pool(2),
             },
         ],
+        result: NodeRef::Node(2),
     };
 
     let result = axis_codegen_bridge::emit::rust_05::emit_rust_lib_from_bundle(

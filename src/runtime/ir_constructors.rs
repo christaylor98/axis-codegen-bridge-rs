@@ -603,15 +603,15 @@ fn value_from_bundle_05(bundle: &crate::core_ir_05::CoreBundle) -> Value {
         Node::CIf { cond, then_, else_ } => make_ctor("CIf", vec![nr(cond), nr(then_), nr(else_)]),
         Node::CDeterminate => make_ctor("CDeterminate", vec![]),
     }).collect();
-    make_ctor("Bundle05", vec![Value::List(pool_vals), Value::List(node_vals)])
+    make_ctor("Bundle05", vec![Value::List(pool_vals), Value::List(node_vals), nr(&bundle.result)])
 }
 
 fn value_to_bundle_05(v: &Value) -> Result<crate::core_ir_05::CoreBundle, String> {
     use crate::core_ir_05::{ConstantPoolEntry, CoreBundle, Node, NodeRef};
-    let (pool_list, node_list) = match v {
+    let (pool_list, node_list, result_v) = match v {
         Value::Ctor { tag, fields } if get_tag_name(*tag) == "Bundle05" => match fields.as_slice() {
-            [Value::List(p), Value::List(n)] => (p, n),
-            _ => return Err("Bundle05: expected [List, List]".to_string()),
+            [Value::List(p), Value::List(n), r] => (p, n, r),
+            _ => return Err("Bundle05: expected [List, List, NodeRef]".to_string()),
         },
         _ => return Err(format!("expected Ctor(Bundle05), got {:?}", v)),
     };
@@ -662,7 +662,8 @@ fn value_to_bundle_05(v: &Value) -> Result<crate::core_ir_05::CoreBundle, String
         },
         _ => Err(format!("node[{}]: expected Ctor, got {:?}", i, n)),
     }).collect::<Result<Vec<_>, String>>()?;
-    Ok(CoreBundle { version: "0.5".to_string(), constant_pool, nodes })
+    let result = parse_nr(result_v, "result")?;
+    Ok(CoreBundle { version: "0.5".to_string(), constant_pool, nodes, result })
 }
 
 fn render_bundle_05_str(bundle: &crate::core_ir_05::CoreBundle) -> String {
@@ -695,11 +696,11 @@ fn render_bundle_05_str(bundle: &crate::core_ir_05::CoreBundle) -> String {
         };
         out.push_str(&format!("pool[{}]: {}\n", i, desc));
     }
+    let ref_str = |r: &NodeRef| match r {
+        NodeRef::Node(n) => format!("node[{}]", n),
+        NodeRef::Pool(p) => format!("pool[{}]", p),
+    };
     for (i, node) in bundle.nodes.iter().enumerate() {
-        let ref_str = |r: &NodeRef| match r {
-            NodeRef::Node(n) => format!("node[{}]", n),
-            NodeRef::Pool(p) => format!("pool[{}]", p),
-        };
         let desc = match node {
             Node::CCall { target_identity, target_name, args } => {
                 let hex = hash256_to_hex(target_identity);
@@ -717,6 +718,7 @@ fn render_bundle_05_str(bundle: &crate::core_ir_05::CoreBundle) -> String {
         };
         out.push_str(&format!("node[{}]: {}\n", i, desc));
     }
+    out.push_str(&format!("result: {}\n", ref_str(&bundle.result)));
     out
 }
 
@@ -1215,10 +1217,10 @@ transform_fn: my_t
             .join(format!("read_bundle_05_int_{}.coreir", std::process::id()));
         write_core_bundle_05_to_file(&bundle, path.to_str().unwrap()).expect("write");
         let v = ir_read_bundle(Value::Str(intern_str(path.to_str().unwrap())));
-        let (pool, nodes) = match &v {
+        let (pool, nodes, result) = match &v {
             Value::Ctor { tag, fields } if get_tag_name(*tag) == "Bundle05" => {
                 match fields.as_slice() {
-                    [Value::List(p), Value::List(n)] => (p, n),
+                    [Value::List(p), Value::List(n), r] => (p, n, r),
                     _ => panic!("Bundle05 shape wrong: {:?}", fields),
                 }
             }
@@ -1226,6 +1228,13 @@ transform_fn: my_t
         };
         assert_eq!(nodes.len(), 0);
         assert_eq!(pool.len(), 1);
+        // result: a bare Pool(0) tail (make_int_bundle has no nodes at all).
+        match result {
+            Value::Ctor { tag, fields } if get_tag_name(*tag) == "PoolRef" => {
+                assert_eq!(fields[0], Value::Int(0));
+            }
+            other => panic!("expected PoolRef(0) result, got {:?}", other),
+        }
         // pool[0] = Tuple([hex_int_type_hash, hex_encode_int_payload(42)])
         let entry = match &pool[0] {
             Value::Tuple(fs) if fs.len() == 2 => fs,
@@ -1266,10 +1275,10 @@ transform_fn: my_t
             .join(format!("read_bundle_05_ccall_{}.coreir", std::process::id()));
         write_core_bundle_05_to_file(&bundle, path.to_str().unwrap()).expect("write");
         let v = ir_read_bundle(Value::Str(intern_str(path.to_str().unwrap())));
-        let (pool, nodes) = match &v {
+        let (pool, nodes, result) = match &v {
             Value::Ctor { tag, fields } if get_tag_name(*tag) == "Bundle05" => {
                 match fields.as_slice() {
-                    [Value::List(p), Value::List(n)] => (p, n),
+                    [Value::List(p), Value::List(n), r] => (p, n, r),
                     _ => panic!("Bundle05 shape wrong: {:?}", fields),
                 }
             }
@@ -1277,6 +1286,13 @@ transform_fn: my_t
         };
         assert_eq!(pool.len(), 2);
         assert_eq!(nodes.len(), 1);
+        // result: node[0] — the CCall itself (make_ccall_bundle's only node).
+        match result {
+            Value::Ctor { tag, fields } if get_tag_name(*tag) == "NodeRef" => {
+                assert_eq!(fields[0], Value::Int(0));
+            }
+            other => panic!("expected NodeRef(0) result, got {:?}", other),
+        }
         // Check the CCall node
         let (hex_id, _tgt_name, arg_refs) = match &nodes[0] {
             Value::Ctor { tag, fields } if get_tag_name(*tag) == "CCall" => {
