@@ -837,6 +837,172 @@ fn test_bool_to_str_exe_false_prints_false() {
         "bool_to_str(false) must print 'false', got: {:?}", stdout);
 }
 
+// ── (BRANCH_SCOPING_V1) CIf must not run the untaken arm's side effects ──────
+//
+// Regression test for the bug where `CIf` only selected between two
+// already-materialized node values instead of gating their computation: a
+// `fs_append_text` call placed in the `else` arm used to fire even when the
+// `then` arm was taken, because every node was emitted as an unconditional
+// `let node_N = <expr>;` ahead of the runtime `if`. Runs the compiled exe
+// end-to-end (not just symbol presence) and checks the side-effect file.
+
+use axis_codegen_bridge::core_ir_05::encode_text_payload;
+
+/// Mirrors the reported repro exactly:
+///   fn side_effect() -> Unit { fs_append_text(path, msg) }
+///   fn iftest()      -> Bool { if <cond> { true } else { side_effect() } }
+/// `side_effect` is a separate linked bundle (§5b composite, like the
+/// reported `fn side_effect(flag: Bool) -> Bool { let _ = fs_append_text(...); Bool(false) }`)
+/// — `cond` is a constant pool Bool rather than a CLI param, since the exe
+/// shim always passes argv as `Value::List(Str)` regardless of the target
+/// function's real parameter shape.
+fn make_side_effect_bundle(log_path: &str) -> CoreBundle {
+    CoreBundle {
+        version: "0.5".to_string(),
+        constant_pool: vec![
+            ConstantPoolEntry { def_hash: axis_codegen_bridge::core_ir_05::text_type_hash(), payload: encode_text_payload(log_path) },
+            ConstantPoolEntry { def_hash: axis_codegen_bridge::core_ir_05::text_type_hash(), payload: encode_text_payload("side effect ran\n") },
+        ],
+        nodes: vec![Node::CCall {
+            target_identity: sha256_bytes(b"fs_append_text"),
+            target_name: "fs_append_text".to_string(),
+            args: vec![NodeRef::Pool(0), NodeRef::Pool(1)],
+        }],
+    }
+}
+
+fn make_iftest_bundle(cond: bool) -> CoreBundle {
+    CoreBundle {
+        version: "0.5".to_string(),
+        constant_pool: vec![
+            ConstantPoolEntry { def_hash: bool_type_hash(), payload: encode_bool_payload(cond) },
+            ConstantPoolEntry { def_hash: bool_type_hash(), payload: encode_bool_payload(true) },
+        ],
+        nodes: vec![
+            // node[0]: side_effect() — §5b call into the linked bundle above.
+            Node::CCall {
+                target_identity: sha256_bytes(b"side_effect"),
+                target_name: "side_effect".to_string(),
+                args: vec![],
+            },
+            // node[1]: if pool[0] { pool[1] (true) } else { node[0] }
+            Node::CIf {
+                cond:  NodeRef::Pool(0),
+                then_: NodeRef::Pool(1),
+                else_: NodeRef::Node(0),
+            },
+        ],
+    }
+}
+
+fn build_iftest_exe(dir: &TempDir, cond: bool, stem: &str) -> std::path::PathBuf {
+    // --lib provider identity/name is derived from the file's stem (see
+    // main.rs's provider_map construction), so this must be named exactly
+    // `side_effect.coreir` to match the `sha256(b"side_effect")` target
+    // identity `iftest`'s CCall resolves against.
+    let side_effect_coreir = write_05_bundle(dir, "side_effect.coreir", &make_side_effect_bundle(
+        dir.path().join("sideeffect.log").to_str().unwrap(),
+    ));
+    let iftest_coreir = write_05_bundle(dir, &format!("{}_iftest.coreir", stem), &make_iftest_bundle(cond));
+    let out = dir.path().join(stem);
+    let status = Command::new(bridge())
+        .args([
+            "build", iftest_coreir.to_str().unwrap(),
+            "--out", out.to_str().unwrap(),
+            "--lib", side_effect_coreir.to_str().unwrap(),
+            "--exe",
+        ])
+        .status()
+        .expect("bridge failed to run");
+    assert!(status.success(), "iftest/side_effect cross-bundle build failed");
+    out
+}
+
+// ── BRANCH_SCOPING_V1 tripwire ────────────────────────────────────────────────
+//
+// A node with no data-dependency consumer, sitting after `cond` and before a
+// `CIf` whose `then_` is a bare pool ref, cannot be soundly attributed to
+// `then` vs `else` by position alone (see `compute_branch_paths`'s doc
+// comment in src/emit/rust_05.rs). The build must refuse this shape rather
+// than silently defaulting the orphan to unconditional top-level emission.
+// Not reachable from M1 today — this locks in that the day it becomes
+// reachable, the build fails loudly instead of silently mis-scoping.
+#[test]
+fn test_orphan_before_unanchored_cif_then_is_rejected() {
+    let bundle = CoreBundle {
+        version: "0.5".to_string(),
+        constant_pool: vec![
+            ConstantPoolEntry { def_hash: bool_type_hash(), payload: encode_bool_payload(true) },
+            ConstantPoolEntry { def_hash: bool_type_hash(), payload: encode_bool_payload(true) },
+            ConstantPoolEntry { def_hash: bool_type_hash(), payload: encode_bool_payload(false) },
+        ],
+        nodes: vec![
+            // node[0]: bool_not(pool[0]) — CIf's cond; a real anchor.
+            Node::CCall {
+                target_identity: sha256_bytes(b"bool_not"),
+                target_name: "bool_not".to_string(),
+                args: vec![NodeRef::Pool(0)],
+            },
+            // node[1]: io_println() — zero consumers (an orphan/discarded
+            // value), positioned between cond's anchor (node[0]) and the CIf
+            // (node[2]) below.
+            Node::CCall {
+                target_identity: sha256_bytes(b"io_println"),
+                target_name: "io_println".to_string(),
+                args: vec![],
+            },
+            // node[2]: if node[0] { pool[1] } else { pool[2] } — `then_` is a
+            // bare pool ref, so there's no anchor to prove node[1] belongs to
+            // `then` rather than `else` (or vice versa).
+            Node::CIf {
+                cond:  NodeRef::Node(0),
+                then_: NodeRef::Pool(1),
+                else_: NodeRef::Pool(2),
+            },
+        ],
+    };
+
+    let result = axis_codegen_bridge::emit::rust_05::emit_rust_lib_from_bundle(
+        &bundle, "ambiguous_orphan", &std::collections::HashMap::new(), &std::collections::HashMap::new(),
+    );
+    let err = result.expect_err("ambiguous orphan-before-unanchored-CIf shape must be rejected");
+    assert!(err.contains("BRANCH_SCOPING_V1"), "expected BRANCH_SCOPING_V1 tripwire message, got: {}", err);
+}
+
+#[test]
+fn test_cif_then_taken_does_not_run_else_side_effect() {
+    let dir = TempDir::new().unwrap();
+    let log_path = dir.path().join("sideeffect.log");
+    let exe = build_iftest_exe(&dir, true, "iftest_true");
+
+    let output = Command::new(&exe).output().expect("failed to run exe");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "true", "expected the then-branch value, got: {:?}", stdout);
+
+    assert!(
+        !log_path.exists(),
+        "BRANCH_SCOPING regression: else-branch's side_effect() ran even though \
+         the then-branch was taken; log file exists at {:?}",
+        log_path
+    );
+}
+
+#[test]
+fn test_cif_else_taken_runs_else_side_effect() {
+    let dir = TempDir::new().unwrap();
+    let log_path = dir.path().join("sideeffect.log");
+    let exe = build_iftest_exe(&dir, false, "iftest_false");
+
+    let output = Command::new(&exe).output().expect("failed to run exe");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // side_effect() -> Unit; the exe shim only prints non-Unit results.
+    assert_eq!(stdout.trim(), "", "expected Unit (no printed output), got: {:?}", stdout);
+
+    let contents = std::fs::read_to_string(&log_path)
+        .unwrap_or_else(|e| panic!("expected else-branch side effect to have run at {:?}: {}", log_path, e));
+    assert_eq!(contents, "side effect ran\n");
+}
+
 // ── Fix-3: stale rlib regression — provider is always recompiled ──────────────
 //
 // Builds the same provider bundle twice into the same output directory.

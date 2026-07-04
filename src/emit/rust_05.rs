@@ -476,6 +476,254 @@ fn ref_clone(r: &NodeRef) -> String {
     format!("{}.clone()", ref_expr(r))
 }
 
+// ── Branch scoping (BRANCH_SCOPING_V1) ───────────────────────────────────────
+//
+// The flat node list would, if emitted as a straight-line sequence of
+// unconditional `let node_N = <expr>;` statements, execute a `CIf`'s then_
+// AND else_ subtrees on every call — including any side-effecting CCall
+// inside the branch that isn't taken. `CIf` itself only ever *selects*
+// between two already-materialized values; it never gates their computation.
+//
+// To fix this without changing the IR shape (branches are still ordinary
+// nodes in the same flat list), the emitter computes, per node, the tightest
+// enclosing (CIf, arm) context that ALL of its uses agree on, and only
+// hoists a node to the unconditional top-level prelude when at least one use
+// requires it there (shared between both arms, referenced by `cond`, or used
+// outside any `CIf`). A node whose every use lives inside one arm of one
+// `CIf` is emitted as a `let` *inside that arm's Rust block*, so it only runs
+// when that arm is actually taken.
+//
+// This is possible in one descending pass because `NodeRef::Node(i)` inside
+// node j always has i < j (forward references are a hard verifier invariant
+// — see core_ir_05.rs: "Invariant: for every NodeRef::Node(i) inside node at
+// index j, i < j"), so by the time we compute node i's required scope, every
+// consumer j (j > i) already has its own scope resolved.
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum Branch {
+    Then,
+    Else,
+}
+
+/// A node's required scope: the chain of (CIf node index, arm) it must be
+/// nested inside, outermost first. An empty path means "top-level,
+/// unconditional".
+type ScopePath = Vec<(u32, Branch)>;
+
+enum Use {
+    /// This node is the bundle's final result — always required at top level.
+    Result,
+    /// Used by node `j` in a non-branching position (CCall arg, or CIf cond)
+    /// — required wherever `j` itself is required.
+    Same(u32),
+    /// Used as the `then_`/`else_` value of CIf `j` — required strictly
+    /// inside that arm of `j`.
+    ThenArm(u32),
+    ElseArm(u32),
+}
+
+fn longest_common_prefix(paths: &[ScopePath]) -> ScopePath {
+    let mut iter = paths.iter();
+    let mut prefix = match iter.next() {
+        Some(p) => p.clone(),
+        None => return Vec::new(),
+    };
+    for p in iter {
+        let common = prefix.iter().zip(p.iter()).take_while(|(a, b)| a == b).count();
+        prefix.truncate(common);
+        if prefix.is_empty() {
+            break;
+        }
+    }
+    prefix
+}
+
+/// Compute each node's required `ScopePath`, processed from the last node
+/// down to the first so every consumer's scope is already known.
+///
+/// Errs on the one shape this analysis cannot soundly resolve: a
+/// zero-consumer ("orphan") node — a discarded value, e.g. `let _ = eff();
+/// tail` — sitting inside a `CIf` whose `then_` is a bare pool ref (no
+/// anchor to pin exactly where "then" ends and "else" begins). Not
+/// reachable from M1 today: M1's `IfExpr` grammar only ever allows a single
+/// bare `Expr` per arm (see `nf_lowering.rs`'s `"IfExpr"` case and
+/// `m1-parse.yaml`'s `IfExpr` rule — no `LetExpr` alternative), so a branch
+/// can never contain a let-chain to discard in the first place. This check
+/// exists so that the day some producer's `IfExpr`-equivalent DOES allow
+/// that (a let-chain per arm), the build fails loudly right here instead of
+/// silently hoisting the orphan to top level and reintroducing
+/// BRANCH_SCOPING_V1's exact bug for that one node.
+fn compute_branch_paths(bundle: &CoreBundle) -> Result<Vec<ScopePath>, String> {
+    let n = bundle.nodes.len();
+    let mut uses: Vec<Vec<Use>> = (0..n).map(|_| Vec::new()).collect();
+    if n > 0 {
+        uses[n - 1].push(Use::Result);
+    }
+    for (j, node) in bundle.nodes.iter().enumerate() {
+        match node {
+            Node::CCall { args, .. } => {
+                for a in args {
+                    if let NodeRef::Node(i) = a {
+                        uses[*i as usize].push(Use::Same(j as u32));
+                    }
+                }
+            }
+            Node::CIf { cond, then_, else_ } => {
+                if let NodeRef::Node(i) = cond {
+                    uses[*i as usize].push(Use::Same(j as u32));
+                }
+                if let NodeRef::Node(i) = then_ {
+                    uses[*i as usize].push(Use::ThenArm(j as u32));
+                }
+                if let NodeRef::Node(i) = else_ {
+                    uses[*i as usize].push(Use::ElseArm(j as u32));
+                }
+            }
+            Node::CDeterminate => {}
+        }
+    }
+
+    // BRANCH_SCOPING_V1 tripwire: an orphan node positioned after `cond`'s
+    // own anchor and before a `CIf` whose `then_` has no anchor cannot be
+    // soundly attributed to `then` vs `else` by position alone (see doc
+    // comment above). Check this BEFORE computing `path`, since an orphan
+    // always defaults to top-level there regardless — the point is to
+    // refuse to build rather than silently accept the ambiguous shape.
+    for (k, node) in bundle.nodes.iter().enumerate() {
+        if let Node::CIf { cond, then_, .. } = node {
+            if !matches!(then_, NodeRef::Node(_)) {
+                if let NodeRef::Node(cond_anchor) = cond {
+                    for i in (*cond_anchor as usize + 1)..k {
+                        if uses[i].is_empty() {
+                            return Err(format!(
+                                "BRANCH_SCOPING_V1: node[{i}] has no data-dependency consumer \
+                                 (a discarded value) and sits between CIf node[{k}]'s cond and \
+                                 its own position, but node[{k}]'s `then_` is a bare pool ref with \
+                                 no anchor to pin the then/else boundary — whether node[{i}] belongs \
+                                 to the then-arm or the else-arm cannot be determined from graph \
+                                 position alone. Refusing to build rather than silently defaulting \
+                                 node[{i}] to unconditional top-level emission (which could re-run \
+                                 its effect in the wrong branch, or on every call). This bundle shape \
+                                 is not reachable from M1 today; if a new producer emits it, extend \
+                                 the branch-scoping analysis (or the IR) to carry explicit sequencing \
+                                 before removing this check.",
+                                i = i, k = k
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut path: Vec<ScopePath> = (0..n).map(|_| Vec::new()).collect();
+    for i in (0..n).rev() {
+        let required: Vec<ScopePath> = uses[i]
+            .iter()
+            .map(|u| match u {
+                Use::Result => Vec::new(),
+                Use::Same(j) => path[*j as usize].clone(),
+                Use::ThenArm(j) => {
+                    let mut p = path[*j as usize].clone();
+                    p.push((*j, Branch::Then));
+                    p
+                }
+                Use::ElseArm(j) => {
+                    let mut p = path[*j as usize].clone();
+                    p.push((*j, Branch::Else));
+                    p
+                }
+            })
+            .collect();
+        // A node with no recorded uses has no consumer edge to anchor a
+        // scope to. The tripwire above already refused any case where this
+        // matters; anything reaching here is a genuinely safe top-level
+        // orphan (e.g. a discarded value preceding an unrelated `CIf`).
+        path[i] = longest_common_prefix(&required);
+    }
+    Ok(path)
+}
+
+/// Group node indices by the innermost scope they were assigned — `None` is
+/// the unconditional top-level prelude; `Some((k, arm))` is the direct
+/// contents of that arm of CIf `k`. Order within each group is ascending by
+/// index, matching the bundle's required topological order.
+fn group_by_scope(n: usize, path: &[ScopePath]) -> HashMap<Option<(u32, Branch)>, Vec<usize>> {
+    let mut groups: HashMap<Option<(u32, Branch)>, Vec<usize>> = HashMap::new();
+    for i in 0..n {
+        let key = path[i].last().copied();
+        groups.entry(key).or_default().push(i);
+    }
+    groups
+}
+
+/// Render every node assigned to scope `key` as Rust `let` statements.
+/// `CIf` nodes recurse into their own Then/Else scopes, so a node deferred
+/// into a branch is only ever computed when that branch actually runs.
+#[allow(clippy::too_many_arguments)]
+fn render_scope(
+    key: Option<(u32, Branch)>,
+    groups: &HashMap<Option<(u32, Branch)>, Vec<usize>>,
+    bundle: &CoreBundle,
+    pool_kinds: &[PoolKind],
+    arg_kind_table: &HashMap<&'static str, Vec<ArgKind>>,
+    builtin: &HashMap<Hash256, &'static str>,
+    registry: &HashMap<Hash256, String>,
+    name_to_path: &HashMap<&'static str, &'static str>,
+    xbundle: &HashMap<Hash256, String>,
+) -> Result<String, String> {
+    let mut out = String::new();
+    let Some(indices) = groups.get(&key) else { return Ok(out) };
+    for &i in indices {
+        match &bundle.nodes[i] {
+            Node::CIf { cond, then_, else_ } => {
+                // cond / then / else are Data positions. A Fn-typed pool ref
+                // here would be "Fn as data" — reject (same gate as before).
+                for (label, r) in &[("cond", cond), ("then", then_), ("else", else_)] {
+                    if let NodeRef::Pool(pi) = r {
+                        let pi_us = *pi as usize;
+                        if let Some(PoolKind::FnRef(_)) = pool_kinds.get(pi_us) {
+                            return Err(format!(
+                                "type gate: CIf {} slot is Data but pool[{}] is Fn-typed — \
+                                 Fn refs are callee-only, never condition or branch value \
+                                 (FN_REF_IS_CALLEE_ONLY)",
+                                label, pi
+                            ));
+                        }
+                    }
+                }
+                let then_body = render_scope(
+                    Some((i as u32, Branch::Then)), groups, bundle, pool_kinds,
+                    arg_kind_table, builtin, registry, name_to_path, xbundle,
+                )?;
+                let else_body = render_scope(
+                    Some((i as u32, Branch::Else)), groups, bundle, pool_kinds,
+                    arg_kind_table, builtin, registry, name_to_path, xbundle,
+                )?;
+                out.push_str(&format!(
+                    "    let node_{i}: Value = if axis_codegen_bridge::runtime::value::truthy(&{cond}) {{\n\
+                     {then_body}        {then_tail}\n    }} else {{\n\
+                     {else_body}        {else_tail}\n    }};\n",
+                    i = i,
+                    cond = ref_expr(cond),
+                    then_body = then_body,
+                    then_tail = ref_clone(then_),
+                    else_body = else_body,
+                    else_tail = ref_clone(else_),
+                ));
+            }
+            other => {
+                let expr = emit_node(
+                    other, pool_kinds, arg_kind_table, builtin, registry, name_to_path, xbundle,
+                )
+                .map_err(|e| format!("node[{}]: {}", i, e))?;
+                out.push_str(&format!("    let node_{}: Value = {};\n", i, expr));
+            }
+        }
+    }
+    Ok(out)
+}
+
 // ── Node emission ─────────────────────────────────────────────────────────────
 
 fn emit_node(
@@ -900,21 +1148,26 @@ pub fn emit_rust_lib_from_bundle(
         out.push_str("    let _ = &args;\n");
     }
 
-    // Nodes
+    // Nodes — branch-scoped (BRANCH_SCOPING_V1): a node used exclusively
+    // within one arm of a `CIf` is emitted inside that arm's Rust block, so
+    // it only executes when that arm is actually taken. Nodes required
+    // elsewhere (shared between arms, referenced by `cond`, or used outside
+    // any `CIf`) stay hoisted at the unconditional top level, exactly as
+    // before.
     let arg_kind_table = fn_arg_kinds();
-    for (i, node) in bundle.nodes.iter().enumerate() {
-        let expr = emit_node(
-            node,
-            &pool_kinds,
-            &arg_kind_table,
-            &builtin,
-            registry_identity_map,
-            &name_to_path,
-            xbundle_providers,
-        )
-        .map_err(|e| format!("node[{}]: {}", i, e))?;
-        out.push_str(&format!("    let node_{}: Value = {};\n", i, expr));
-    }
+    let branch_paths = compute_branch_paths(bundle)?;
+    let scope_groups = group_by_scope(bundle.nodes.len(), &branch_paths);
+    out.push_str(&render_scope(
+        None,
+        &scope_groups,
+        bundle,
+        &pool_kinds,
+        &arg_kind_table,
+        &builtin,
+        registry_identity_map,
+        &name_to_path,
+        xbundle_providers,
+    )?);
 
     // Result: last node, or first Data pool entry, or Unit.
     // Fn-typed pool entries are skipped — they have no `let pool_N` binding.
