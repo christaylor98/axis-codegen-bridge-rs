@@ -689,91 +689,10 @@ fn test_05_inspect() {
     assert!(stdout.contains("constant_pool"), "pool info not in output:\n{}", stdout);
 }
 
-// ── (20) ping-pong: two loops exchanging signals via shared atomics ────────────
-
-fn make_ping_bundle() -> CoreBundle {
-    CoreBundle {
-        version: "0.5".to_string(),
-        constant_pool: vec![ConstantPoolEntry { def_hash: unit_type_hash(), payload: vec![] }],
-        nodes: vec![Node::CCall {
-            target_identity: sha256_bytes(b"ping_loop"),
-            target_name: "ping_loop".to_string(),
-            args: vec![NodeRef::Pool(0)],
-        }],
-        result: NodeRef::Node(0),
-    }
-}
-
-fn make_pong_bundle() -> CoreBundle {
-    CoreBundle {
-        version: "0.5".to_string(),
-        constant_pool: vec![ConstantPoolEntry { def_hash: unit_type_hash(), payload: vec![] }],
-        nodes: vec![Node::CCall {
-            target_identity: sha256_bytes(b"pong_loop"),
-            target_name: "pong_loop".to_string(),
-            args: vec![NodeRef::Pool(0)],
-        }],
-        result: NodeRef::Node(0),
-    }
-}
-
-#[test]
-fn test_ping_pong_two_loops() {
-    let dir = TempDir::new().unwrap();
-
-    let ping = make_ping_bundle();
-    let ping_coreir = write_05_bundle(&dir, "ping.coreir", &ping);
-
-    let pong = make_pong_bundle();
-    let pong_coreir = write_05_bundle(&dir, "pong.coreir", &pong);
-
-    let root = make_unit_bundle();
-    let root_coreir = write_05_bundle(&dir, "root.coreir", &root);
-    let exe_out = dir.path().join("pingpong_exe");
-
-    let status = Command::new(bridge())
-        .args([
-            "build",     root_coreir.to_str().unwrap(),
-            "--out",     exe_out.to_str().unwrap(),
-            "--lib",     ping_coreir.to_str().unwrap(),
-            "--lib",     pong_coreir.to_str().unwrap(),
-            "--entries", "ping,pong",
-            "--exe",
-        ])
-        .status()
-        .expect("bridge failed to run");
-    assert!(status.success(), "ping-pong build failed");
-    assert!(exe_out.exists(), "exe not produced");
-
-    let output = Command::new(&exe_out).output().expect("failed to run exe");
-    assert!(output.status.success(), "ping-pong exe exited non-zero:\nstdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // All 5 rounds must complete and be reported by both sides.
-    for round in 1..=5 {
-        assert!(stdout.contains(&format!("ping: round {} ok", round)),
-            "missing 'ping: round {} ok' in:\n{}", round, stdout);
-        assert!(stdout.contains(&format!("pong: round {} done", round)),
-            "missing 'pong: round {} done' in:\n{}", round, stdout);
-    }
-
-    // Verify pong computed the right answers for each payload shape.
-    // Round 1: Int(7) → 7² = 49
-    assert!(stdout.contains("→ 49]"), "round 1 (square) wrong in:\n{}", stdout);
-    // Round 2: List(0..100) → sum = 4950
-    assert!(stdout.contains("→ 4950]"), "round 2 (list sum) wrong in:\n{}", stdout);
-    // Round 3: Str(240 chars) → char count = 240
-    assert!(stdout.contains("→ 240]"), "round 3 (str len) wrong in:\n{}", stdout);
-    // Round 4: List(0..5000) → sum = 12497500
-    assert!(stdout.contains("→ 12497500]"), "round 4 (large list sum) wrong in:\n{}", stdout);
-    // Round 5: List(3×List(1000)) → flatten+sum = 1498500
-    assert!(stdout.contains("→ 1498500]"), "round 5 (nested sum) wrong in:\n{}", stdout);
-
-    // Harness-level verdict from the result sink.
-    assert!(stdout.contains("ping: PASS"), "missing 'ping: PASS' in:\n{}", stdout);
-    assert!(stdout.contains("pong: PASS"), "missing 'pong: PASS' in:\n{}", stdout);
-}
+// ── (20) ping-pong round-trip ─────────────────────────────────────────────────
+// Retired with runtime/signals.rs (BRIDGE_ASYNC_PRIMITIVES_V1). The equivalent
+// 5-round exchange is now driven by the real event_subscribe / channel_send /
+// wait primitives in tests/async_roundtrip_test.rs.
 
 // ── Fix-5: bool_to_str — CCall bundle builds and exe prints "true" / "false" ─
 
@@ -978,6 +897,7 @@ fn test_orphan_before_unanchored_cif_then_is_rejected() {
 
     let result = axis_codegen_bridge::emit::rust_05::emit_rust_lib_from_bundle(
         &bundle, "ambiguous_orphan", &std::collections::HashMap::new(), &std::collections::HashMap::new(),
+        &std::collections::HashSet::new(),
     );
     let err = result.expect_err("ambiguous orphan-before-unanchored-CIf shape must be rejected");
     assert!(err.contains("BRANCH_SCOPING_V1"), "expected BRANCH_SCOPING_V1 tripwire message, got: {}", err);

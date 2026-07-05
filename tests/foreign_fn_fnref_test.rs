@@ -266,6 +266,7 @@ fn type_gate_rejects_fn_pool_ref_in_data_slot() {
         "type_gate_smoke",
         &HashMap::new(),
         &HashMap::new(),
+        &std::collections::HashSet::new(),
     )
     .expect_err("emit should reject Fn-typed pool ref in a Data slot");
     assert!(
@@ -310,6 +311,7 @@ fn type_gate_rejects_data_pool_ref_in_fn_slot() {
         "type_gate_smoke_fn_slot",
         &HashMap::new(),
         &HashMap::new(),
+        &std::collections::HashSet::new(),
     )
     .expect_err("emit should reject Data pool ref in a Fn slot");
     assert!(
@@ -355,6 +357,7 @@ fn fn_slot_emits_native_multi_arg_call() {
         "foreach_smoke",
         &HashMap::new(),
         &HashMap::new(),
+        &std::collections::HashSet::new(),
     )
     .expect("emit should succeed for a well-typed foreach call");
 

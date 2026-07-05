@@ -213,6 +213,9 @@ fn cmd_build(args: &[String]) {
     }
     let exe_dir = std::env::current_exe().expect("current exe").parent().expect("exe dir").to_owned();
     let registry_map = rust_05::load_registry_identity_map(&reg_paths);
+    // Bridge-independent async fact scan (BRIDGE_SCAN_INDEPENDENT). Provides the
+    // declared-channel set that gates emit-time CHANNELS_STATIC enforcement.
+    let async_facts = rust_05::scan_bridge_async(&reg_paths);
 
     // ── §5b provider resolution (--lib / --lib-dir) ────────────────────
     // Expand --lib-dir into lib_paths (same logic as the 0.4 path).
@@ -318,7 +321,7 @@ fn cmd_build(args: &[String]) {
         let provider_crate_name = format!("ax_xb_{}", safe_pfn);
         // Always recompile — never cache. Stale _xb.a silently links old
         // code when the source .coreir changes (build-always-recompiles).
-        let pcode = match rust_05::emit_rust_lib_from_bundle(pbundle, pfn, &registry_map, &xbundle_providers) {
+        let pcode = match rust_05::emit_rust_lib_from_bundle(pbundle, pfn, &registry_map, &xbundle_providers, &async_facts.channels) {
             Ok(c)  => c,
             Err(e) => { eprintln!("error (provider '{}'): {}", pfn, e); std::process::exit(1); }
         };
@@ -359,7 +362,7 @@ fn cmd_build(args: &[String]) {
     }
     // ── end §5b provider resolution ─────────────────────────────────────
 
-    let rust_code = match rust_05::emit_rust_lib_from_bundle(&bundle, &fn_name, &registry_map, &xbundle_providers) {
+    let rust_code = match rust_05::emit_rust_lib_from_bundle(&bundle, &fn_name, &registry_map, &xbundle_providers, &async_facts.channels) {
         Ok(code) => code,
         Err(e)   => { eprintln!("error: {}", e); std::process::exit(1); }
     };

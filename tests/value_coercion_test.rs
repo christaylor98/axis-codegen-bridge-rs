@@ -47,7 +47,7 @@ fn bridge_to_dec_emits_native_four_arg_call() {
         result: NodeRef::Node(0),
     };
 
-    let src = emit_rust_lib_from_bundle(&bundle, "to_dec_smoke", &HashMap::new(), &HashMap::new())
+    let src = emit_rust_lib_from_bundle(&bundle, "to_dec_smoke", &HashMap::new(), &HashMap::new(), &std::collections::HashSet::new())
         .expect("emit should succeed for a well-typed bridge_to_dec call");
 
     // Fn-typed pool entries are NOT bound as `let pool_N`.
@@ -94,7 +94,7 @@ fn bridge_to_float_emits_native_four_arg_call() {
         result: NodeRef::Node(0),
     };
 
-    let src = emit_rust_lib_from_bundle(&bundle, "to_float_smoke", &HashMap::new(), &HashMap::new())
+    let src = emit_rust_lib_from_bundle(&bundle, "to_float_smoke", &HashMap::new(), &HashMap::new(), &std::collections::HashSet::new())
         .expect("emit should succeed for a well-typed bridge_to_float call");
 
     let expected =

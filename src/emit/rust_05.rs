@@ -177,9 +177,11 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("argv_count", "axis_codegen_bridge::runtime::process::argv_count");
     m.insert("argv_or",    "axis_codegen_bridge::runtime::process::argv_or");
 
-    // Signal ping-pong (signals.rs)
-    m.insert("ping_loop", "axis_codegen_bridge::runtime::signals::ping_loop");
-    m.insert("pong_loop", "axis_codegen_bridge::runtime::signals::pong_loop");
+    // Async / IPC primitives (channels.rs — BRIDGE_ASYNC_PRIMITIVES_V1).
+    // `wait` carries a single Fn-typed callee slot — see `fn_arg_kinds()`.
+    m.insert("event_subscribe", "axis_codegen_bridge::runtime::channels::event_subscribe");
+    m.insert("channel_send",    "axis_codegen_bridge::runtime::channels::channel_send");
+    m.insert("wait",            "axis_codegen_bridge::runtime::channels::wait");
 
     // Value coercion family (BRIDGE_VALUE_COERCION_V1 — coerce.rs).
     // Six converters + two tag-dispatching HOFs. Dispatchers carry three FnRef
@@ -292,6 +294,97 @@ pub fn load_registry_identity_map(paths: &[String]) -> HashMap<Hash256, String> 
     map
 }
 
+// ── Bridge-independent async fact scan (BRIDGE_SCAN_INDEPENDENT) ──────────────
+
+/// Facts the bridge extracts from `.axreg` files to dispatch async behaviour.
+///
+/// Deliberately self-contained: built by a text scan (below) that mirrors
+/// [`load_registry_identity_map`]'s `read_to_string` + `lines()` shape, with
+/// zero dependency on any external parser or shared struct (BRIDGE_SCAN_INDEPENDENT).
+#[derive(Debug, Default, Clone)]
+pub struct BridgeAsyncFacts {
+    /// Declared channel names — from top-level `channel <name> / type <Ty> / end`.
+    pub channels: std::collections::HashSet<String>,
+    /// Declared channel element types, keyed by channel name (`type <Ty>` line).
+    pub channel_types: HashMap<String, String>,
+    /// Fns flagged `background` inside their `bridge_contract … end` block.
+    pub background_fns: std::collections::HashSet<String>,
+}
+
+/// Scan `--reg` files for channel declarations and `background` fns.
+///
+/// Grammar (all blocks close with a bare `end`; nesting is tracked by state, not
+/// a shared parser):
+///
+/// ```text
+/// channel <name>          fn <name>
+///   type <Ty>               …
+/// end                       bridge_contract
+///                             background
+///                           end
+///                         end
+/// ```
+pub fn scan_bridge_async(paths: &[String]) -> BridgeAsyncFacts {
+    let mut facts = BridgeAsyncFacts::default();
+    for path in paths {
+        let content = match std::fs::read_to_string(path) {
+            Ok(c)  => c,
+            Err(e) => { eprintln!("warning: could not read --reg {}: {}", path, e); continue; }
+        };
+        scan_bridge_async_str(&content, &mut facts);
+    }
+    facts
+}
+
+/// Text-scan one registry document into `facts`. Split out from
+/// [`scan_bridge_async`] so it is unit-testable without touching the filesystem.
+fn scan_bridge_async_str(content: &str, facts: &mut BridgeAsyncFacts) {
+    let mut current_fn: Option<String> = None;   // fn whose block we're inside
+    let mut in_contract = false;                 // inside a `bridge_contract … end`
+    let mut channel_name: Option<String> = None; // inside a `channel … end`
+    let mut channel_ty: Option<String> = None;
+
+    for line in content.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with("//") {
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix("fn ") {
+            current_fn = rest.split_whitespace().next().map(|s| s.to_string());
+            in_contract = false;
+        } else if let Some(rest) = t.strip_prefix("channel ") {
+            channel_name = rest.split_whitespace().next().map(|s| s.to_string());
+            channel_ty = None;
+        } else if t == "bridge_contract" {
+            in_contract = true;
+        } else if t == "background" {
+            if in_contract {
+                if let Some(name) = &current_fn {
+                    facts.background_fns.insert(name.clone());
+                }
+            }
+        } else if let Some(rest) = t.strip_prefix("type ") {
+            // Only the channel-block form (`type <Ty>`) is meaningful here; the
+            // top-level `type X = prim …` declaration carries an `=` and is skipped.
+            if channel_name.is_some() && !rest.contains('=') {
+                channel_ty = rest.split_whitespace().next().map(|s| s.to_string());
+            }
+        } else if t == "end" {
+            // Close the innermost open block: channel, then bridge_contract, then fn.
+            if let Some(name) = channel_name.take() {
+                facts.channels.insert(name.clone());
+                if let Some(ty) = channel_ty.take() {
+                    facts.channel_types.insert(name, ty);
+                }
+            } else if in_contract {
+                in_contract = false;
+            } else {
+                current_fn = None;
+            }
+        }
+    }
+}
+
 // ── Arg-kind metadata (Phase 0: HOF callee-slot signatures) ──────────────────
 
 /// Per-arg kind for a bridge fn.
@@ -331,6 +424,9 @@ fn fn_arg_kinds() -> HashMap<&'static str, Vec<ArgKind>> {
     // in positional Int/Dec/Float order (BRIDGE_VALUE_COERCION_V1).
     m.insert("bridge_to_dec",   vec![Data, FnRef, FnRef, FnRef]);
     m.insert("bridge_to_float", vec![Data, FnRef, FnRef, FnRef]);
+    // Async: `wait` takes its handler in a single Fn callee slot. The handler is
+    // invoked synchronously within wait's own frame (CLOSURE_RULE_HARD).
+    m.insert("wait", vec![FnRef]);
     m
 }
 
@@ -960,6 +1056,7 @@ pub fn emit_rust_lib_from_bundle(
     fn_name: &str,
     registry_identity_map: &HashMap<Hash256, String>,
     xbundle_providers: &HashMap<Hash256, String>,
+    declared_channels: &std::collections::HashSet<String>,
 ) -> Result<String, String> {
     let builtin = bridge_builtin_map();
     let name_to_path = symbol_map();
@@ -1012,6 +1109,37 @@ pub fn emit_rust_lib_from_bundle(
     }
     if !errors.is_empty() {
         return Err(format!("unresolved CCall targets:\n  {}", errors.join("\n  ")));
+    }
+
+    // CHANNELS_STATIC: a `channel_send` whose name argument is a compile-time
+    // literal Text must target a channel declared in the registry. An undeclared
+    // name is a HARD ERROR at emit time — the same discipline used for Fn-as-data
+    // — so it can never degrade to a silent runtime no-op. (A non-literal name is
+    // not statically checkable and is left to the runtime; static topology means
+    // channel names are literals in practice.)
+    let channel_send_id = sha256_bytes(b"channel_send");
+    for node in &bundle.nodes {
+        if let Node::CCall { target_identity, args, .. } = node {
+            if *target_identity != channel_send_id {
+                continue;
+            }
+            if let Some(NodeRef::Pool(pi)) = args.first() {
+                if let Some(entry) = bundle.constant_pool.get(*pi as usize) {
+                    if entry.def_hash == text_type_hash() {
+                        let cname = decode_text_payload(&entry.payload)
+                            .map_err(|e| format!("channel_send: name literal: {}", e))?;
+                        if !declared_channels.contains(&cname) {
+                            return Err(format!(
+                                "CHANNELS_STATIC: channel_send targets undeclared channel {:?} — \
+                                 declare it with a `channel {} / type <Ty> / end` block in a \
+                                 --reg registry file",
+                                cname, cname
+                            ));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // Collect the distinct §5b extern symbols this bundle calls (for the extern block)
@@ -1210,4 +1338,89 @@ pub fn emit_rust_lib_from_bundle(
     out.push_str("}\n");
 
     Ok(out)
+}
+
+#[cfg(test)]
+mod async_scan_tests {
+    use super::*;
+
+    // A registry document exercising both scanned constructs plus the nesting
+    // that trips a naïve `end`-counter: a `bridge_contract … end` inside a
+    // `fn … end`, and top-level `channel … end` blocks whose `type` line must
+    // not be confused with a top-level `type X = prim …` declaration.
+    const DOC: &str = r#"
+registry test 0.1
+
+type Value = prim value
+type Fn    = prim value
+
+channel a2b
+  type Value
+end
+
+channel b2a
+  type Value
+end
+
+fn worker
+  identity 0xdeadbeef
+  kind     leaf
+  in       (Text)
+  out      Unit
+  effect   fullIo
+  deterministic false
+  idempotent    false
+  bridge_contract
+    background
+  end
+end
+
+fn plain
+  identity 0xfeedface
+  kind     leaf
+  in       (Int)
+  out      Int
+  effect   pure
+  deterministic true
+  idempotent    true
+end
+"#;
+
+    #[test]
+    fn scan_extracts_channels_and_background() {
+        let mut facts = BridgeAsyncFacts::default();
+        scan_bridge_async_str(DOC, &mut facts);
+
+        // Both top-level channels, with their element types.
+        assert!(facts.channels.contains("a2b"), "missing channel a2b: {:?}", facts.channels);
+        assert!(facts.channels.contains("b2a"), "missing channel b2a: {:?}", facts.channels);
+        assert_eq!(facts.channels.len(), 2, "unexpected channels: {:?}", facts.channels);
+        assert_eq!(facts.channel_types.get("a2b").map(String::as_str), Some("Value"));
+
+        // Only the fn whose bridge_contract holds `background` is flagged; the
+        // fn-closing `end` after the contract's own `end` must not leak state.
+        assert!(facts.background_fns.contains("worker"), "worker not flagged: {:?}", facts.background_fns);
+        assert!(!facts.background_fns.contains("plain"), "plain wrongly flagged");
+        assert_eq!(facts.background_fns.len(), 1);
+    }
+
+    #[test]
+    fn scan_ignores_toplevel_type_decls() {
+        // `type X = prim …` (with `=`) is not a channel element type.
+        let mut facts = BridgeAsyncFacts::default();
+        scan_bridge_async_str("type Value = prim value\ntype Fn = prim value\n", &mut facts);
+        assert!(facts.channels.is_empty());
+        assert!(facts.channel_types.is_empty());
+        assert!(facts.background_fns.is_empty());
+    }
+
+    #[test]
+    fn scan_background_outside_contract_is_ignored() {
+        // A bare `background` token that is NOT inside a bridge_contract block
+        // must not flag the fn (guards against a loose keyword match).
+        let doc = "fn f\n  identity 0x00\n  background\nend\n";
+        let mut facts = BridgeAsyncFacts::default();
+        scan_bridge_async_str(doc, &mut facts);
+        assert!(facts.background_fns.is_empty(), "background outside contract flagged: {:?}", facts.background_fns);
+    }
 }

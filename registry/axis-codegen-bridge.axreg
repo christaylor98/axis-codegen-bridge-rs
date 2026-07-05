@@ -1190,22 +1190,35 @@ fn test_let
   idempotent    true
 end
 
-// ── Signal ping-pong (signals.rs) ─────────────────────────────────────────────
-fn ping_loop
-  identity 0x7ab4bb5f769658ea567bdba4604d04d68af335edd3e0bf1125fadc3e130049f7
+// ── Async / IPC primitives (channels.rs — BRIDGE_ASYNC_PRIMITIVES_V1) ─────────
+// event_subscribe / channel_send / wait. `wait` takes its handler in a Fn
+// callee slot (invoked synchronously in-frame — CLOSURE_RULE_HARD) and always
+// delivers a List (WAIT_ALWAYS_LIST). Channel names are static (CHANNELS_STATIC).
+fn event_subscribe
+  identity 0xbd75eac091711d66303cc29f624f639594cf34d23dbda71c883aa799d36b5613
   kind     leaf
-  in       (Unit)
+  in       (Text)
+  out      Unit
+  effect   fullIo
+  deterministic false
+  idempotent    true
+end
+
+fn channel_send
+  identity 0xb45652de2a7249022f686a56d7ba3747ab756c58d668e9a337e9141e101fe489
+  kind     leaf
+  in       (Text, Value)
   out      Unit
   effect   fullIo
   deterministic false
   idempotent    false
 end
 
-fn pong_loop
-  identity 0x558d5bd4b8f6b835cef6cd23c84c2164e15f94df384da58c94e335b5568c4ea8
+fn wait
+  identity 0x716ecabb45ac6a88a049398fde2d3d5225c6dd3121ae9bbc5af457eb4baf056a
   kind     leaf
-  in       (Unit)
-  out      Unit
+  in       (Fn)
+  out      Value
   effect   fullIo
   deterministic false
   idempotent    false
