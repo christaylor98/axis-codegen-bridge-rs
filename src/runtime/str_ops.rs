@@ -164,18 +164,28 @@ pub fn str_eq(args: Value) -> Value {
 #[track_caller]
 pub fn text_eq(args: Value) -> Value { str_eq(args) }
 
-/// text_lt(Text, Text) -> Bool — lexicographic less-than. The canonical
-/// registry declares this; the surface str_* family doesn't (no str_lt today).
-#[track_caller]
-pub fn text_lt(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-            (Value::Str(a), Value::Str(b)) => Value::Bool(get_str(*a) < get_str(*b)),
-            _ => panic!("text_lt: expected two Str values"),
-        },
-        _ => panic!("text_lt: expected Tuple(Str, Str)"),
-    }
+/// text_lt/text_lte/text_gt/text_gte(Text, Text) -> Bool — lexicographic
+/// ordering by Unicode scalar value (Rust's `str` Ord, i.e. UTF-8 byte order).
+/// Canonical registry names; the surface str_* family has no ordered compares.
+macro_rules! text_cmp_op {
+    ($name:ident, $op:tt) => {
+        #[track_caller]
+        pub fn $name(args: Value) -> Value {
+            match args {
+                Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+                    (Value::Str(a), Value::Str(b)) => Value::Bool(get_str(*a) $op get_str(*b)),
+                    _ => panic!(concat!(stringify!($name), ": expected two Str values")),
+                },
+                _ => panic!(concat!(stringify!($name), ": expected Tuple(Str, Str)")),
+            }
+        }
+    };
 }
+
+text_cmp_op!(text_lt,  <);
+text_cmp_op!(text_lte, <=);
+text_cmp_op!(text_gt,  >);
+text_cmp_op!(text_gte, >=);
 
 /// Returns the char-index of the first occurrence of needle in haystack, or -1 if not found.
 #[track_caller]

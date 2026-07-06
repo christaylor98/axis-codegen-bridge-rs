@@ -93,6 +93,49 @@ fn test_float_eq() {
 }
 
 #[test]
+fn test_dec_ordered_compares() {
+    use axis_codegen_bridge::runtime::value::Decimal;
+    use std::str::FromStr;
+    setup();
+    let lo = || Value::Dec(Decimal::from_str("1.5").unwrap());
+    let hi = || Value::Dec(Decimal::from_str("2.25").unwrap());
+    assert_eq!(arith::dec_lt(t2(lo(), hi())), Value::Bool(true));
+    assert_eq!(arith::dec_lt(t2(hi(), lo())), Value::Bool(false));
+    assert_eq!(arith::dec_lte(t2(lo(), lo())), Value::Bool(true));
+    assert_eq!(arith::dec_gt(t2(hi(), lo())), Value::Bool(true));
+    assert_eq!(arith::dec_gte(t2(lo(), lo())), Value::Bool(true));
+    assert_eq!(arith::dec_gte(t2(lo(), hi())), Value::Bool(false));
+}
+
+#[test]
+fn test_float_ordered_compares() {
+    setup();
+    assert_eq!(arith::float_lt(t2(Value::Float(1.5), Value::Float(2.5))), Value::Bool(true));
+    assert_eq!(arith::float_lte(t2(Value::Float(2.5), Value::Float(2.5))), Value::Bool(true));
+    assert_eq!(arith::float_gt(t2(Value::Float(2.5), Value::Float(1.5))), Value::Bool(true));
+    assert_eq!(arith::float_gte(t2(Value::Float(2.5), Value::Float(2.5))), Value::Bool(true));
+    // IEEE-754: every ordered comparison with NaN is false.
+    let nan = || Value::Float(f64::NAN);
+    assert_eq!(arith::float_lt(t2(nan(), Value::Float(1.0))), Value::Bool(false));
+    assert_eq!(arith::float_gt(t2(nan(), Value::Float(1.0))), Value::Bool(false));
+    assert_eq!(arith::float_lte(t2(nan(), nan())), Value::Bool(false));
+    assert_eq!(arith::float_gte(t2(nan(), nan())), Value::Bool(false));
+}
+
+#[test]
+fn test_text_ordered_compares() {
+    setup();
+    let a = || Value::Str(intern_str("apple"));
+    let b = || Value::Str(intern_str("banana"));
+    assert_eq!(str_ops::text_lt(t2(a(), b())), Value::Bool(true));
+    assert_eq!(str_ops::text_lt(t2(b(), a())), Value::Bool(false));
+    assert_eq!(str_ops::text_lte(t2(a(), a())), Value::Bool(true));
+    assert_eq!(str_ops::text_gt(t2(b(), a())), Value::Bool(true));
+    assert_eq!(str_ops::text_gte(t2(a(), a())), Value::Bool(true));
+    assert_eq!(str_ops::text_gte(t2(a(), b())), Value::Bool(false));
+}
+
+#[test]
 fn test_unit_id_discards_int() {
     setup();
     assert_eq!(arith::unit_id(Value::Int(99)), Value::Unit);

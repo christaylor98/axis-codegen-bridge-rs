@@ -45,7 +45,15 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("int_gt",   "axis_codegen_bridge::runtime::arith::int_gt");
     m.insert("int_gte",  "axis_codegen_bridge::runtime::arith::int_gte");
     m.insert("int_eq",   "axis_codegen_bridge::runtime::arith::int_eq");
+    m.insert("dec_lt",   "axis_codegen_bridge::runtime::arith::dec_lt");
+    m.insert("dec_lte",  "axis_codegen_bridge::runtime::arith::dec_lte");
+    m.insert("dec_gt",   "axis_codegen_bridge::runtime::arith::dec_gt");
+    m.insert("dec_gte",  "axis_codegen_bridge::runtime::arith::dec_gte");
     m.insert("dec_eq",   "axis_codegen_bridge::runtime::arith::dec_eq");
+    m.insert("float_lt",  "axis_codegen_bridge::runtime::arith::float_lt");
+    m.insert("float_lte", "axis_codegen_bridge::runtime::arith::float_lte");
+    m.insert("float_gt",  "axis_codegen_bridge::runtime::arith::float_gt");
+    m.insert("float_gte", "axis_codegen_bridge::runtime::arith::float_gte");
     m.insert("float_eq", "axis_codegen_bridge::runtime::arith::float_eq");
     m.insert("value_eq", "axis_codegen_bridge::runtime::arith::value_eq");
 
@@ -79,6 +87,9 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("str_eq",          "axis_codegen_bridge::runtime::str_ops::str_eq");
     m.insert("text_eq",         "axis_codegen_bridge::runtime::str_ops::text_eq");
     m.insert("text_lt",         "axis_codegen_bridge::runtime::str_ops::text_lt");
+    m.insert("text_lte",        "axis_codegen_bridge::runtime::str_ops::text_lte");
+    m.insert("text_gt",         "axis_codegen_bridge::runtime::str_ops::text_gt");
+    m.insert("text_gte",        "axis_codegen_bridge::runtime::str_ops::text_gte");
     m.insert("str_before",      "axis_codegen_bridge::runtime::str_ops::str_before");
     m.insert("str_after",       "axis_codegen_bridge::runtime::str_ops::str_after");
     m.insert("str_between",     "axis_codegen_bridge::runtime::str_ops::str_between");

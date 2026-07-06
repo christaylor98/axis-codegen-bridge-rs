@@ -15,16 +15,20 @@ macro_rules! int_bin_op {
     };
 }
 
-macro_rules! int_cmp_op {
-    ($name:ident, $op:tt) => {
+/// Typed ordered comparison over one Value variant, returning Bool. Used for the
+/// int_/dec_/float_ lt/lte/gt/gte families — each stays type-monomorphic (mixed
+/// operands panic) so the emitter can pick the right one by operand type.
+/// Float comparisons follow IEEE-754: any comparison with NaN is false.
+macro_rules! cmp_op {
+    ($name:ident, $variant:ident, $tyname:literal, $op:tt) => {
         #[track_caller]
         pub fn $name(args: Value) -> Value {
             match args {
                 Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-                    (Value::Int(x), Value::Int(y)) => Value::Bool(x $op y),
-                    _ => panic!(concat!(stringify!($name), ": expected two Int values")),
+                    (Value::$variant(x), Value::$variant(y)) => Value::Bool(x $op y),
+                    _ => panic!(concat!(stringify!($name), ": expected two ", $tyname, " values")),
                 },
-                _ => panic!(concat!(stringify!($name), ": expected Tuple(Int, Int)")),
+                _ => panic!(concat!(stringify!($name), ": expected Tuple(", $tyname, ", ", $tyname, ")")),
             }
         }
     };
@@ -33,10 +37,18 @@ macro_rules! int_cmp_op {
 int_bin_op!(int_add, +);
 int_bin_op!(int_sub, -);
 int_bin_op!(int_mul, *);
-int_cmp_op!(int_lt,  <);
-int_cmp_op!(int_lte, <=);
-int_cmp_op!(int_gt,  >);
-int_cmp_op!(int_gte, >=);
+cmp_op!(int_lt,  Int, "Int", <);
+cmp_op!(int_lte, Int, "Int", <=);
+cmp_op!(int_gt,  Int, "Int", >);
+cmp_op!(int_gte, Int, "Int", >=);
+cmp_op!(dec_lt,  Dec, "Dec", <);
+cmp_op!(dec_lte, Dec, "Dec", <=);
+cmp_op!(dec_gt,  Dec, "Dec", >);
+cmp_op!(dec_gte, Dec, "Dec", >=);
+cmp_op!(float_lt,  Float, "Float", <);
+cmp_op!(float_lte, Float, "Float", <=);
+cmp_op!(float_gt,  Float, "Float", >);
+cmp_op!(float_gte, Float, "Float", >=);
 
 #[track_caller]
 pub fn int_div(args: Value) -> Value {

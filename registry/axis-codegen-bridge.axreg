@@ -135,6 +135,90 @@ fn int_gte
   out Bool
   effect fullIo
 end
+
+// Dec/Float ordered comparisons — the Dec/Float-typed counterparts of the
+// int_ lt/lte/gt/gte family. Type-monomorphic (mixed operands panic). Float
+// follows IEEE-754: any comparison with NaN is false. Identity = sha256(name).
+fn dec_lt
+  identity 0xf9bcfa593438b3020b481aabbd04bfbc6caf834fe74847da88578260646c67a0
+  kind     leaf
+  in       (Dec, Dec)
+  out      Bool
+  effect   fullIo
+  deterministic true
+  idempotent    false
+end
+
+fn dec_lte
+  identity 0xc430cb6875cb93b31822b95c7e2992ea060791cb92f01d8348aa7d140cfc4cfd
+  kind     leaf
+  in       (Dec, Dec)
+  out      Bool
+  effect   fullIo
+  deterministic true
+  idempotent    false
+end
+
+fn dec_gt
+  identity 0x656eacdb0ece73f2d8bcf6a8293511c5c58592346877bd8dc6518112fe1cac7e
+  kind     leaf
+  in       (Dec, Dec)
+  out      Bool
+  effect   fullIo
+  deterministic true
+  idempotent    false
+end
+
+fn dec_gte
+  identity 0x7e6d229ee30047f5921cb121c648d3842ddec0911e171e5c9d7898473007596c
+  kind     leaf
+  in       (Dec, Dec)
+  out      Bool
+  effect   fullIo
+  deterministic true
+  idempotent    false
+end
+
+fn float_lt
+  identity 0xd4032b470d114b63af930dc6903b21137bd835b862256a6387aa08d9c667eb1f
+  kind     leaf
+  in       (Float, Float)
+  out      Bool
+  effect   fullIo
+  deterministic true
+  idempotent    false
+end
+
+fn float_lte
+  identity 0x7c8b1ca8e2ee3aa4fb65acc14bac9750a261d68625ac515036935745366580b0
+  kind     leaf
+  in       (Float, Float)
+  out      Bool
+  effect   fullIo
+  deterministic true
+  idempotent    false
+end
+
+fn float_gt
+  identity 0x40cff3b8843f23d5f997d57f411136639d27bffdf8c9c86b95ea6eb6ce118d9c
+  kind     leaf
+  in       (Float, Float)
+  out      Bool
+  effect   fullIo
+  deterministic true
+  idempotent    false
+end
+
+fn float_gte
+  identity 0x113a3fa41c54a6bcaa6ceeacda8251c2f99d12321111b998aea0e66fd2f2dec0
+  kind     leaf
+  in       (Float, Float)
+  out      Bool
+  effect   fullIo
+  deterministic true
+  idempotent    false
+end
+
 // Typed equality leaves. int_eq/dec_eq/float_eq are the Int/Dec/Float-typed
 // counterparts of str_eq (Text); value_eq/__eq__ remain the generic fallback.
 // int_eq and dec_eq/float_eq were implemented + wired in the emit symbol_map but
@@ -341,6 +425,49 @@ end
 // emit symbol_map but previously undeclared here. Identity = sha256("text_eq").
 fn text_eq
   identity 0x134a611041a7bc1827e6e07b9d5f6568c8c0464c89d9cf9462b431ce51855eec
+  kind     leaf
+  in       (Text, Text)
+  out      Bool
+  effect   fullIo
+  deterministic true
+  idempotent    false
+end
+
+// Text lexicographic ordering (by Unicode scalar / UTF-8 byte order). text_lt
+// was wired in the emit symbol_map but previously undeclared here; lte/gt/gte
+// complete the family to match int_ lt/lte/gt/gte. Identity = sha256(name).
+fn text_lt
+  identity 0xc77cf5b468957591badbdfb19c3e9e698a3d27f8ec13db9b1afe655bd3f1d2ff
+  kind     leaf
+  in       (Text, Text)
+  out      Bool
+  effect   fullIo
+  deterministic true
+  idempotent    false
+end
+
+fn text_lte
+  identity 0xd77c1855ac3259089130aaab7d26d2344554b3a04372b59d8b5d4f3586258b8f
+  kind     leaf
+  in       (Text, Text)
+  out      Bool
+  effect   fullIo
+  deterministic true
+  idempotent    false
+end
+
+fn text_gt
+  identity 0xa59358e83864ce4834387e53f5e161390391f2b635f51c150fe3dd5da2fa2061
+  kind     leaf
+  in       (Text, Text)
+  out      Bool
+  effect   fullIo
+  deterministic true
+  idempotent    false
+end
+
+fn text_gte
+  identity 0x895b9d4d88e73a3080b2f92d8df4b9bceb3138c4fc0af8b957339b56cc341352
   kind     leaf
   in       (Text, Text)
   out      Bool
