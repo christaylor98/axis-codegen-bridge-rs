@@ -37,6 +37,27 @@ pub fn sleep(v: Value) -> Value {
     Value::Unit
 }
 
+/// `now_unix_nanos(Unit) -> Int`
+///
+/// Wall-clock nanoseconds since the Unix epoch, as an Int (i64). This is the
+/// clock primitive the M1 surface previously lacked: prior axVerity turns had
+/// to take a `date +%s%N` timestamp from a wrapping shell script and pass it in
+/// via argv (CLAUDE.md §10 — the bind/ledger log's event time). With this, an
+/// M1 program (e.g. the Postgres server's INSERT->push+bind path) can stamp its
+/// own ledger/name-log events natively, removing one of the last reasons a
+/// write path needed a shell driver. Non-deterministic, fullIo. i64 nanoseconds
+/// cover dates through ~2262, far beyond any demo horizon.
+#[track_caller]
+pub fn now_unix_nanos(_: Value) -> Value {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_else(|e| panic!("now_unix_nanos: system clock before Unix epoch: {}", e))
+        .as_nanos();
+    // as_nanos() is u128; clamp into i64 range (a real wall clock is ~1.7e18
+    // now, far below i64::MAX ~9.2e18 — the min is a belt for the year-2262 tail).
+    Value::Int(nanos.min(i64::MAX as u128) as i64)
+}
+
 #[track_caller]
 pub fn argv(idx: Value) -> Value {
     let i = match idx { Value::Int(n) => n as usize, _ => 0 };
