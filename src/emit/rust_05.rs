@@ -236,6 +236,15 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("fs_mkdir_p",           "axis_codegen_bridge::runtime::bytes_io::fs_mkdir_p");
     m.insert("bytes_to_text",        "axis_codegen_bridge::runtime::bytes_io::bytes_to_text");
 
+    // ── Byte codec (bytes_codec.rs — BRIDGE_BYTE_CODEC_V1) ──────────────────────
+    m.insert("bytes_concat",         "axis_codegen_bridge::runtime::bytes_codec::bytes_concat");
+    m.insert("bytes_len",            "axis_codegen_bridge::runtime::bytes_codec::bytes_len");
+    m.insert("bytes_slice",          "axis_codegen_bridge::runtime::bytes_codec::bytes_slice");
+    m.insert("int16_be_encode",      "axis_codegen_bridge::runtime::bytes_codec::int16_be_encode");
+    m.insert("int16_be_decode",      "axis_codegen_bridge::runtime::bytes_codec::int16_be_decode");
+    m.insert("int32_be_encode",      "axis_codegen_bridge::runtime::bytes_codec::int32_be_encode");
+    m.insert("int32_be_decode",      "axis_codegen_bridge::runtime::bytes_codec::int32_be_decode");
+
     // ── TCP sockets (net.rs — BRIDGE_TCP_SOCKET_V1) ─────────────────────────────
     m.insert("tcp_listen",           "axis_codegen_bridge::runtime::net::tcp_listen");
     m.insert("tcp_connect",          "axis_codegen_bridge::runtime::net::tcp_connect");

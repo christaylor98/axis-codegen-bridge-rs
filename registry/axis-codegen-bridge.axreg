@@ -1657,6 +1657,93 @@ fn bytes_to_text
   idempotent    true
 end
 
+// ── Byte codec (bytes_codec.rs — BRIDGE_BYTE_CODEC_V1) ────────────────────────
+// AXLANG_TURN_0002_BYTE_CODEC_PRIMITIVES — unblocks turn:axverity:0017 (Postgres
+// wire protocol). Pure leaf fns for assembling/parsing binary wire frames as raw
+// Bytes without routing binary framing through UTF-8-validated Text.
+//
+// bytes_concat(Bytes, Bytes) -> Bytes   append b to a (binary; fold in M1 for n-ary)
+// bytes_len(Bytes) -> Int               blob length in bytes
+// bytes_slice(Bytes, Int, Int) -> Bytes half-open [start,end); STRICT bounds, panics OOB
+//                                       (byte_at composes as bytes_slice(b, i, i+1))
+// int16_be_encode(Int) -> Bytes         accepts -32768..=65535, emits 2 BE bytes
+// int16_be_decode(Bytes) -> Int         exactly 2 bytes, signed two's-complement
+// int32_be_encode(Int) -> Bytes         accepts -2147483648..=4294967295, 4 BE bytes
+// int32_be_decode(Bytes) -> Int         exactly 4 bytes, signed two's-complement
+//
+// Impl: axis-codegen-bridge-rs/src/runtime/bytes_codec.rs
+// Identities are sha256(name_utf8) per §5b bootstrap rule — DO NOT recompute.
+
+fn bytes_concat
+  identity 0xf7a1bef2196e62e29ba03c22477afe3f14901d52ca86989da94972930256489e
+  kind     leaf
+  in       (Bytes, Bytes)
+  out      Bytes
+  effect   pure
+  deterministic true
+  idempotent    true
+end
+
+fn bytes_len
+  identity 0x90fc089b433030b5804aa55eec056fbc1f2527c84fa4e00060c328d3d0494491
+  kind     leaf
+  in       (Bytes)
+  out      Int
+  effect   pure
+  deterministic true
+  idempotent    true
+end
+
+fn bytes_slice
+  identity 0x92ef77514706363d2631d937719486f439f1c4a3033e7d7537f68a0e46b61f99
+  kind     leaf
+  in       (Bytes, Int, Int)
+  out      Bytes
+  effect   pure
+  deterministic true
+  idempotent    true
+end
+
+fn int16_be_encode
+  identity 0xf8e09974908cbb1479e235ae9e97433a4a99600ea9dad476bac6fee38daf89c4
+  kind     leaf
+  in       (Int)
+  out      Bytes
+  effect   pure
+  deterministic true
+  idempotent    true
+end
+
+fn int16_be_decode
+  identity 0x766d81cfceb5f20dc35688b40123dfc0d942b48acf0fef0d3945c1ce3b5be2ec
+  kind     leaf
+  in       (Bytes)
+  out      Int
+  effect   pure
+  deterministic true
+  idempotent    true
+end
+
+fn int32_be_encode
+  identity 0xf193dcb63ac3edde6b39b7120f5c9abef423a35110b68a93c85b84b608529a29
+  kind     leaf
+  in       (Int)
+  out      Bytes
+  effect   pure
+  deterministic true
+  idempotent    true
+end
+
+fn int32_be_decode
+  identity 0x5a2b65bfb9d6e97e8cad1ab4a821ee22772142436fea8e33fefcb6d9297d69ff
+  kind     leaf
+  in       (Bytes)
+  out      Int
+  effect   pure
+  deterministic true
+  idempotent    true
+end
+
 // ── TCP sockets (net.rs — BRIDGE_TCP_SOCKET_V1) ───────────────────────────────
 // gap:axverity-postgres-wire-needs-socket-primitive. Synchronous blocking leaf
 // fns; no async/channels coupling. tcp_listen returns Value::Tuple([handle,

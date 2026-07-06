@@ -198,3 +198,44 @@ pub fn bytes_to_text(v: Value) -> Value {
         other => panic!("bytes_to_text: expected Bytes, got {:?}", other),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::value::intern_str;
+
+    fn bytes(v: Value) -> Vec<u8> {
+        match v {
+            Value::Bytes(b) => b,
+            other => panic!("expected Bytes, got {:?}", other),
+        }
+    }
+
+    /// text_to_bytes already emits full UTF-8 (String::into_bytes), NOT ASCII —
+    /// this regression test locks that in. AXLANG_TURN_0002 asked to "fix
+    /// ASCII-only" behavior; inspection at baseline cd6cc1d6 showed the fn was
+    /// already correct, so this guards the property rather than changing code.
+    #[test]
+    fn text_to_bytes_round_trips_full_utf8() {
+        // "aé€": a=0x61, é=U+00E9 (C3 A9), €=U+20AC (E2 82 AC).
+        let s = "aé€";
+        let expect = vec![0x61, 0xC3, 0xA9, 0xE2, 0x82, 0xAC];
+        assert_eq!(bytes(text_to_bytes(Value::Str(intern_str(s)))), expect);
+        assert_eq!(s.as_bytes().to_vec(), expect, "sanity: matches Rust's own UTF-8");
+
+        // Round-trips back through bytes_to_text unchanged.
+        let back = bytes_to_text(Value::Bytes(expect));
+        assert_eq!(back, Value::Str(intern_str(s)));
+
+        // A 4-byte emoji (😀 = U+1F600 -> F0 9F 98 80) also survives.
+        let emoji = "😀";
+        assert_eq!(bytes(text_to_bytes(Value::Str(intern_str(emoji)))), vec![0xF0, 0x9F, 0x98, 0x80]);
+    }
+
+    /// ASCII behaviour is byte-identical to before the UTF-8 audit — no caller
+    /// that fed ASCII can observe any change.
+    #[test]
+    fn text_to_bytes_ascii_unchanged() {
+        assert_eq!(bytes(text_to_bytes(Value::Str(intern_str("abc")))), vec![0x61, 0x62, 0x63]);
+    }
+}

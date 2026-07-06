@@ -21,6 +21,7 @@ pub mod non_blocking_memory;
 pub mod axbi;
 pub mod hash;
 pub mod bytes_io;
+pub mod bytes_codec;
 pub mod net;
 
 pub use value::Value;
