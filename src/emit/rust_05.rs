@@ -236,6 +236,14 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("fs_mkdir_p",           "axis_codegen_bridge::runtime::bytes_io::fs_mkdir_p");
     m.insert("bytes_to_text",        "axis_codegen_bridge::runtime::bytes_io::bytes_to_text");
 
+    // ── TCP sockets (net.rs — BRIDGE_TCP_SOCKET_V1) ─────────────────────────────
+    m.insert("tcp_listen",           "axis_codegen_bridge::runtime::net::tcp_listen");
+    m.insert("tcp_connect",          "axis_codegen_bridge::runtime::net::tcp_connect");
+    m.insert("tcp_accept",           "axis_codegen_bridge::runtime::net::tcp_accept");
+    m.insert("tcp_read",             "axis_codegen_bridge::runtime::net::tcp_read");
+    m.insert("tcp_write",            "axis_codegen_bridge::runtime::net::tcp_write");
+    m.insert("tcp_close",            "axis_codegen_bridge::runtime::net::tcp_close");
+
     m
 }
 

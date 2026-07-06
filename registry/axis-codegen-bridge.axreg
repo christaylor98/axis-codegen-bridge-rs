@@ -1656,3 +1656,69 @@ fn bytes_to_text
   deterministic true
   idempotent    true
 end
+
+// ── TCP sockets (net.rs — BRIDGE_TCP_SOCKET_V1) ───────────────────────────────
+// gap:axverity-postgres-wire-needs-socket-primitive. Synchronous blocking leaf
+// fns; no async/channels coupling. tcp_listen returns Value::Tuple([handle,
+// port]) — destructure with tuple_field (slot 0 = handle, slot 1 = bound port).
+// Identity = sha256(name_utf8) per §5b bootstrap rule.
+
+fn tcp_listen
+  identity 0xdb575b2746999a760fbc81457fe75d521c0aa757ab467e5341f3c96bf885d688
+  kind     leaf
+  in       (Int)
+  out      Value
+  effect   fullIo
+  deterministic false
+  idempotent    false
+end
+
+fn tcp_accept
+  identity 0xb40d87796b409b3d57d02cfbf4b7d5b60cf0b55f5fc01bdfb98796065624038b
+  kind     leaf
+  in       (Int)
+  out      Int
+  effect   fullIo
+  deterministic false
+  idempotent    false
+end
+
+fn tcp_read
+  identity 0x678555c90db15a223e963470f5b8ea01984673f6336f28cd89e994f5f6ea9fb5
+  kind     leaf
+  in       (Int)
+  out      Bytes
+  effect   fullIo
+  deterministic false
+  idempotent    false
+end
+
+fn tcp_write
+  identity 0x77ee0db2374a599ce7d79efb29070aa53c82558c0242326a7a17c022df72bbe0
+  kind     leaf
+  in       (Int, Bytes)
+  out      Unit
+  effect   fullIo
+  deterministic false
+  idempotent    false
+end
+
+fn tcp_close
+  identity 0xcb4ffd32b99bae3f5729a632e23964760c8fc609ef61576ca82f6f21963f4f79
+  kind     leaf
+  in       (Int)
+  out      Unit
+  effect   fullIo
+  deterministic false
+  idempotent    false
+end
+
+fn tcp_connect
+  identity 0xf3cb7cba2165737c40329d3d8d2cd9ccae60b6dd2e43a1c918510499806e0850
+  kind     leaf
+  in       (Text, Int)
+  out      Int
+  effect   fullIo
+  deterministic false
+  idempotent    false
+end

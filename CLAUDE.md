@@ -45,6 +45,23 @@ own the rest. Examples:
 - `bytes_to_text(Bytes) -> Text`      — panics on invalid UTF-8
 - `hash256_parse(Text) -> Text`       — panics on invalid hash format
 - `ir_write_bundle(Value, Text) -> Unit` — panics on IO/encode error
+- `tcp_listen(Int) -> Value` — bind `0.0.0.0:port` (0 = ephemeral); returns
+  `Value::Tuple([handle, bound_port])`, destructured with `tuple_field`. Panics
+  on bind error.
+- `tcp_accept(Int) -> Int` — block for a peer; returns a stream handle. Panics
+  on accept error.
+- `tcp_connect(Text, Int) -> Int` — dial `host:port` as a client; returns a
+  stream handle usable with `tcp_read`/`tcp_write`/`tcp_close`. Panics on
+  connect error.
+- `tcp_read(Int) -> Bytes` — block, return one chunk (empty `Bytes` at EOF).
+  Panics on I/O error.
+- `tcp_write(Int, Bytes) -> Unit` — write all + flush. Panics on I/O error.
+- `tcp_close(Int) -> Unit` — drop the listener/stream. Panics on unknown handle.
+
+The TCP socket fns (BRIDGE_TCP_SOCKET_V1, `net.rs`) are synchronous blocking
+`fullIo` leaves — they do NOT use the `channels.rs` async layer. `tcp_listen`
+returns its `(handle, port)` pair as a `Value::Tuple` reusing the existing
+`Value` type + `tuple_field` precedent, not a new registry `type`.
 
 Use `fs_file_exists(Text) -> Bool` for existence checks rather than probing with
 a read-and-catch pattern. The `ResultText` / `ResultUnit` / `ResultBytes` sum
