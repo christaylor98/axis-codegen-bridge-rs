@@ -71,6 +71,28 @@ fn test_int_eq_false() {
 }
 
 #[test]
+fn test_dec_eq() {
+    use axis_codegen_bridge::runtime::value::Decimal;
+    use std::str::FromStr;
+    setup();
+    let a = Value::Dec(Decimal::from_str("1.50").unwrap());
+    let b = Value::Dec(Decimal::from_str("1.500").unwrap()); // scale-insensitive equality
+    let c = Value::Dec(Decimal::from_str("2.0").unwrap());
+    assert_eq!(arith::dec_eq(t2(a.clone(), b)), Value::Bool(true));
+    assert_eq!(arith::dec_eq(t2(a, c)), Value::Bool(false));
+}
+
+#[test]
+fn test_float_eq() {
+    setup();
+    assert_eq!(arith::float_eq(t2(Value::Float(1.5), Value::Float(1.5))), Value::Bool(true));
+    assert_eq!(arith::float_eq(t2(Value::Float(1.5), Value::Float(2.5))), Value::Bool(false));
+    // IEEE-754: NaN != NaN, +0.0 == -0.0 (matches value_eq semantics).
+    assert_eq!(arith::float_eq(t2(Value::Float(f64::NAN), Value::Float(f64::NAN))), Value::Bool(false));
+    assert_eq!(arith::float_eq(t2(Value::Float(0.0), Value::Float(-0.0))), Value::Bool(true));
+}
+
+#[test]
 fn test_unit_id_discards_int() {
     setup();
     assert_eq!(arith::unit_id(Value::Int(99)), Value::Unit);

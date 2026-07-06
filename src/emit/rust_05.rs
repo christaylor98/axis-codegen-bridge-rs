@@ -45,6 +45,8 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("int_gt",   "axis_codegen_bridge::runtime::arith::int_gt");
     m.insert("int_gte",  "axis_codegen_bridge::runtime::arith::int_gte");
     m.insert("int_eq",   "axis_codegen_bridge::runtime::arith::int_eq");
+    m.insert("dec_eq",   "axis_codegen_bridge::runtime::arith::dec_eq");
+    m.insert("float_eq", "axis_codegen_bridge::runtime::arith::float_eq");
     m.insert("value_eq", "axis_codegen_bridge::runtime::arith::value_eq");
 
     // Unit / sequence helpers (§5b bootstrap functions)
@@ -171,6 +173,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("proc_exit",  "axis_codegen_bridge::runtime::process::proc_exit");
     m.insert("proc_sleep", "axis_codegen_bridge::runtime::process::proc_sleep");
     m.insert("sleep",      "axis_codegen_bridge::runtime::process::sleep");
+    m.insert("now_unix_nanos", "axis_codegen_bridge::runtime::process::now_unix_nanos");
     m.insert("argv",       "axis_codegen_bridge::runtime::process::argv");
     m.insert("argv_get",   "axis_codegen_bridge::runtime::process::argv_get");
     m.insert("argv_int",   "axis_codegen_bridge::runtime::process::argv_int");

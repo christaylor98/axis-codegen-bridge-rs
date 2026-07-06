@@ -188,6 +188,36 @@ pub fn int_eq(args: Value) -> Value {
     }
 }
 
+/// dec_eq(Dec, Dec) -> Bool. Typed exact equality on rust_decimal::Decimal —
+/// the Dec-typed counterpart of int_eq. Decimal equality is exact (no scaling
+/// surprises: 1.0 == 1.00 is true, matching Decimal's PartialEq).
+#[track_caller]
+pub fn dec_eq(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Dec(x), Value::Dec(y)) => Value::Bool(x == y),
+            _ => panic!("dec_eq: expected two Dec values"),
+        },
+        _ => panic!("dec_eq: expected Tuple(Dec, Dec)"),
+    }
+}
+
+/// float_eq(Float, Float) -> Bool. Typed IEEE-754 f64 equality — the Float-typed
+/// counterpart of int_eq. Uses the standard `==`, so NaN != NaN and +0.0 == -0.0,
+/// identical to how value_eq already compares Value::Float. Exact bit-equality is
+/// a footgun for computed floats; callers wanting a tolerance must compose it in
+/// M1.
+#[track_caller]
+pub fn float_eq(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Float(x), Value::Float(y)) => Value::Bool(x == y),
+            _ => panic!("float_eq: expected two Float values"),
+        },
+        _ => panic!("float_eq: expected Tuple(Float, Float)"),
+    }
+}
+
 /// Identity for unit: discards input, returns Unit.
 #[track_caller]
 pub fn unit_id(_args: Value) -> Value {

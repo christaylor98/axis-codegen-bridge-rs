@@ -135,6 +135,41 @@ fn int_gte
   out Bool
   effect fullIo
 end
+// Typed equality leaves. int_eq/dec_eq/float_eq are the Int/Dec/Float-typed
+// counterparts of str_eq (Text); value_eq/__eq__ remain the generic fallback.
+// int_eq and dec_eq/float_eq were implemented + wired in the emit symbol_map but
+// were previously undeclared here — added so §5b consumers resolve them through
+// the canonical registry. Identity = sha256(name_utf8) per §5b bootstrap rule.
+fn int_eq
+  identity 0xc8ee24d1f0bdebc7a2d7c88c5f2538075a0bfd35358f4dcaafdab1d12c1c4b93
+  kind     leaf
+  in       (Int, Int)
+  out      Bool
+  effect   fullIo
+  deterministic true
+  idempotent    false
+end
+
+fn dec_eq
+  identity 0x908b5f6c8eef49278d2bb515e37efe3cd0b6f118ae250ad57019034d1d7fa967
+  kind     leaf
+  in       (Dec, Dec)
+  out      Bool
+  effect   fullIo
+  deterministic true
+  idempotent    false
+end
+
+fn float_eq
+  identity 0x0a164bef490a2b50eff98460e5a3edbafa36cb9e3b292d53bcda4d395fad648d
+  kind     leaf
+  in       (Float, Float)
+  out      Bool
+  effect   fullIo
+  deterministic true
+  idempotent    false
+end
+
 fn value_eq
   identity 0xa881cc52c4d9bd94df4cf68e3b4d7bcb2ced5385833fc6456a537beecdf60ee1
   kind     leaf
@@ -300,6 +335,18 @@ fn str_eq
   in (Text, Text)
   out Bool
   effect fullIo
+end
+
+// text_eq is the axis-canonical alias of str_eq (identical runtime); wired in the
+// emit symbol_map but previously undeclared here. Identity = sha256("text_eq").
+fn text_eq
+  identity 0x134a611041a7bc1827e6e07b9d5f6568c8c0464c89d9cf9462b431ce51855eec
+  kind     leaf
+  in       (Text, Text)
+  out      Bool
+  effect   fullIo
+  deterministic true
+  idempotent    false
 end
 fn chr
   identity 0x943723cd5955a5316f4364f750e309b0a9582e939128ce09800d56f126649efb
