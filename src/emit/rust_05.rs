@@ -90,6 +90,10 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("text_lte",        "axis_codegen_bridge::runtime::str_ops::text_lte");
     m.insert("text_gt",         "axis_codegen_bridge::runtime::str_ops::text_gt");
     m.insert("text_gte",        "axis_codegen_bridge::runtime::str_ops::text_gte");
+    m.insert("str_lt",          "axis_codegen_bridge::runtime::str_ops::str_lt");
+    m.insert("str_lte",         "axis_codegen_bridge::runtime::str_ops::str_lte");
+    m.insert("str_gt",          "axis_codegen_bridge::runtime::str_ops::str_gt");
+    m.insert("str_gte",         "axis_codegen_bridge::runtime::str_ops::str_gte");
     m.insert("str_before",      "axis_codegen_bridge::runtime::str_ops::str_before");
     m.insert("str_after",       "axis_codegen_bridge::runtime::str_ops::str_after");
     m.insert("str_between",     "axis_codegen_bridge::runtime::str_ops::str_between");

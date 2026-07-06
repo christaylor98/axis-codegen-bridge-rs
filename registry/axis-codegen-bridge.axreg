@@ -475,6 +475,48 @@ fn text_gte
   deterministic true
   idempotent    false
 end
+
+// str_* aliases of the text_* ordered comparisons (identical runtime), the
+// surface-name pairing that mirrors str_eq/text_eq. Identity = sha256(name).
+fn str_lt
+  identity 0xd088a930e8670499ef69bc4d0672b05c5e7be116e493581cf70a230f54ae8146
+  kind     leaf
+  in       (Text, Text)
+  out      Bool
+  effect   fullIo
+  deterministic true
+  idempotent    false
+end
+
+fn str_lte
+  identity 0x8977a0e2375e4cacfd4aadb7bd24642778d6867750c8de123f923d588fa5b562
+  kind     leaf
+  in       (Text, Text)
+  out      Bool
+  effect   fullIo
+  deterministic true
+  idempotent    false
+end
+
+fn str_gt
+  identity 0x9e5f232daecf8e18dd7389eff4d181169137c8ef106f2ebe11b26718ad1eaca1
+  kind     leaf
+  in       (Text, Text)
+  out      Bool
+  effect   fullIo
+  deterministic true
+  idempotent    false
+end
+
+fn str_gte
+  identity 0x44b91ff17d5386a9f9dd66a6cf6465945a05b4f769507be75b2ee1f6e35b944b
+  kind     leaf
+  in       (Text, Text)
+  out      Bool
+  effect   fullIo
+  deterministic true
+  idempotent    false
+end
 fn chr
   identity 0x943723cd5955a5316f4364f750e309b0a9582e939128ce09800d56f126649efb
   kind     leaf

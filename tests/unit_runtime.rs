@@ -136,6 +136,21 @@ fn test_text_ordered_compares() {
 }
 
 #[test]
+fn test_str_ordered_compare_aliases_match_text() {
+    setup();
+    let a = || Value::Str(intern_str("apple"));
+    let b = || Value::Str(intern_str("banana"));
+    // str_* aliases must be byte-identical to the canonical text_* fns.
+    assert_eq!(str_ops::str_lt(t2(a(), b())),  str_ops::text_lt(t2(a(), b())));
+    assert_eq!(str_ops::str_lte(t2(a(), a())), str_ops::text_lte(t2(a(), a())));
+    assert_eq!(str_ops::str_gt(t2(b(), a())),  str_ops::text_gt(t2(b(), a())));
+    assert_eq!(str_ops::str_gte(t2(a(), b())), str_ops::text_gte(t2(a(), b())));
+    // And correct on their own: apple < banana.
+    assert_eq!(str_ops::str_lt(t2(a(), b())), Value::Bool(true));
+    assert_eq!(str_ops::str_gt(t2(a(), b())), Value::Bool(false));
+}
+
+#[test]
 fn test_unit_id_discards_int() {
     setup();
     assert_eq!(arith::unit_id(Value::Int(99)), Value::Unit);

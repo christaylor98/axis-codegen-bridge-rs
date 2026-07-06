@@ -187,6 +187,18 @@ text_cmp_op!(text_lte, <=);
 text_cmp_op!(text_gt,  >);
 text_cmp_op!(text_gte, >=);
 
+/// str_* ordered-comparison aliases of the canonical text_* fns (identical
+/// runtime), mirroring the str_eq/text_eq pairing — str_ is the surface name,
+/// text_ the canonical registry name.
+#[track_caller]
+pub fn str_lt(args: Value) -> Value { text_lt(args) }
+#[track_caller]
+pub fn str_lte(args: Value) -> Value { text_lte(args) }
+#[track_caller]
+pub fn str_gt(args: Value) -> Value { text_gt(args) }
+#[track_caller]
+pub fn str_gte(args: Value) -> Value { text_gte(args) }
+
 /// Returns the char-index of the first occurrence of needle in haystack, or -1 if not found.
 #[track_caller]
 pub fn str_index_of(args: Value) -> Value {
