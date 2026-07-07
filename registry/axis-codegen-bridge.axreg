@@ -1821,6 +1821,74 @@ fn fs_read_bytes
   idempotent    true
 end
 
+// BRIDGE_SEEK_V1 (spike:axverity-spike1) — range read via seek; O(len) not
+// O(file-size). Over-EOF clamps to available bytes (short read). Thin: raw
+// bytes only, no framing/hashing. identity = sha256("fs_read_range").
+fn fs_read_range
+  identity 0xb2a8dc7d09f828877d317d205ef1597b722558df01adff3135e267bfe6dd75f0
+  kind     leaf
+  in       (Text, Int, Int)
+  out      Bytes
+  effect   fullIo
+  deterministic false
+  idempotent    true
+end
+
+// BRIDGE_LOGBUF_V1 (spike:axverity-spike1) — thin Rust-owned durable append
+// buffer. append = memcpy into a Vec; sync = one write_all + one fsync + clear.
+// THIN: bridge owns buffer+tail+fsync only; M1 owns framing/hashing/commit.
+// logbuf_append returns the record's logical start offset (-1 reserved as a
+// future buffer-full/rotation signal, not produced in this spike).
+fn logbuf_open
+  identity 0xf744371f4555846b2993ea40ada62d7c77514eb9d314ad6faa9a1c5634d8172f
+  kind     leaf
+  in       (Text)
+  out      Int
+  effect   fullIo
+  deterministic false
+  idempotent    false
+end
+
+fn logbuf_append
+  identity 0x139eba6e40fe32b89107a57c3e0ec0c1d4502643a309e50f3571bfdb1499e563
+  kind     leaf
+  in       (Int, Bytes)
+  out      Int
+  effect   fullIo
+  deterministic false
+  idempotent    false
+end
+
+fn logbuf_sync
+  identity 0x92d37f5cb531ce3d31cb381a7589100e07370228e265be3afd3da723cbf8b1f6
+  kind     leaf
+  in       (Int)
+  out      Unit
+  effect   fullIo
+  deterministic false
+  idempotent    true
+end
+
+fn logbuf_read
+  identity 0x5c1bb64eb456f8493d5b38a8999824a8d43b395f5f4379024c3f151115c9ee57
+  kind     leaf
+  in       (Int, Int, Int)
+  out      Bytes
+  effect   fullIo
+  deterministic false
+  idempotent    true
+end
+
+fn logbuf_len
+  identity 0x98277d3f1ed1c8ed2656b8df0467b871bff93926bb3d068baf4a3c23ffd826b9
+  kind     leaf
+  in       (Int)
+  out      Int
+  effect   fullIo
+  deterministic false
+  idempotent    true
+end
+
 // ───────────── BRIDGE_AXVERITY_BLOCKING_FNS_v0.1 — unblocks turn:axverity:0001 ─
 //
 // bytes_hash(Bytes) -> Text

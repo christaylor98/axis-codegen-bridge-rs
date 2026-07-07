@@ -250,6 +250,14 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("text_to_bytes",        "axis_codegen_bridge::runtime::bytes_io::text_to_bytes");
     m.insert("fs_write_bytes",       "axis_codegen_bridge::runtime::bytes_io::fs_write_bytes");
     m.insert("fs_read_bytes",        "axis_codegen_bridge::runtime::bytes_io::fs_read_bytes");
+    // ── Seek / range read (seek.rs — BRIDGE_SEEK_V1, spike:axverity-spike1) ─────
+    m.insert("fs_read_range",        "axis_codegen_bridge::runtime::seek::fs_read_range");
+    // ── Log buffer (logbuf.rs — BRIDGE_LOGBUF_V1, spike:axverity-spike1) ────────
+    m.insert("logbuf_open",          "axis_codegen_bridge::runtime::logbuf::logbuf_open");
+    m.insert("logbuf_append",        "axis_codegen_bridge::runtime::logbuf::logbuf_append");
+    m.insert("logbuf_sync",          "axis_codegen_bridge::runtime::logbuf::logbuf_sync");
+    m.insert("logbuf_read",          "axis_codegen_bridge::runtime::logbuf::logbuf_read");
+    m.insert("logbuf_len",           "axis_codegen_bridge::runtime::logbuf::logbuf_len");
     m.insert("bytes_hash",           "axis_codegen_bridge::runtime::bytes_io::bytes_hash");
     m.insert("fs_mkdir_p",           "axis_codegen_bridge::runtime::bytes_io::fs_mkdir_p");
     m.insert("bytes_to_text",        "axis_codegen_bridge::runtime::bytes_io::bytes_to_text");
