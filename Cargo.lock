@@ -88,6 +88,7 @@ dependencies = [
  "capnp",
  "capnpc",
  "clap",
+ "libc",
  "rust_decimal",
  "serde",
  "serde_json",

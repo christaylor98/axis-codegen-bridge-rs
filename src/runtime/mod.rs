@@ -25,5 +25,7 @@ pub mod bytes_codec;
 pub mod net;
 pub mod seek;
 pub mod logbuf;
+pub mod prealloc;
+pub mod walindex;
 
 pub use value::Value;

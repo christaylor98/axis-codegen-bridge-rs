@@ -262,6 +262,19 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("fs_mkdir_p",           "axis_codegen_bridge::runtime::bytes_io::fs_mkdir_p");
     m.insert("bytes_to_text",        "axis_codegen_bridge::runtime::bytes_io::bytes_to_text");
 
+    // ── WAL segment pre-allocation (prealloc.rs — BRIDGE_WAL_SEG_ALLOC_V1,
+    //    AXVERITY_WAL_ALLOCATION_AND_BLOB_PATH Landing A) ─────────────────────
+    m.insert("fs_prealloc",          "axis_codegen_bridge::runtime::prealloc::fs_prealloc");
+    m.insert("wal_write_seg",        "axis_codegen_bridge::runtime::prealloc::wal_write_seg");
+    // ── WAL internal index: hot thread-local shard + disposable batched
+    //    snapshot (walindex.rs — BRIDGE_WALINDEX_V1, same landing) ────────────
+    m.insert("walidx_open",          "axis_codegen_bridge::runtime::walindex::walidx_open");
+    m.insert("walidx_insert",        "axis_codegen_bridge::runtime::walindex::walidx_insert");
+    m.insert("walidx_has",           "axis_codegen_bridge::runtime::walindex::walidx_has");
+    m.insert("walidx_get",           "axis_codegen_bridge::runtime::walindex::walidx_get");
+    m.insert("walidx_snapshot",      "axis_codegen_bridge::runtime::walindex::walidx_snapshot");
+    m.insert("walidx_rebuild",       "axis_codegen_bridge::runtime::walindex::walidx_rebuild");
+
     // ── Byte codec (bytes_codec.rs — BRIDGE_BYTE_CODEC_V1) ──────────────────────
     m.insert("bytes_concat",         "axis_codegen_bridge::runtime::bytes_codec::bytes_concat");
     m.insert("bytes_len",            "axis_codegen_bridge::runtime::bytes_codec::bytes_len");
