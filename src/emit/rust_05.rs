@@ -275,6 +275,10 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("walidx_snapshot",      "axis_codegen_bridge::runtime::walindex::walidx_snapshot");
     m.insert("walidx_rebuild",       "axis_codegen_bridge::runtime::walindex::walidx_rebuild");
 
+    // ── Content-defined chunker (chunk.rs — BRIDGE_CDC_V1, FastCDC,
+    //    AXVERITY_LANDING_B_BLOB_CHUNKER) ──────────────────────────────────────
+    m.insert("chunk_file",           "axis_codegen_bridge::runtime::chunk::chunk_file");
+
     // ── Byte codec (bytes_codec.rs — BRIDGE_BYTE_CODEC_V1) ──────────────────────
     m.insert("bytes_concat",         "axis_codegen_bridge::runtime::bytes_codec::bytes_concat");
     m.insert("bytes_len",            "axis_codegen_bridge::runtime::bytes_codec::bytes_len");

@@ -1834,6 +1834,20 @@ fn fs_read_range
   idempotent    true
 end
 
+// BRIDGE_CDC_V1 (AXVERITY_LANDING_B_BLOB_CHUNKER) — standalone FastCDC
+// content-defined chunker. One "<off>\t<len>\tsha256:<hex>" line per chunk;
+// streams a bounded window (no RAM spike). Scan is bridge-load-bearing
+// (per-byte over multi-MB — impossible in M1). identity = sha256("chunk_file").
+fn chunk_file
+  identity 0xb44367f8f3554f0c851f81f574a0bea4f2b5c7ee2a585b38e12558ee85af909e
+  kind     leaf
+  in       (Text)
+  out      Text
+  effect   fullIo
+  deterministic false
+  idempotent    true
+end
+
 // BRIDGE_LOGBUF_V1 (spike:axverity-spike1) — thin Rust-owned durable append
 // buffer. append = memcpy into a Vec; sync = one write_all + one fsync + clear.
 // THIN: bridge owns buffer+tail+fsync only; M1 owns framing/hashing/commit.
