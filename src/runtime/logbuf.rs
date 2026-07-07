@@ -17,7 +17,7 @@
 //!   append(h, bytes)  = buf.extend_from_slice(bytes)      // memcpy, no syscall
 //!   sync(h)           = file.write_all(&buf); file.fsync(); file_len += n; buf.clear()
 //!
-//! Appends are a memcpy into a process-local `Vec<u8>` — no `write(2)`, no
+//! Appends are a memcpy into a thread-local `Vec<u8>` — no `write(2)`, no
 //! `fsync(2)`. One `sync` amortizes one `write` + one `fsync` over however
 //! many records were appended since the last sync. This is the property
 //! Spike 1 exists to prove correct (NOT to benchmark — Spike 2 owns speed).
@@ -42,22 +42,52 @@
 //! `logbuf_open` fsyncs the parent directory ONCE after creating the file, so
 //! the file's directory entry is durable (mirrors write_durable step 4 in
 //! bytes_io.rs). Thereafter `logbuf_sync` fsyncs the file's data only. This
-//! file does NOT touch the frozen `store_write` / `push_object` write path
-//! (spike1 hard-limit WRITE_PATH_UNTOUCHED); it is a new parallel primitive.
+//! durability sequence (`write_all` → `sync_all` → advance `file_len` → clear
+//! the buffer) is the exact frontier Spike 3 proved STRONG (zero acknowledged
+//! loss, never-corrupt, forward hash-checked recovery) and is UNCHANGED by the
+//! thread-owned storage model below.
 //!
-//! Handle registry, next-handle counter, and opaque-Int handles follow the
-//! exact pattern established by net.rs. Single-writer only for Spike 1 —
-//! multi-writer / per-thread handles under load are explicitly out of scope,
-//! so ops hold the map lock for their (short) duration.
+//! ## Storage model — THREAD-OWNED buffers, NO shared registry
+//!   (AXVERITY_WRITE_PATH_INTEGRATION Landing 1: NO_SHARED_REGISTRY /
+//!    NO_ARC_MUTEX_ON_BUFFERS / THREAD_OWNED_BUFFERS_NO_REGISTRY)
+//!
+//! Each open `LogBuf` lives in **thread-local storage** (`LOGS`), reachable
+//! ONLY by the thread that opened it. There is no process-global handle→buffer
+//! registry and no lock anywhere on the append/sync/read path: `logbuf_append`
+//! and `logbuf_sync` touch nothing but the calling thread's own `Vec<u8>` and
+//! `File`. Two writer threads therefore share NOTHING and can never contend.
+//!
+//! The handle counter is thread-local too (`NEXT`, starting at 1 per thread),
+//! so a `--entries` writer thread behaves *identically* to an independent
+//! process: its first `logbuf_open` returns handle 1, exactly as a fresh
+//! process's does. That is the whole point of Landing 1 — the N-process
+//! reference curve (each process sharing nothing) is the target the thread
+//! curve must now match, and it can only match it if threads share nothing
+//! either. No `Mutex`, no `RwLock`, no `Arc`, no process-global atomic sits on
+//! the hot path; the append path shares nothing and locks nothing.
+//!
+//! ### Why this is the ABI-correct realization of "thread-owned"
+//!
+//! The M1↔Rust boundary dispatches `logbuf_*` as free functions over the
+//! `Value` ABI (an `Int` handle in, a `Value` out); there is no way to *move* a
+//! Rust-owned `Vec<u8>` into an M1-visible thread closure, so "the buffer is a
+//! local variable of the writer thread" cannot be expressed directly. Two
+//! candidates were rejected: a `HashMap<i64, LogBuf>` behind a raw pointer
+//! carried as the handle (`unsafe`, UB the instant two threads alias a handle,
+//! and a disguised shared-mutable-state hazard); and a shared lock-free/sharded
+//! map (still shared state, and NO_ARC_MUTEX_ON_BUFFERS forbids a "cleverer
+//! lock"). Thread-local storage is the safe realization of "thread-OWNED,
+//! reachable only by its owning thread": the handle indexes a per-thread table,
+//! and a handle used on the wrong thread fails fast (unknown handle) rather than
+//! aliasing another thread's buffer.
 //!
 //! Identities are sha256(name_utf8), the bridge-wide convention.
 
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
-use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::{Mutex, OnceLock};
 
 use super::value::{get_str, Value};
 
@@ -66,27 +96,39 @@ use super::value::{get_str, Value};
 struct LogBuf {
     path: String,
     file: File,     // opened for append; target of sync's write_all + fsync
-    buf: Vec<u8>,   // Rust-owned in-memory buffer (Option B)
+    buf: Vec<u8>,   // thread-owned in-memory buffer (Option B)
     file_len: u64,  // bytes already written+synced to `file`
 }
 
-/// Process-global log table, keyed by integer handle (mirrors net.rs).
-fn registry() -> &'static Mutex<HashMap<i64, LogBuf>> {
-    static REG: OnceLock<Mutex<HashMap<i64, LogBuf>>> = OnceLock::new();
-    REG.get_or_init(|| Mutex::new(HashMap::new()))
+thread_local! {
+    /// Per-thread log table, keyed by integer handle. THREAD-LOCAL, never
+    /// shared: reachable only by the thread that opened the handle. This is the
+    /// "thread-owned buffers, no shared registry" storage — the append path
+    /// touches only this thread's own map, so no two writer threads ever
+    /// contend and no lock is taken anywhere on the hot path.
+    static LOGS: RefCell<HashMap<i64, LogBuf>> = RefCell::new(HashMap::new());
+
+    /// Per-thread handle counter (never reused within a thread). Thread-local so
+    /// each writer thread's first `logbuf_open` returns handle 1 — identical to
+    /// a fresh process — and no process-global atomic sits on the open path.
+    static NEXT: Cell<i64> = const { Cell::new(1) };
 }
 
-/// Allocate the next opaque handle (never reused within a process run).
+/// Allocate the next opaque handle for the calling thread.
 fn next_handle() -> i64 {
-    static COUNTER: AtomicI64 = AtomicI64::new(1);
-    COUNTER.fetch_add(1, Ordering::Relaxed)
+    NEXT.with(|c| {
+        let n = c.get();
+        c.set(n + 1);
+        n
+    })
 }
 
 /// `logbuf_open(path: Text) -> Int`
 ///
-/// Open (creating if absent) `path` for append and register a fresh buffer.
-/// Fsyncs the parent directory once so the file's directory entry is durable.
-/// Returns the opaque handle. Panics on any OS error.
+/// Open (creating if absent) `path` for append and register a fresh buffer in
+/// THIS thread's local table. Fsyncs the parent directory once so the file's
+/// directory entry is durable. Returns the opaque handle. Panics on any OS
+/// error.
 #[track_caller]
 pub fn logbuf_open(arg: Value) -> Value {
     let path = match arg {
@@ -113,17 +155,20 @@ pub fn logbuf_open(arg: Value) -> Value {
     }
 
     let h = next_handle();
-    registry().lock().unwrap().insert(
-        h,
-        LogBuf { path, file, buf: Vec::new(), file_len },
-    );
+    LOGS.with(|logs| {
+        logs.borrow_mut().insert(
+            h,
+            LogBuf { path, file, buf: Vec::new(), file_len },
+        );
+    });
     Value::Int(h)
 }
 
 /// `logbuf_append(handle: Int, data: Bytes) -> Int`
 ///
-/// Append `data` to the in-memory buffer (a memcpy — no syscall, no fsync).
-/// Returns the LOGICAL start offset of this record, for M1 to frame/index.
+/// Append `data` to the calling thread's in-memory buffer (a memcpy — no
+/// syscall, no fsync, no lock). Returns the LOGICAL start offset of this
+/// record, for M1 to frame/index.
 ///
 /// -1 is RESERVED as a future buffer-full signal (M1 handles rotation on -1).
 /// Spike 1 enforces no cap, so this never returns -1 — the Int return simply
@@ -145,42 +190,48 @@ pub fn logbuf_append(args: Value) -> Value {
         Value::Bytes(b) => b,
         other => panic!("logbuf_append: arg 1 expected Bytes, got {:?}", other),
     };
-    let mut reg = registry().lock().unwrap();
-    let lb = reg
-        .get_mut(&h)
-        .unwrap_or_else(|| panic!("logbuf_append: unknown handle {}", h));
-    let start = lb.file_len + lb.buf.len() as u64;
-    lb.buf.extend_from_slice(&data);
-    Value::Int(start as i64)
+    LOGS.with(|logs| {
+        let mut logs = logs.borrow_mut();
+        let lb = logs
+            .get_mut(&h)
+            .unwrap_or_else(|| panic!("logbuf_append: unknown handle {} (not opened on this thread)", h));
+        let start = lb.file_len + lb.buf.len() as u64;
+        lb.buf.extend_from_slice(&data);
+        Value::Int(start as i64)
+    })
 }
 
 /// `logbuf_sync(handle: Int) -> Unit`
 ///
-/// Flush the buffer to the file (one `write_all`) and fsync the file (one
-/// `fsync`), then clear the buffer. A sync with an empty buffer is a no-op
-/// (the file is already durable from a prior sync). Panics on any OS error.
+/// Flush the calling thread's buffer to its file (one `write_all`) and fsync
+/// the file (one `fsync`), then clear the buffer. A sync with an empty buffer
+/// is a no-op (the file is already durable from a prior sync). No lock is held
+/// across the fsync — the file and buffer are thread-owned. Panics on any OS
+/// error.
 #[track_caller]
 pub fn logbuf_sync(arg: Value) -> Value {
     let h = match arg {
         Value::Int(n) => n,
         other => panic!("logbuf_sync: expected Int handle, got {:?}", other),
     };
-    let mut reg = registry().lock().unwrap();
-    let lb = reg
-        .get_mut(&h)
-        .unwrap_or_else(|| panic!("logbuf_sync: unknown handle {}", h));
-    if lb.buf.is_empty() {
-        return Value::Unit;
-    }
-    if let Err(e) = lb.file.write_all(&lb.buf) {
-        panic!("logbuf_sync({}): write_all: {}", lb.path, e);
-    }
-    if let Err(e) = lb.file.sync_all() {
-        panic!("logbuf_sync({}): fsync: {}", lb.path, e);
-    }
-    lb.file_len += lb.buf.len() as u64;
-    lb.buf.clear();
-    Value::Unit
+    LOGS.with(|logs| {
+        let mut logs = logs.borrow_mut();
+        let lb = logs
+            .get_mut(&h)
+            .unwrap_or_else(|| panic!("logbuf_sync: unknown handle {} (not opened on this thread)", h));
+        if lb.buf.is_empty() {
+            return Value::Unit;
+        }
+        if let Err(e) = lb.file.write_all(&lb.buf) {
+            panic!("logbuf_sync({}): write_all: {}", lb.path, e);
+        }
+        if let Err(e) = lb.file.sync_all() {
+            panic!("logbuf_sync({}): fsync: {}", lb.path, e);
+        }
+        lb.file_len += lb.buf.len() as u64;
+        lb.buf.clear();
+        Value::Unit
+    })
 }
 
 /// `logbuf_read(handle: Int, offset: Int, len: Int) -> Bytes`
@@ -188,7 +239,8 @@ pub fn logbuf_sync(arg: Value) -> Value {
 /// Read `[offset, offset+len)` of the logical stream (`file` ++ `buf`),
 /// clamped at the logical end. Serves each half of the range from the side it
 /// falls on, so a read is correct BEFORE a sync (from the buffer) and after
-/// (from the file). Panics on unknown handle, negative bounds, or OS error.
+/// (from the file). Operates on the calling thread's own buffer/file. Panics on
+/// unknown handle, negative bounds, or OS error.
 #[track_caller]
 pub fn logbuf_read(args: Value) -> Value {
     let (h, off, len) = match args {
@@ -213,53 +265,57 @@ pub fn logbuf_read(args: Value) -> Value {
     if off < 0 || len < 0 {
         panic!("logbuf_read: negative offset={} or len={}", off, len);
     }
-    let reg = registry().lock().unwrap();
-    let lb = reg
-        .get(&h)
-        .unwrap_or_else(|| panic!("logbuf_read: unknown handle {}", h));
+    LOGS.with(|logs| {
+        let logs = logs.borrow();
+        let lb = logs
+            .get(&h)
+            .unwrap_or_else(|| panic!("logbuf_read: unknown handle {} (not opened on this thread)", h));
 
-    let total = lb.file_len + lb.buf.len() as u64;
-    let (off, len) = (off as u64, len as u64);
-    let start = off.min(total);
-    let end = off.checked_add(len).map(|e| e.min(total)).unwrap_or(total);
+        let total = lb.file_len + lb.buf.len() as u64;
+        let (off, len) = (off as u64, len as u64);
+        let start = off.min(total);
+        let end = off.checked_add(len).map(|e| e.min(total)).unwrap_or(total);
 
-    let mut out: Vec<u8> = Vec::with_capacity((end - start) as usize);
-    // File portion: [start, min(end, file_len)).
-    if start < lb.file_len {
-        let fend = end.min(lb.file_len);
-        let mut f = File::open(&lb.path)
-            .unwrap_or_else(|e| panic!("logbuf_read({}): reopen: {}", lb.path, e));
-        f.seek(SeekFrom::Start(start))
-            .unwrap_or_else(|e| panic!("logbuf_read({}): seek {}: {}", lb.path, start, e));
-        let mut fb = Vec::new();
-        (&mut f)
-            .take(fend - start)
-            .read_to_end(&mut fb)
-            .unwrap_or_else(|e| panic!("logbuf_read({}): read: {}", lb.path, e));
-        out.extend_from_slice(&fb);
-    }
-    // Buffer portion: the part of [start, end) at or past file_len.
-    if end > lb.file_len {
-        let bstart = (start.max(lb.file_len) - lb.file_len) as usize;
-        let bend = (end - lb.file_len) as usize;
-        out.extend_from_slice(&lb.buf[bstart..bend]);
-    }
-    Value::Bytes(out)
+        let mut out: Vec<u8> = Vec::with_capacity((end - start) as usize);
+        // File portion: [start, min(end, file_len)).
+        if start < lb.file_len {
+            let fend = end.min(lb.file_len);
+            let mut f = File::open(&lb.path)
+                .unwrap_or_else(|e| panic!("logbuf_read({}): reopen: {}", lb.path, e));
+            f.seek(SeekFrom::Start(start))
+                .unwrap_or_else(|e| panic!("logbuf_read({}): seek {}: {}", lb.path, start, e));
+            let mut fb = Vec::new();
+            (&mut f)
+                .take(fend - start)
+                .read_to_end(&mut fb)
+                .unwrap_or_else(|e| panic!("logbuf_read({}): read: {}", lb.path, e));
+            out.extend_from_slice(&fb);
+        }
+        // Buffer portion: the part of [start, end) at or past file_len.
+        if end > lb.file_len {
+            let bstart = (start.max(lb.file_len) - lb.file_len) as usize;
+            let bend = (end - lb.file_len) as usize;
+            out.extend_from_slice(&lb.buf[bstart..bend]);
+        }
+        Value::Bytes(out)
+    })
 }
 
 /// `logbuf_len(handle: Int) -> Int`
 ///
 /// Current total logical length: bytes synced to the file plus bytes still
-/// buffered. Panics on unknown handle.
+/// buffered, for the calling thread's handle. Panics on unknown handle.
 #[track_caller]
 pub fn logbuf_len(arg: Value) -> Value {
     let h = match arg {
         Value::Int(n) => n,
         other => panic!("logbuf_len: expected Int handle, got {:?}", other),
     };
-    let reg = registry().lock().unwrap();
-    let lb = reg
-        .get(&h)
-        .unwrap_or_else(|| panic!("logbuf_len: unknown handle {}", h));
-    Value::Int((lb.file_len + lb.buf.len() as u64) as i64)
+    LOGS.with(|logs| {
+        let logs = logs.borrow();
+        let lb = logs
+            .get(&h)
+            .unwrap_or_else(|| panic!("logbuf_len: unknown handle {} (not opened on this thread)", h));
+        Value::Int((lb.file_len + lb.buf.len() as u64) as i64)
+    })
 }
