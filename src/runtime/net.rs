@@ -112,6 +112,58 @@ pub fn tcp_listen(v: Value) -> Value {
     Value::Tuple(vec![Value::Int(handle), Value::Int(bound as i64)])
 }
 
+// ── tcp_listen_shared ──────────────────────────────────────────────────────────
+//
+// AXVERITY_ACCEPTLOOP_SHARD_DISPATCH — the shared-listener piece of the Model-A
+// pool. N `--entries` worker threads each call `tcp_listen_shared(port)`; the
+// FIRST binds a single listen socket for that port, and every subsequent caller
+// gets the SAME listener handle back. All N workers then block in `tcp_accept`
+// on that one socket, and the kernel hands each incoming connection to exactly
+// one ready (idle-in-accept) worker — the classic pre-fork accept pool, so the
+// distribution is naturally balanced with no SO_REUSEPORT 4-tuple-hash imbalance.
+//
+// The per-port dedup map is a process-global Mutex, but it is touched ONLY at
+// worker startup (N times total), never on the accept/read/write/append hot
+// path — the shared-nothing write-path invariant (NO_SHARED_REGISTRY) is intact.
+// The accepted `TcpListener` is stored in the same `registry()` as `tcp_listen`;
+// `TcpListener::accept(&self)` is safe to call concurrently from every worker
+// because `get_sock` clones the `Arc` and drops the map lock before blocking.
+//
+// Backpressure is the kernel's listen backlog on that single socket: with all N
+// workers busy, further connections queue in the backlog and, once it fills,
+// are refused by the OS (clean `ECONNREFUSED`) rather than silently hung —
+// HONEST_BACKPRESSURE, documented, not a timeout-in-userspace.
+
+/// Per-port shared-listener dedup: port → (socket handle, bound port). Held only
+/// during the brief startup registration, never on the hot path.
+fn shared_listeners() -> &'static Mutex<HashMap<u16, (i64, i64)>> {
+    static S: OnceLock<Mutex<HashMap<u16, (i64, i64)>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[track_caller]
+pub fn tcp_listen_shared(v: Value) -> Value {
+    let port = match v {
+        Value::Int(n) if (0..=65535).contains(&n) => n as u16,
+        Value::Int(n) => panic!("tcp_listen_shared: port {} out of range 0..=65535", n),
+        other => panic!("tcp_listen_shared: expected Int port, got {:?}", other),
+    };
+    // Serialize registration so exactly one thread binds; the rest reuse it.
+    let mut shared = shared_listeners().lock().unwrap();
+    if let Some(&(h, bound)) = shared.get(&port) {
+        return Value::Tuple(vec![Value::Int(h), Value::Int(bound)]);
+    }
+    let listener = TcpListener::bind(("0.0.0.0", port))
+        .unwrap_or_else(|e| panic!("tcp_listen_shared({}): {}", port, e));
+    let bound = listener
+        .local_addr()
+        .unwrap_or_else(|e| panic!("tcp_listen_shared({}): local_addr: {}", port, e))
+        .port() as i64;
+    let handle = insert_sock(Sock::Listener(listener));
+    shared.insert(port, (handle, bound));
+    Value::Tuple(vec![Value::Int(handle), Value::Int(bound)])
+}
+
 // ── tcp_connect ──────────────────────────────────────────────────────────────
 
 #[track_caller]

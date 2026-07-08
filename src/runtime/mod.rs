@@ -27,6 +27,7 @@ pub mod seek;
 pub mod logbuf;
 pub mod prealloc;
 pub mod walindex;
+pub mod walshard;
 pub mod chunk;
 
 pub use value::Value;

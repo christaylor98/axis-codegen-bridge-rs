@@ -275,6 +275,11 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("walidx_snapshot",      "axis_codegen_bridge::runtime::walindex::walidx_snapshot");
     m.insert("walidx_rebuild",       "axis_codegen_bridge::runtime::walindex::walidx_rebuild");
 
+    // ── WAL shard routing (walshard.rs — BRIDGE_WAL_SHARD_V1) ───────────────────
+    m.insert("wal_shard_set",        "axis_codegen_bridge::runtime::walshard::wal_shard_set");
+    m.insert("wal_shard_get",        "axis_codegen_bridge::runtime::walshard::wal_shard_get");
+    m.insert("wal_shard_count",      "axis_codegen_bridge::runtime::walshard::wal_shard_count");
+
     // ── Content-defined chunker (chunk.rs — BRIDGE_CDC_V1, FastCDC,
     //    AXVERITY_LANDING_B_BLOB_CHUNKER) ──────────────────────────────────────
     m.insert("chunk_file",           "axis_codegen_bridge::runtime::chunk::chunk_file");
@@ -290,6 +295,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
 
     // ── TCP sockets (net.rs — BRIDGE_TCP_SOCKET_V1) ─────────────────────────────
     m.insert("tcp_listen",           "axis_codegen_bridge::runtime::net::tcp_listen");
+    m.insert("tcp_listen_shared",    "axis_codegen_bridge::runtime::net::tcp_listen_shared");
     m.insert("tcp_connect",          "axis_codegen_bridge::runtime::net::tcp_connect");
     m.insert("tcp_accept",           "axis_codegen_bridge::runtime::net::tcp_accept");
     m.insert("tcp_read",             "axis_codegen_bridge::runtime::net::tcp_read");

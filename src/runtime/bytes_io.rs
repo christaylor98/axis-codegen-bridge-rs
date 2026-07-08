@@ -37,6 +37,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use sha2::{Digest, Sha256};
 
@@ -123,8 +124,23 @@ fn write_durable(path: &str, content: &[u8]) -> std::io::Result<()> {
             format!("fs_write_bytes: path '{}' has no file name", path.display()),
         )
     })?;
+    // UNIQUE temp name per in-flight write (AXVERITY_ACCEPTLOOP_SHARD_DISPATCH).
+    // The old fixed "<file>.tmp" is a concurrency race: two threads (or
+    // processes) writing the SAME target share one temp path, so the first
+    // thread's rename(tmp -> target) pulls the temp out from under the second,
+    // whose own rename then fails ENOEXIST ("No such file or directory"). This
+    // was latent while every writer of a shared path (ledger.current,
+    // <name>.current) was serialized by the single accept loop or an external
+    // flock; the shared-listener worker pool writes them concurrently. A temp
+    // name unique per (pid, monotonic counter) makes fs_write_bytes
+    // concurrency-safe BY CONSTRUCTION — no lock, and single-threaded behavior
+    // is byte-identical (still a temp-then-atomic-rename in the same dir). The
+    // last durable rename wins the target, which is the intended
+    // last-writer-wins for a derived .current cache.
+    static WRITE_SEQ: AtomicU64 = AtomicU64::new(0);
+    let uniq = WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
     let mut tmp_name = file_name.to_os_string();
-    tmp_name.push(".tmp");
+    tmp_name.push(format!(".tmp.{}.{}", std::process::id(), uniq));
     let tmp_path = parent.join(&tmp_name);
 
     {
