@@ -29,5 +29,7 @@ pub mod prealloc;
 pub mod walindex;
 pub mod walshard;
 pub mod chunk;
+pub mod fieldidx;
+pub mod nameptr;
 
 pub use value::Value;

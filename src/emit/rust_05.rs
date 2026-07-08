@@ -182,6 +182,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("fs_file_exists","axis_codegen_bridge::runtime::io::fs_file_exists");
     m.insert("fs_list_dir",   "axis_codegen_bridge::runtime::io::fs_list_dir");
     m.insert("debug_trace",   "axis_codegen_bridge::runtime::io::debug_trace");
+    m.insert("fs_read_last_line", "axis_codegen_bridge::runtime::io::fs_read_last_line");
 
     // Process
     m.insert("proc_args",  "axis_codegen_bridge::runtime::process::proc_args");
@@ -279,6 +280,20 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("wal_shard_set",        "axis_codegen_bridge::runtime::walshard::wal_shard_set");
     m.insert("wal_shard_get",        "axis_codegen_bridge::runtime::walshard::wal_shard_get");
     m.insert("wal_shard_count",      "axis_codegen_bridge::runtime::walshard::wal_shard_count");
+
+    // ── SQL-facing field index: hot thread-local shard + disposable batched
+    //    snapshot (fieldidx.rs — BRIDGE_FIELDIDX_V1, AXVERITY_INSERT_PATH_FASTPATH)
+    m.insert("fieldidx_open",        "axis_codegen_bridge::runtime::fieldidx::fieldidx_open");
+    m.insert("fieldidx_insert",      "axis_codegen_bridge::runtime::fieldidx::fieldidx_insert");
+    m.insert("fieldidx_get",         "axis_codegen_bridge::runtime::fieldidx::fieldidx_get");
+    m.insert("fieldidx_snapshot",    "axis_codegen_bridge::runtime::fieldidx::fieldidx_snapshot");
+    m.insert("fieldidx_rebuild",     "axis_codegen_bridge::runtime::fieldidx::fieldidx_rebuild");
+
+    // ── Name-binding volatile head pointer: double-buffered toggle cell
+    //    (nameptr.rs — BRIDGE_NAMEPTR_V1, AXVERITY_INSERT_PATH_FASTPATH Landing 2,
+    //    intent:axverity-req-immutable-pointer / req-name-gitref) ──────────────
+    m.insert("nameptr_set",          "axis_codegen_bridge::runtime::nameptr::nameptr_set");
+    m.insert("nameptr_get",          "axis_codegen_bridge::runtime::nameptr::nameptr_get");
 
     // ── Content-defined chunker (chunk.rs — BRIDGE_CDC_V1, FastCDC,
     //    AXVERITY_LANDING_B_BLOB_CHUNKER) ──────────────────────────────────────

@@ -59,6 +59,28 @@ pub fn fs_read_text(path: Value) -> Value {
     }
 }
 
+/// `fs_read_last_line(path: Text) -> Text` — AXVERITY_INSERT_PATH_FASTPATH
+/// Landing 2. Returns the last non-empty line of `path`, or "" if the file
+/// is missing or has no non-empty line — MISSING/EMPTY = EMPTY, NOT A PANIC
+/// (the same guarded-read convention as field_lookup/wal_has), since a name
+/// with no binding history yet is an expected, correct query result, not an
+/// error. Used to resolve a name's "current" binding directly from its
+/// append-only `.log` (lib/resolve_name.m1), replacing the read of a
+/// separately-maintained `.current` cache file.
+#[track_caller]
+pub fn fs_read_last_line(path: Value) -> Value {
+    let path_str = match path {
+        Value::Str(h) => get_str(h),
+        _ => panic!("fs_read_last_line: expected Str path"),
+    };
+    let content = match std::fs::read_to_string(&path_str) {
+        Ok(c) => c,
+        Err(_) => return Value::Str(intern_str("")),
+    };
+    let last = content.lines().rev().find(|l| !l.is_empty()).unwrap_or("");
+    Value::Str(intern_str(last))
+}
+
 #[track_caller]
 pub fn fs_write_text(args: Value) -> Value {
     match args {
