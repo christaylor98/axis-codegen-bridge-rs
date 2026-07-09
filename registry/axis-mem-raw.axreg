@@ -8,6 +8,30 @@
 // below — that lives in the M1-side checked-wrapper composites (ecosystem-
 // external to this repo; see src/runtime/rawmem.rs module doc comment for
 // the full concurrency and UB contract each entry is bound by).
+//
+// Type prelude (decl:mem-checked-wrappers-blocker-memraw-type-prelude-v1,
+// authorized as a bug fix to this already-approved, build-complete design —
+// not a design change): the compiler enforces strict PER-FILE type scoping
+// (a type referenced by a fn signature in this file must be declared in
+// this SAME file; cross-file/--reg-companion visibility does not happen,
+// confirmed empirically). This file originally declared none of the
+// primitive types its own seven fn signatures use, so it could not be
+// loaded via --reg through the real M1 pipeline in any configuration — the
+// AXVERITY_MEM_FOREIGN_FNS_V1 outcome tests were satisfied at the Rust/
+// cargo-test level only; this gap had never been exercised until
+// AXVERITY_MEM_CHECKED_WRAPPERS_V1's first real M1 compile attempt. The
+// five lines below are textually identical to axRegistry-working/
+// axis-bridge.axreg's own declarations (Text is included, beyond the
+// four primitive types this file's fn signatures use directly, because
+// Value's own sum definition references it — omitting it just moves the
+// same "unknown name" failure one line down). Purely additive: zero
+// change to any of the seven fns' identity, contract, or behavior.
+type Unit  = prim unit
+type Int   = prim int
+type Text  = prim text
+type Bool  = prim bool
+type Value = sum [ AsUnit(Unit) | AsBool(Bool) | AsInt(Int) | AsText(Text) ]
+type Bytes = prim bytes
 
 // ───────────── cell_new_raw / cell_load_raw / cell_cas_raw ─────────────
 // Self-describing atomic-cell handle: the Int returned by cell_new_raw IS
