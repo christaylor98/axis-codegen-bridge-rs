@@ -1883,6 +1883,16 @@ fn logbuf_sync
   idempotent    true
 end
 
+fn logbuf_flush
+  identity 0xced670b11ecf64ebc797e8895ca9f9a241982158832b082b774ff992c8f52c73
+  kind     leaf
+  in       (Int)
+  out      Unit
+  effect   fullIo
+  deterministic false
+  idempotent    true
+end
+
 fn logbuf_read
   identity 0x5c1bb64eb456f8493d5b38a8999824a8d43b395f5f4379024c3f151115c9ee57
   kind     leaf

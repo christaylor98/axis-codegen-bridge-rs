@@ -257,11 +257,21 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("logbuf_open",          "axis_codegen_bridge::runtime::logbuf::logbuf_open");
     m.insert("logbuf_append",        "axis_codegen_bridge::runtime::logbuf::logbuf_append");
     m.insert("logbuf_sync",          "axis_codegen_bridge::runtime::logbuf::logbuf_sync");
+    m.insert("logbuf_flush",         "axis_codegen_bridge::runtime::logbuf::logbuf_flush");
+    m.insert("wal_fast_batch_write", "axis_codegen_bridge::runtime::logbuf::wal_fast_batch_write");
     m.insert("logbuf_read",          "axis_codegen_bridge::runtime::logbuf::logbuf_read");
     m.insert("logbuf_len",           "axis_codegen_bridge::runtime::logbuf::logbuf_len");
     m.insert("bytes_hash",           "axis_codegen_bridge::runtime::bytes_io::bytes_hash");
     m.insert("fs_mkdir_p",           "axis_codegen_bridge::runtime::bytes_io::fs_mkdir_p");
     m.insert("bytes_to_text",        "axis_codegen_bridge::runtime::bytes_io::bytes_to_text");
+
+    // ── Hot mem arena (hotmem.rs — AXVERITY_HOTMEM_CONSUMER_IMPLEMENTATION_V1,
+    //    first slice) ────────────────────────────────────────────────────────
+    m.insert("hotmem_write",         "axis_codegen_bridge::runtime::hotmem::hotmem_write");
+    m.insert("hotmem_reader_start",  "axis_codegen_bridge::runtime::hotmem::hotmem_reader_start");
+    m.insert("hotmem_read",          "axis_codegen_bridge::runtime::hotmem::hotmem_read");
+    m.insert("hotmem_epoch",         "axis_codegen_bridge::runtime::hotmem::hotmem_epoch");
+    m.insert("hotmem_missed",        "axis_codegen_bridge::runtime::hotmem::hotmem_missed");
 
     // ── WAL segment pre-allocation (prealloc.rs — BRIDGE_WAL_SEG_ALLOC_V1,
     //    AXVERITY_WAL_ALLOCATION_AND_BLOB_PATH Landing A) ─────────────────────
@@ -275,6 +285,20 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("walidx_get",           "axis_codegen_bridge::runtime::walindex::walidx_get");
     m.insert("walidx_snapshot",      "axis_codegen_bridge::runtime::walindex::walidx_snapshot");
     m.insert("walidx_rebuild",       "axis_codegen_bridge::runtime::walindex::walidx_rebuild");
+
+    // ── Recovery-log group commit + ack backpath
+    //    (AXVERITY_HOTPATH_PARALLEL_DISPATCH_V1) ──────────────────────────────
+    //    oneshot.rs — net-new single-fire completion primitive.
+    m.insert("oneshot_new",          "axis_codegen_bridge::runtime::oneshot::oneshot_new");
+    m.insert("oneshot_wait",         "axis_codegen_bridge::runtime::oneshot::oneshot_wait");
+    m.insert("oneshot_signal",       "axis_codegen_bridge::runtime::oneshot::oneshot_signal");
+    //    channels.rs — bounded, block-on-full channel (distinct from the
+    //    existing unbounded Channel; existing one untouched).
+    m.insert("bchan_send",           "axis_codegen_bridge::runtime::channels::bchan_send");
+    m.insert("bchan_drain",          "axis_codegen_bridge::runtime::channels::bchan_drain");
+    //    reclog.rs — the batched recovery-log writer (folds payload + PK bind).
+    m.insert("reclog_submit",        "axis_codegen_bridge::runtime::reclog::reclog_submit");
+    m.insert("reclog_flush_once",    "axis_codegen_bridge::runtime::reclog::reclog_flush_once");
 
     // ── WAL shard routing (walshard.rs — BRIDGE_WAL_SHARD_V1) ───────────────────
     m.insert("wal_shard_set",        "axis_codegen_bridge::runtime::walshard::wal_shard_set");

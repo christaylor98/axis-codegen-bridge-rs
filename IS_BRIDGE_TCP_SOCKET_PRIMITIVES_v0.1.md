@@ -31,17 +31,18 @@ You are operating under INTENT_SYSTEM_SPEC.v1.0.
   (identity
     (name "BRIDGE_TCP_SOCKET_V1")
     (owner "Chris")
-    (scope "TCP listen/accept/read/write/close/connect bridge primitives for axis-codegen-bridge-rs, unblocking the Postgres wire protocol milestone. Excludes TLS, UDP, non-blocking/select, and any axlang M1-surface parser change. (client-side connect added by AMENDMENT — Chris approved.)"))
+    (scope "TCP listen/accept/connect/read/write/close bridge primitives for axis-codegen-bridge-rs, unblocking the Postgres wire protocol milestone. Excludes TLS, UDP, non-blocking/select, and any axlang M1-surface parser change. (client-side connect added by AMENDMENT — Chris approved.)"))
 
 
   ;; ------------------------------------------------------------
   ;; GOAL
   ;; ------------------------------------------------------------
   (goal
-    (primary "Land tcp_listen/tcp_accept/tcp_read/tcp_write/tcp_close as bridge leaf fns, closing gap:axverity-postgres-wire-needs-socket-primitive.")
+    (primary "Land tcp_listen/tcp_accept/tcp_connect/tcp_read/tcp_write/tcp_close as bridge leaf fns, closing gap:axverity-postgres-wire-needs-socket-primitive.")
     (secondary
       "Support explicit port parameter including 0 (ephemeral) without adding a fixed-port special case."
-      "Return the bound port from tcp_listen without inventing new registry types.")
+      "Return the bound port from tcp_listen without inventing new registry types."
+      "[AMENDED] Prove both server and client halves entirely through bridge fns — no std::net in test scaffolding.")
     (type outcome-oriented))
 
 
@@ -100,6 +101,9 @@ You are operating under INTENT_SYSTEM_SPEC.v1.0.
   (constraint
     (hard-limit "THREE_PIECE_RULE: net.rs impl + dispatch entry (rust_05.rs) + registry entry land in the same commit."))
 
+  (constraint
+    (hard-limit "[AMENDED] Any scope change (boundary forbidden → allowed) must be annotated in-artifact with actor + may-decide, not silently applied."))
+
 
   ;; ------------------------------------------------------------
   ;; RISK
@@ -108,7 +112,7 @@ You are operating under INTENT_SYSTEM_SPEC.v1.0.
     ("tuple_field/ctor_field return Value::Unit on shape mismatch instead of panicking — a caller destructuring tcp_listen's Tuple incorrectly gets silent Unit, not a panic, masking a bug as a value" medium))
 
   (risk
-    ("Blocking tcp_accept/tcp_read stalls the calling M1 process loop indefinitely if the peer never connects/sends — no timeout primitive exists" medium))
+    ("Blocking tcp_accept/tcp_read/tcp_connect stalls the calling M1 process loop indefinitely if the peer never connects/sends — no timeout primitive exists" medium))
 
   (risk
     ("Ephemeral port exhaustion or bind collision under heavy concurrent-listener test load" low))
@@ -118,7 +122,7 @@ You are operating under INTENT_SYSTEM_SPEC.v1.0.
   ;; BOUNDARY
   ;; ------------------------------------------------------------
   (boundary
-    ("tcp_listen / tcp_accept / tcp_read / tcp_write / tcp_close" allowed)
+    ("tcp_listen / tcp_accept / tcp_connect / tcp_read / tcp_write / tcp_close" allowed)
     ("TLS" forbidden)
     ("UDP" forbidden)
     ("non-blocking / select" forbidden)
@@ -132,22 +136,19 @@ You are operating under INTENT_SYSTEM_SPEC.v1.0.
   (unknown
     ("Whether tuple_field's silent-Unit-on-mismatch behavior needs correcting to panic-on-mismatch for convention consistency — out of scope for this IS, flagged for separate decision."))
 
-  (unknown
-    ("Whether ephemeral port range exhaustion is a real concern at this project's actual concurrent-test parallelism — untested at scale."))
-
 
   ;; ------------------------------------------------------------
   ;; ASSUMPTION
   ;; ------------------------------------------------------------
   (assumption
-    ("Bridge dispatch wraps multi-arg leaf fn calls as Value::Tuple before invocation, consistent for tcp_write(Int, Bytes) as for existing 2-arg fns." tentative))
+    ("Bridge dispatch wraps multi-arg leaf fn calls as Value::Tuple before invocation, consistent for tcp_write(Int, Bytes) as for existing 2-arg fns." confirmed))
 
   (assumption
     ("Binding 0.0.0.0 (not loopback-only) is acceptable for the Postgres-wire demo." tentative))
 
 
   ;; ------------------------------------------------------------
-  ;; OUTCOME
+  ;; OUTCOME — re-typed against actual test results (2026-07-06)
   ;; ------------------------------------------------------------
   (outcome
 
@@ -155,28 +156,26 @@ You are operating under INTENT_SYSTEM_SPEC.v1.0.
 
     (fact "`product` is used zero times in registry/axis-codegen-bridge.axreg — a first-of-its-kind Product-typed `out` would break precedent, not extend it.")
 
-    (fact "Result/Ok-Err wrapper types were deliberately removed from this bridge (IS_REMOVE_RESULT_TYPES_FINAL_v0.1.md); panic-only is the live, confirmed convention (bytes_io.rs::bytes_hash, ::fs_mkdir_p).")
+    (fact "Result/Ok-Err wrapper types were deliberately removed from this bridge (IS_REMOVE_RESULT_TYPES_FINAL_v0.1.md); panic-only is the live, confirmed convention.")
 
-    (fact "TypeShape::Product is fully parsed and lowered in axis-lang-lab-working/src/registry/core05/text.rs — available if ever needed, not required here.")
+    (fact "tcp_listen returning Value::Tuple([Int(handle), Int(port)]) round-trips correctly through tuple_field at the bridge call site — confirmed by tests::tcp_listen_accept_read_write_close_roundtrip, passing.")
 
-    (untested-prediction "tcp_listen returning Value::Tuple([Int(handle), Int(port)]) round-trips correctly through tuple_field at an M1 call site."
-      (test "New #[test] in net.rs: tcp_listen(0) -> tuple_field(_, 0)/tuple_field(_, 1) -> spawn thread tcp_accept+tcp_read -> main thread TcpStream::connect+write -> assert bytes match."))
+    (fact "Concurrent tcp_listen(0) across N threads yields N distinct ports, zero bind failures — confirmed by tests::concurrent_ephemeral_listen_distinct_ports, passing.")
 
-    (untested-prediction "Concurrent tcp_listen(0) calls across N threads yield N distinct ports with zero bind failures."
-      (test "N-thread concurrent-listener test, assert distinct ports and all binds succeed — matches project's existing SIGKILL/concurrent-process-race test discipline."))
+    (fact "net.rs + dispatch wiring + registry entries build and pass clean — cargo build 0 errors, cargo test 295 passed / 0 failed, net.rs 3/3 green.")
 
-    (untested-prediction "net.rs + dispatch wiring + registry entries build and pass clean."
-      (test "cargo build 2>&1 | grep ^error | wc -l == 0; cargo test tail -5 == 0 failed; validate.sh all PASS."))
+    (fact "Identity hashes verified against sha256(name) in all three registries (axis-codegen-bridge.axreg, axRegistry-working, axAI-axlang-gen-working) — tcp_connect = f3cb7cba2165737c40329d3d8d2cd9ccae60b6dd2e43a1c918510499806e0850, independently re-verified.")
 
-    (untested-prediction "Identity hashes as computed match sha256(name) at commit time."
-      (test "echo -n '{name}' | sha256sum for each of the 5 fn names, cross-check against axreg identity field.")))
+    (fact "[AMENDED] Client half (tcp_connect+tcp_write+tcp_read) and server half (tcp_listen+tcp_accept+tcp_read+tcp_write) both proven with zero raw std::net calls in test code — tests::tcp_connect_all_bridge_loopback, passing. Both roles now provably go through the bridge, not just the server half.")
+
+    (fact "validate.sh — all registries PASS."))
 
 
   ;; ------------------------------------------------------------
   ;; MODE LOCK
   ;; ------------------------------------------------------------
   (mode
-    (phase structured-design)
+    (phase complete)
     (design allowed)
     (execution allowed))
 
@@ -185,7 +184,7 @@ You are operating under INTENT_SYSTEM_SPEC.v1.0.
   ;; STATUS
   ;; ------------------------------------------------------------
   (status
-    (state proposed)
+    (state shipped)
     (authority human)
     (execution-allowed true))
 )
@@ -201,6 +200,7 @@ You are operating under INTENT_SYSTEM_SPEC.v1.0.
   (hard-limit TCP_LISTEN_RETURNS_HANDLE_AND_PORT)
   (hard-limit NO_ASYNC_LAYER_COUPLING)
   (hard-limit THREE_PIECE_RULE)
+  (hard-limit SCOPE_CHANGE_MUST_BE_ANNOTATED)
   (authority AI_PROPOSE_ONLY))
 
 ;; Semantic gravity anchors:
@@ -208,6 +208,7 @@ You are operating under INTENT_SYSTEM_SPEC.v1.0.
 ;; NO_NEW_REGISTRY_TYPE_REUSE_VALUE
 ;; TUPLE_FIELD_IS_THE_PRECEDENT
 ;; TCP_LISTEN_RETURNS_HANDLE_AND_PORT
+;; BOTH_ROLES_THROUGH_THE_BRIDGE
 ;; AI_PROPOSE_ONLY
 
 
@@ -216,20 +217,21 @@ You are operating under INTENT_SYSTEM_SPEC.v1.0.
 ;; ============================================================
 
 (spine
-  "src/runtime/net.rs – new module; TcpListener/TcpStream registry, five leaf fns."
-  "src/runtime/mod.rs – pub mod net."
-  "src/emit/rust_05.rs – dispatch map entries for the five fn names."
-  "registry/axis-codegen-bridge.axreg – five fn entries, no new type."
-  "CLAUDE.md – valid bridge fn list addition."
-  "axRegistry-working/axis-bridge.axreg – registry propagation."
-  "axAI-axlang-gen-working/registries/axis-bridge.axreg – registry propagation.")
+  "src/runtime/net.rs – TcpListener/TcpStream registry, six leaf fns, 3 tests. SHIPPED."
+  "src/runtime/mod.rs – pub mod net. SHIPPED."
+  "src/emit/rust_05.rs – symbol_map v3, six dispatch entries. SHIPPED."
+  "registry/axis-codegen-bridge.axreg – six fn entries, no new type. SHIPPED."
+  "CLAUDE.md – valid bridge fn list, six entries. SHIPPED."
+  "axRegistry-working/axis-bridge.axreg – propagated, verified. SHIPPED."
+  "axAI-axlang-gen-working/registries/axis-bridge.axreg – propagated, verified. SHIPPED.")
 
 
 (spine-rules
   (only net.rs may hold std::net socket state)
   (net.rs registry.rs dispatch.rs land-in-same-commit)
   (no Result/Option wrapper types introduced)
-  (no new type declarations))
+  (no new type declarations)
+  (scope changes annotated in-artifact, not silent))
 
 
 ;; ============================================================
@@ -239,43 +241,25 @@ You are operating under INTENT_SYSTEM_SPEC.v1.0.
 ;; Before any conclusions:
 ;; Evaluate against:
 ;; - identity BRIDGE_TCP_SOCKET_V1
-;; - constraints PANIC_ONLY_NO_RESULT_TYPES, NO_NEW_REGISTRY_TYPE_REUSE_VALUE, THREE_PIECE_RULE
+;; - constraints PANIC_ONLY_NO_RESULT_TYPES, NO_NEW_REGISTRY_TYPE_REUSE_VALUE, THREE_PIECE_RULE, SCOPE_CHANGE_MUST_BE_ANNOTATED
 ;; - priority precedent-consistency > correctness > demo-critical-path > performance
-;; - risk tuple_field-silent-Unit medium, blocking-accept-no-timeout medium
+;; - risk tuple_field-silent-Unit medium, blocking-calls-no-timeout medium
 ;; - boundary default forbidden
 ;; - authority AI_PROPOSE_ONLY
-;; - epistemics: outcomes fact-typed; predictions/unknowns carry tests
+;; - epistemics: all outcomes fact-typed against actual test results; no predictions left unresolved
 
 
 ;; ============================================================
-;; NEXT-TESTS (aggregated forward agenda)
+;; STATUS: CLOSED
 ;; ============================================================
-
-(next-tests
-  (test "cargo build 2>&1 | grep ^error | wc -l  → expect 0")
-  (test "cargo test 2>&1 | tail -5  → expect 0 failed")
-  (test "echo -n '{name}' | sha256sum for tcp_listen/accept/read/write/close → cross-check axreg identity")
-  (test "cd axRegistry-working && bash validate.sh → expect all PASS")
-  (test "net.rs #[test]: tcp_listen(0) → tuple_field destructure → accept/read/write round trip on 127.0.0.1")
-  (test "N-thread concurrent tcp_listen(0) → assert N distinct ports, zero bind failures"))
-
-
-;; ============================================================
-;; REQUEST SECTION
-;; ============================================================
-
-Execute BRIDGE_TCP_SOCKET_V1: implement net.rs, wire dispatch, add registry
-entries, propagate registry, update CLAUDE.md, run next-tests in order.
-Reject any implementation step that violates a hard-limit constraint above.
-Report outcome per (outcome) entry, re-typing each untested-prediction as
-fact or disconfirmed based on actual test results — do not leave predictions
-unresolved in the completion report.
+;; gap:axverity-postgres-wire-needs-socket-primitive → LIVE (satisfied)
+;; All 6 next-tests from prior revision executed and passed. No open predictions.
 ```
 
 (model-recommendation
-  (recommended "Opus 4.8")
-  (tier T3)
-  (floor "Sonnet 4.6")
-  (rationale "structured-design base (T2) + 6 hard-limit constraints (≥4 dense-invariant threshold) → escalate one tier to T3")
+  (recommended "n/a — shipped")
+  (tier n/a)
+  (floor n/a)
+  (rationale "Execution complete; model selection for this IS is no longer live.")
   (authority human)
   (may-decide false))

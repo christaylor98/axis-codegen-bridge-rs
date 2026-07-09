@@ -1,6 +1,7 @@
 //! BRIDGE_LOGBUF_V1 (spike:axverity-spike1) — a thin, Rust-owned durable
 //! append buffer. logbuf_open / logbuf_append / logbuf_sync / logbuf_read /
-//! logbuf_len.
+//! logbuf_len / logbuf_flush (AXVERITY_PGSERVER_FAST_MODE — write without
+//! fsync, see logbuf_flush's own doc comment for why this is needed).
 //!
 //! ## What is thin here (spike1 hard-limit THIN_SUBSTRATE)
 //!
@@ -230,6 +231,114 @@ pub fn logbuf_sync(arg: Value) -> Value {
         }
         lb.file_len += lb.buf.len() as u64;
         lb.buf.clear();
+        Value::Unit
+    })
+}
+
+/// `logbuf_flush(handle: Int) -> Unit`
+///
+/// AXVERITY_PGSERVER_FAST_MODE. Flush the calling thread's buffer to its file
+/// (one `write_all`) WITHOUT fsyncing it, then clear the buffer — the
+/// write-half of `logbuf_sync` with the fsync half removed. This is the
+/// primitive FAST mode needs and `logbuf_append` alone cannot provide:
+/// `append` is a pure in-memory memcpy (no syscall at all, see the module
+/// doc), so skipping `sync` entirely — the naive first attempt at FAST mode —
+/// silently drops the data instead of merely deferring its fsync (confirmed
+/// empirically: a 0-byte WAL segment after a "successful" fast-mode INSERT).
+/// `logbuf_flush` closes that gap: after this returns, the bytes have reached
+/// the OS via `write(2)` and sit in the page cache — durable across the
+/// writing process's own crash/SIGKILL (the turn-0012 crash-test property),
+/// but not across a real power loss/OS crash before some later `fsync`
+/// reclaims them. This is exactly axVerity FAST mode's specified guarantee
+/// (specs/axverity-durability-model-payload-wal.md §9: "ack on landing in the
+/// buffer before sync... survives OS crash, loses a bounded window on power
+/// loss, never corrupt") — no more, no less. A sync with an empty buffer is a
+/// no-op, same as `logbuf_sync`. Panics on any OS error.
+#[track_caller]
+pub fn logbuf_flush(arg: Value) -> Value {
+    let h = match arg {
+        Value::Int(n) => n,
+        other => panic!("logbuf_flush: expected Int handle, got {:?}", other),
+    };
+    LOGS.with(|logs| {
+        let mut logs = logs.borrow_mut();
+        let lb = logs
+            .get_mut(&h)
+            .unwrap_or_else(|| panic!("logbuf_flush: unknown handle {} (not opened on this thread)", h));
+        if lb.buf.is_empty() {
+            return Value::Unit;
+        }
+        if let Err(e) = lb.file.write_all(&lb.buf) {
+            panic!("logbuf_flush({}): write_all: {}", lb.path, e);
+        }
+        lb.file_len += lb.buf.len() as u64;
+        lb.buf.clear();
+        Value::Unit
+    })
+}
+
+/// `wal_fast_batch_write(batch: Value) -> Value`
+///
+/// AXVERITY_PGSERVER_FAST_MODE — the janitor's `wait()` handler. `wait`
+/// drains every message pending on a subscribed channel into one
+/// `Value::List` and calls its handler with that list ONCE (see
+/// channels.rs); this IS that handler, so it must be `fn(Value) -> Value` —
+/// the same reason `logbuf_flush` had to be a bridge primitive rather than
+/// M1 source (the M1 surface parser has no bare-`Value`-param wall, contrary
+/// to an earlier finding in this codebase — `Value(Bytes)`/`ValueList(Bytes)`
+/// tagged forms parse fine — but `wait`'s OWN handler slot is a raw untagged
+/// `fn(Value) -> Value` at the Rust ABI level, which only a bridge built-in
+/// can satisfy directly without an extra M1-level wrapper hop).
+///
+/// Each item in the batch is a `Value::Bytes` — an already-framed,
+/// already-immutable WAL record that will never be mutated again. Because it
+/// can never change, a copy is never needed to keep it safe: this writes
+/// each item's OWN backing buffer straight to the file via `write_all`, with
+/// NO intermediate accumulation into a second buffer first. This
+/// deliberately bypasses `LogBuf.buf` (the `logbuf_append`/`logbuf_sync`
+/// accumulator) — appending each item there first would `extend_from_slice`
+/// (memcpy) it into a second copy for no reason, since the batch already
+/// arrived as a `Vec` of complete, final, owned buffers in one shot. One
+/// `fsync` covers the whole batch — real group commit, sized by however many
+/// frames a single `wait()` call happened to drain.
+///
+/// Handle 1 is a deliberate, documented convention, not a magic number: the
+/// janitor thread's FIRST `logbuf_open` call (at startup, before this
+/// handler is ever reachable) is guaranteed to return handle 1 — thread-local
+/// handle counters start at 1 per thread (see `next_handle`/`NEXT` above).
+/// `wait`'s handler signature has no room for a handle argument, so a fixed,
+/// pre-established handle is the only option — same discipline as
+/// `wal_put_fast.m1`'s fixed shard-string convention elsewhere in this spike.
+/// Panics on any OS error, or if the batch contains a non-Bytes item.
+#[track_caller]
+pub fn wal_fast_batch_write(arg: Value) -> Value {
+    let items = match arg {
+        Value::List(items) => items,
+        other => panic!("wal_fast_batch_write: expected List, got {:?}", other),
+    };
+    if items.is_empty() {
+        return Value::Unit;
+    }
+    LOGS.with(|logs| {
+        let mut logs = logs.borrow_mut();
+        let lb = logs.get_mut(&1).unwrap_or_else(|| {
+            panic!("wal_fast_batch_write: handle 1 not open on this thread (janitor must logbuf_open first)")
+        });
+        let mut total: u64 = 0;
+        for item in &items {
+            let bytes = match item {
+                Value::Bytes(b) => b,
+                other => panic!("wal_fast_batch_write: expected Bytes item, got {:?}", other),
+            };
+            if let Err(e) = lb.file.write_all(bytes) {
+                panic!("wal_fast_batch_write({}): write_all: {}", lb.path, e);
+            }
+            total += bytes.len() as u64;
+        }
+        if let Err(e) = lb.file.sync_all() {
+            panic!("wal_fast_batch_write({}): fsync: {}", lb.path, e);
+        }
+        lb.file_len += total;
         Value::Unit
     })
 }

@@ -31,5 +31,8 @@ pub mod walshard;
 pub mod chunk;
 pub mod fieldidx;
 pub mod nameptr;
+pub mod hotmem;
+pub mod oneshot;
+pub mod reclog;
 
 pub use value::Value;
