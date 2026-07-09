@@ -341,6 +341,16 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("tcp_write",            "axis_codegen_bridge::runtime::net::tcp_write");
     m.insert("tcp_close",            "axis_codegen_bridge::runtime::net::tcp_close");
 
+    // ── Raw memory / atomic-cell primitives (rawmem.rs — AXVERITY_MEM_FOREIGN_FNS_V1)
+    //    Unchecked, self-describing-handle. See registry/axis-mem-raw.axreg. ───
+    m.insert("cell_new_raw",         "axis_codegen_bridge::runtime::rawmem::cell_new_raw");
+    m.insert("cell_load_raw",        "axis_codegen_bridge::runtime::rawmem::cell_load_raw");
+    m.insert("cell_cas_raw",         "axis_codegen_bridge::runtime::rawmem::cell_cas_raw");
+    m.insert("mem_reserve_raw",      "axis_codegen_bridge::runtime::rawmem::mem_reserve_raw");
+    m.insert("mem_write_raw",        "axis_codegen_bridge::runtime::rawmem::mem_write_raw");
+    m.insert("mem_read_raw",         "axis_codegen_bridge::runtime::rawmem::mem_read_raw");
+    m.insert("mem_free_raw",         "axis_codegen_bridge::runtime::rawmem::mem_free_raw");
+
     m
 }
 

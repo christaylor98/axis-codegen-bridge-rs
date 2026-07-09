@@ -34,5 +34,6 @@ pub mod nameptr;
 pub mod hotmem;
 pub mod oneshot;
 pub mod reclog;
+pub mod rawmem;
 
 pub use value::Value;

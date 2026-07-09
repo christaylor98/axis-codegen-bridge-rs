@@ -1,0 +1,111 @@
+// AXVERITY_MEM_FOREIGN_FNS_V1 — seven brutally minimal, self-describing-
+// handle raw memory / atomic-cell primitives. Standalone registry file
+// (isolation from axis-codegen-bridge.axreg is deliberate — see the
+// governing intent's genericity-and-isolation priority).
+//
+// Identity = sha256(utf8 fn name), per this repo's CLAUDE.md rule for leaf
+// fns. All bounds/validity checking is deliberately absent from every entry
+// below — that lives in the M1-side checked-wrapper composites (ecosystem-
+// external to this repo; see src/runtime/rawmem.rs module doc comment for
+// the full concurrency and UB contract each entry is bound by).
+
+// ───────────── cell_new_raw / cell_load_raw / cell_cas_raw ─────────────
+// Self-describing atomic-cell handle: the Int returned by cell_new_raw IS
+// the cell's address, never a table key. No dedicated checked wrapper yet
+// (out of scope for this build) — treat cell addresses with the same care
+// as raw mem_reserve_raw handles.
+
+// UNCHECKED — no dedicated checked wrapper. No cell_free_raw exists (see
+// src/runtime/rawmem.rs cell_new_raw doc comment) — cells are permanent for
+// the process lifetime, by explicit decision, not oversight.
+fn cell_new_raw
+  identity 0xb6485822e07a8fc4fc818a206374e59e91555a5cd374106e1979df158fa3dc5f
+  kind     leaf
+  in       (Int)
+  out      Int
+  effect   fullIo
+  deterministic false
+  idempotent    false
+end
+
+// UNCHECKED — no dedicated checked wrapper. Caller must pass an addr that is
+// actually a live cell; dereferencing a stale/bogus address is UB, not
+// checked here.
+fn cell_load_raw
+  identity 0x47f4645f5839420734ca104b158db1b410aeee58576e890c55b010527e8bc7ef
+  kind     leaf
+  in       (Int)
+  out      Int
+  effect   reads
+  deterministic false
+  idempotent    true
+end
+
+// UNCHECKED — no dedicated checked wrapper. Same live-address caveat as
+// cell_load_raw.
+fn cell_cas_raw
+  identity 0x72022743029a01c5e433ae259bf57c9ed977b4305d681ff1fefc1fc443d3806c
+  kind     leaf
+  in       (Int, Int, Int)
+  out      Bool
+  effect   writes
+  deterministic false
+  idempotent    false
+end
+
+// ───────────── mem_reserve_raw / mem_write_raw / mem_read_raw / mem_free_raw ─────────────
+// Self-describing byte-region handle: mem_reserve_raw returns (ptr, capacity)
+// as a plain Value tuple; every later call carries everything the bridge
+// needs. No bridge-side handle table backs any of these.
+
+// UNCHECKED — no dedicated checked wrapper (mem_reserve_raw only mints the
+// handle; there is nothing to bounds-check on reservation itself).
+fn mem_reserve_raw
+  identity 0x78185c7fdddc4e565e61e187441bc9cfa6107993fc21ba9b990362a86c51b57c
+  kind     leaf
+  in       (Int)
+  out      Value
+  effect   fullIo
+  deterministic false
+  idempotent    false
+end
+
+// UNCHECKED — see mem_write_checked (M1 composite, ecosystem-external).
+// Performs NO bounds check against any capacity; offset/length correctness
+// is entirely the caller's responsibility.
+fn mem_write_raw
+  identity 0xeafcdff21eaccfe2a2ca4c075ca968b7d4739f52bb14a6a5d45b779f03535bed
+  kind     leaf
+  in       (Int, Int, Bytes)
+  out      Unit
+  effect   fullIo
+  deterministic false
+  idempotent    false
+end
+
+// UNCHECKED — see mem_read_checked (M1 composite, ecosystem-external).
+// Performs NO bounds check against any capacity, and cannot verify the read
+// range was actually written — both are caller obligations.
+fn mem_read_raw
+  identity 0xa914e071857bd86dd44321c909d657c3e654584aaf30a54287edc0da77196f6f
+  kind     leaf
+  in       (Int, Int, Int)
+  out      Bytes
+  effect   fullIo
+  deterministic false
+  idempotent    false
+end
+
+// UNCHECKED — see mem_free_checked (M1 composite, ecosystem-external).
+// capacity MUST exactly match the value returned by this ptr's own
+// mem_reserve_raw call — Rust's allocator Layout-matching contract.
+// A mismatched capacity is undefined behavior, not a checked error.
+fn mem_free_raw
+  identity 0xe554c000a05f8c96763d67345205bd89ee47217aa90782e80ee1555e95ba5b74
+  kind     leaf
+  in       (Int, Int)
+  out      Unit
+  effect   fullIo
+  deterministic false
+  idempotent    false
+end
