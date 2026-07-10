@@ -104,13 +104,13 @@ fn test_intern_concurrent_dedup() {
 #[test]
 fn test_intern_large_volume() {
     setup();
-    let handles: Vec<u32> = (0..5_000).map(|i| {
+    let handles: Vec<Arc<str>> = (0..5_000).map(|i| {
         intern_str(&format!("unique_string_battle_{}", i))
     }).collect();
-    for (i, &h) in handles.iter().enumerate() {
+    for (i, h) in handles.iter().enumerate() {
         let expected = format!("unique_string_battle_{}", i);
         let h2 = intern_str(&expected);
-        assert_eq!(h, h2);
+        assert_eq!(h, &h2);
     }
 }
 

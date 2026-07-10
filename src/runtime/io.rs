@@ -4,7 +4,7 @@ use super::value::{Value, intern_str, get_str};
 #[track_caller]
 pub fn io_print(val: Value) -> Value {
     match &val {
-        Value::Str(h) => print!("{}", get_str(*h)),
+        Value::Str(h) => print!("{}", get_str(h)),
         Value::Int(n) => print!("{}", n),
         Value::Bool(b) => print!("{}", b),
         Value::Unit    => print!("()"),
@@ -17,7 +17,7 @@ pub fn io_print(val: Value) -> Value {
 #[track_caller]
 pub fn io_println(val: Value) -> Value {
     match &val {
-        Value::Str(h) => println!("{}", get_str(*h)),
+        Value::Str(h) => println!("{}", get_str(h)),
         Value::Int(n) => println!("{}", n),
         Value::Bool(b) => println!("{}", b),
         Value::Unit    => println!("()"),
@@ -29,7 +29,7 @@ pub fn io_println(val: Value) -> Value {
 #[track_caller]
 pub fn io_eprint(val: Value) -> Value {
     match &val {
-        Value::Str(h) => eprint!("{}", get_str(*h)),
+        Value::Str(h) => eprint!("{}", get_str(h)),
         Value::Int(n) => eprint!("{}", n),
         Value::Bool(b) => eprint!("{}", b),
         Value::Unit    => eprint!("()"),
@@ -86,8 +86,8 @@ pub fn fs_write_text(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
             (Value::Str(path_h), Value::Str(content_h)) => {
-                let path    = get_str(*path_h);
-                let content = get_str(*content_h);
+                let path    = get_str(path_h);
+                let content = get_str(content_h);
                 if let Err(e) = std::fs::write(&path, &content) {
                     panic!("fs_write_text({}): {}", path, e);
                 }
@@ -105,8 +105,8 @@ pub fn fs_append_text(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
             (Value::Str(path_h), Value::Str(content_h)) => {
-                let path    = get_str(*path_h);
-                let content = get_str(*content_h);
+                let path    = get_str(path_h);
+                let content = get_str(content_h);
                 let result = std::fs::OpenOptions::new()
                     .append(true).create(true).open(&path)
                     .and_then(|mut f| f.write_all(content.as_bytes()));
@@ -142,7 +142,7 @@ pub fn fs_list_dir(path: Value) -> Value {
         .map(|e| Value::Str(intern_str(&e.file_name().to_string_lossy())))
         .collect();
     entries.sort_by(|a, b| match (a, b) {
-        (Value::Str(ah), Value::Str(bh)) => get_str(*ah).cmp(&get_str(*bh)),
+        (Value::Str(ah), Value::Str(bh)) => get_str(ah).cmp(&get_str(bh)),
         _ => std::cmp::Ordering::Equal,
     });
     Value::List(entries)

@@ -13,7 +13,7 @@ pub fn str_concat(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
             (Value::Str(a), Value::Str(b)) => {
-                Value::Str(intern_str(&format!("{}{}", get_str(*a), get_str(*b))))
+                Value::Str(intern_str(&format!("{}{}", get_str(a), get_str(b))))
             }
             _ => panic!("str_concat: expected two Str values"),
         },
@@ -26,7 +26,7 @@ pub fn str_concat(args: Value) -> Value {
 pub fn str_char_at(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => {
-            let h = match &es[0] { Value::Str(h) => *h, _ => panic!("str_char_at: expected Str") };
+            let h = match &es[0] { Value::Str(h) => h.clone(), _ => panic!("str_char_at: expected Str") };
             let idx = match &es[1] { Value::Int(n) => *n, _ => panic!("str_char_at: expected Int index") };
             if idx < 0 { return super::option::option_none(); }
             let chars: Vec<char> = get_str(h).chars().collect();
@@ -44,7 +44,7 @@ pub fn str_char_at(args: Value) -> Value {
 pub fn str_char(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => {
-            let h   = match &es[0] { Value::Str(h) => *h, _ => panic!("str_char: expected Str") };
+            let h   = match &es[0] { Value::Str(h) => h.clone(), _ => panic!("str_char: expected Str") };
             let idx = match &es[1] { Value::Int(n) => *n as usize, _ => panic!("str_char: expected Int") };
             let chars: Vec<char> = get_str(h).chars().collect();
             Value::Str(intern_str(&chars[idx].to_string()))
@@ -57,7 +57,7 @@ pub fn str_char(args: Value) -> Value {
 pub fn str_char_code(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => {
-            let h   = match &es[0] { Value::Str(h) => *h, _ => panic!("str_char_code: expected Str") };
+            let h   = match &es[0] { Value::Str(h) => h.clone(), _ => panic!("str_char_code: expected Str") };
             let idx = match &es[1] { Value::Int(n) => *n as usize, _ => panic!("str_char_code: expected Int") };
             let chars: Vec<char> = get_str(h).chars().collect();
             Value::Int(chars[idx] as u32 as i64)
@@ -70,7 +70,7 @@ pub fn str_char_code(args: Value) -> Value {
 pub fn str_slice(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 3 => {
-            let h     = match &es[0] { Value::Str(h) => *h, _ => panic!("str_slice: expected Str") };
+            let h     = match &es[0] { Value::Str(h) => h.clone(), _ => panic!("str_slice: expected Str") };
             let start = match &es[1] { Value::Int(n) => *n as usize, _ => panic!("str_slice: expected Int start") };
             let end   = match &es[2] { Value::Int(n) => *n as usize, _ => panic!("str_slice: expected Int end") };
             let s = get_str(h);
@@ -88,8 +88,8 @@ pub fn str_split(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
             (Value::Str(content_h), Value::Str(delim_h)) => {
-                let content = get_str(*content_h);
-                let delim   = get_str(*delim_h);
+                let content = get_str(content_h);
+                let delim   = get_str(delim_h);
                 let parts: Vec<Value> = content.split(delim.as_str())
                     .map(|s| Value::Str(intern_str(s)))
                     .collect();
@@ -106,7 +106,7 @@ pub fn str_starts_with(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
             (Value::Str(hay_h), Value::Str(pre_h)) => {
-                Value::Bool(get_str(*hay_h).starts_with(get_str(*pre_h).as_str()))
+                Value::Bool(get_str(hay_h).starts_with(get_str(pre_h).as_str()))
             }
             _ => panic!("str_starts_with: expected two Str values"),
         },
@@ -119,7 +119,7 @@ pub fn str_ends_with(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
             (Value::Str(hay_h), Value::Str(suf_h)) => {
-                Value::Bool(get_str(*hay_h).ends_with(get_str(*suf_h).as_str()))
+                Value::Bool(get_str(hay_h).ends_with(get_str(suf_h).as_str()))
             }
             _ => panic!("str_ends_with: expected two Str values"),
         },
@@ -140,7 +140,7 @@ pub fn str_contains(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
             (Value::Str(hay_h), Value::Str(need_h)) => {
-                Value::Bool(get_str(*hay_h).contains(get_str(*need_h).as_str()))
+                Value::Bool(get_str(hay_h).contains(get_str(need_h).as_str()))
             }
             _ => panic!("str_contains: expected two Str values"),
         },
@@ -152,7 +152,7 @@ pub fn str_contains(args: Value) -> Value {
 pub fn str_eq(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-            (Value::Str(a), Value::Str(b)) => Value::Bool(get_str(*a) == get_str(*b)),
+            (Value::Str(a), Value::Str(b)) => Value::Bool(get_str(a) == get_str(b)),
             _ => panic!("str_eq: expected two Str values"),
         },
         _ => panic!("str_eq: expected Tuple(Str, Str)"),
@@ -173,7 +173,7 @@ macro_rules! text_cmp_op {
         pub fn $name(args: Value) -> Value {
             match args {
                 Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-                    (Value::Str(a), Value::Str(b)) => Value::Bool(get_str(*a) $op get_str(*b)),
+                    (Value::Str(a), Value::Str(b)) => Value::Bool(get_str(a) $op get_str(b)),
                     _ => panic!(concat!(stringify!($name), ": expected two Str values")),
                 },
                 _ => panic!(concat!(stringify!($name), ": expected Tuple(Str, Str)")),
@@ -205,8 +205,8 @@ pub fn str_index_of(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
             (Value::Str(hay_h), Value::Str(need_h)) => {
-                let hay    = get_str(*hay_h);
-                let needle = get_str(*need_h);
+                let hay    = get_str(hay_h);
+                let needle = get_str(need_h);
                 let idx = hay.find(needle.as_str())
                     .map(|byte_pos| hay[..byte_pos].chars().count() as i64)
                     .unwrap_or(-1);
@@ -223,8 +223,8 @@ pub fn str_before(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
             (Value::Str(sh), Value::Str(dh)) => {
-                let s = get_str(*sh);
-                let d = get_str(*dh);
+                let s = get_str(sh);
+                let d = get_str(dh);
                 let result = s.split_once(d.as_str())
                     .map(|(before, _)| before)
                     .unwrap_or(s.as_str());
@@ -241,8 +241,8 @@ pub fn str_after(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
             (Value::Str(sh), Value::Str(dh)) => {
-                let s = get_str(*sh);
-                let d = get_str(*dh);
+                let s = get_str(sh);
+                let d = get_str(dh);
                 let result = s.split_once(d.as_str())
                     .map(|(_, after)| after)
                     .unwrap_or("");
@@ -259,9 +259,9 @@ pub fn str_between(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() >= 3 => match (&es[0], &es[1], &es[2]) {
             (Value::Str(sh), Value::Str(start_h), Value::Str(end_h)) => {
-                let s = get_str(*sh);
-                let start = get_str(*start_h);
-                let end = get_str(*end_h);
+                let s = get_str(sh);
+                let start = get_str(start_h);
+                let end = get_str(end_h);
                 let after_start = s.split_once(start.as_str())
                     .map(|(_, after)| after)
                     .unwrap_or(s.as_str());
@@ -303,14 +303,14 @@ pub fn str_join(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() == 2 => {
             let sep = match &es[1] {
-                Value::Str(h) => get_str(*h),
+                Value::Str(h) => get_str(h),
                 other => panic!("str_join: expected Str for sep, got {:?}", other),
             };
             let parts: Vec<String> = match &es[0] {
                 Value::List(items) => items
                     .iter()
                     .map(|v| match v {
-                        Value::Str(h) => get_str(*h),
+                        Value::Str(h) => get_str(h),
                         other => panic!(
                             "str_join: ValueList element must be Str, got {:?}",
                             other
@@ -334,7 +334,7 @@ pub fn str_replace(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() == 3 => match (&es[0], &es[1], &es[2]) {
             (Value::Str(s), Value::Str(from), Value::Str(to)) => {
-                let result = get_str(*s).replace(&get_str(*from), &get_str(*to));
+                let result = get_str(s).replace(&get_str(from), &get_str(to));
                 Value::Str(intern_str(&result))
             }
             (a, b, c) => panic!(
@@ -353,7 +353,7 @@ pub fn str_repeat(args: Value) -> Value {
         Value::Tuple(ref es) if es.len() == 2 => match (&es[0], &es[1]) {
             (Value::Str(s), Value::Int(n)) => {
                 let count = if *n > 0 { *n as usize } else { 0 };
-                Value::Str(intern_str(&get_str(*s).repeat(count)))
+                Value::Str(intern_str(&get_str(s).repeat(count)))
             }
             (a, b) => panic!(
                 "str_repeat: expected Tuple(Str, Int), got ({:?}, {:?})",
@@ -390,11 +390,11 @@ pub fn str_pad_left(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() == 3 => match (&es[0], &es[1], &es[2]) {
             (Value::Str(s), Value::Int(width), Value::Str(pad)) => {
-                let s_str = get_str(*s);
-                let pad_str = get_str(*pad);
+                let s_str = get_str(s);
+                let pad_str = get_str(pad);
                 let cur = s_str.chars().count() as i64;
                 if cur >= *width || pad_str.is_empty() {
-                    return Value::Str(*s);
+                    return Value::Str(s.clone());
                 }
                 let need = (*width - cur) as usize;
                 let mut prefix = String::new();
@@ -419,11 +419,11 @@ pub fn str_pad_right(args: Value) -> Value {
     match args {
         Value::Tuple(ref es) if es.len() == 3 => match (&es[0], &es[1], &es[2]) {
             (Value::Str(s), Value::Int(width), Value::Str(pad)) => {
-                let s_str = get_str(*s);
-                let pad_str = get_str(*pad);
+                let s_str = get_str(s);
+                let pad_str = get_str(pad);
                 let cur = s_str.chars().count() as i64;
                 if cur >= *width || pad_str.is_empty() {
-                    return Value::Str(*s);
+                    return Value::Str(s.clone());
                 }
                 let need = (*width - cur) as usize;
                 let mut suffix = String::new();

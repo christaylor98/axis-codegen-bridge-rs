@@ -1,4 +1,4 @@
-use std::sync::{OnceLock, Mutex};
+use std::sync::{OnceLock, Mutex, Arc};
 use std::collections::HashMap;
 pub use rust_decimal::Decimal;
 
@@ -6,7 +6,13 @@ pub use rust_decimal::Decimal;
 pub enum Value {
     Int(i64),
     Bool(bool),
-    Str(u32),
+    // M1_VALUE_STR_ARC_IMPLEMENTATION_V1: Str now carries the string inline as
+    // Arc<str> (cheap clone via atomic refcount, no shared interner). Replaces
+    // the former Str(u32) handle into the global Mutex-guarded STRING_TABLE —
+    // the Spike-4 P>=8 contention source on the str path. Arc<str> is Send+Sync
+    // and derives Clone/Debug/PartialEq (PartialEq compares str contents, which
+    // preserves the interner's equal-string => equal-value semantics).
+    Str(Arc<str>),
     Unit,
     Tuple(Vec<Value>),
     List(Vec<Value>),
@@ -22,6 +28,16 @@ pub enum Value {
     // as Vec<u8> so the bridge can pass blobs without per-element overhead.
     Bytes(Vec<u8>),
 }
+
+// M1_VALUE_STR_ARC_IMPLEMENTATION_V1 hard invariant (VALUE_MUST_STAY_SEND_SYNC):
+// Value crosses thread boundaries via main.rs's `--entries` thread::spawn
+// closures and channels.rs's Mutex<VecDeque<Value>>. Arc<str> is Send + Sync,
+// so Value remains Send + Sync. This assertion makes that a compile-time gate:
+// if any future field breaks it, the crate fails to build here.
+const _: fn() = || {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Value>();
+};
 
 impl Value {
     #[track_caller]
@@ -46,7 +62,7 @@ impl std::fmt::Display for Value {
         match self {
             Value::Int(n)    => write!(f, "{}", n),
             Value::Bool(b)   => write!(f, "{}", b),
-            Value::Str(h)    => write!(f, "{}", get_str(*h)),
+            Value::Str(h)    => write!(f, "{}", get_str(h)),
             Value::Unit      => write!(f, "()"),
             Value::Dec(d)    => write!(f, "{}", d),
             Value::Float(x)  => write!(f, "{}", x),
@@ -84,7 +100,7 @@ pub fn truthy(v: &Value) -> bool {
     match v {
         Value::Bool(b)    => *b,
         Value::Int(n)     => *n != 0,
-        Value::Str(h)     => !get_str(*h).is_empty(),
+        Value::Str(h)     => !get_str(h).is_empty(),
         Value::Unit       => false,
         Value::Tuple(es)  => !es.is_empty(),
         Value::List(es)   => !es.is_empty(),
@@ -95,29 +111,31 @@ pub fn truthy(v: &Value) -> bool {
     }
 }
 
-// ── String table ────────────────────────────────────────────────────────────
-
-static STRING_TABLE: OnceLock<Mutex<Vec<String>>>         = OnceLock::new();
-static STRING_MAP:   OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
+// ── String values (M1_VALUE_STR_ARC_IMPLEMENTATION_V1) ───────────────────────
+//
+// Str values are carried inline as Arc<str>. There is no longer a global
+// STRING_TABLE / STRING_MAP interner — that Mutex-guarded shared structure was
+// the str-path contention source and is removed entirely (no shared, mutable,
+// lock-guarded structure remains here). `intern_str` and `get_str` are retained
+// only as thin constructor/accessor shims so the ~200 existing call sites keep
+// compiling; the names are historical (there is no interning anymore).
+//
+// `intern_str` allocates a fresh Arc<str> from the given string. Callers that
+// build a Value::Str do `Value::Str(intern_str(s))`, unchanged from before.
 
 #[track_caller]
-pub fn intern_str(s: &str) -> u32 {
-    let map = STRING_MAP.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut map = map.lock().unwrap();
-    if let Some(&h) = map.get(s) { return h; }
-    let tbl = STRING_TABLE.get_or_init(|| Mutex::new(vec!["".to_string()]));
-    let mut tbl = tbl.lock().unwrap();
-    let h = tbl.len() as u32;
-    tbl.push(s.to_string());
-    map.insert(s.to_string(), h);
-    h
+pub fn intern_str(s: &str) -> Arc<str> {
+    Arc::from(s)
 }
 
+// `get_str` returns an owned String from anything str-like — an owned
+// `Arc<str>` (from a by-value `Value::Str(h)` match), a `&Arc<str>` (from a
+// by-reference match), a `&str`, or a `String`. The clone-on-read behavior of
+// the old handle-based implementation is preserved: callers still receive a
+// fresh owned String, so no aliasing/isolation assumptions change.
 #[track_caller]
-pub fn get_str(handle: u32) -> String {
-    let tbl = STRING_TABLE.get_or_init(|| Mutex::new(vec!["".to_string()]));
-    let tbl = tbl.lock().unwrap();
-    tbl.get(handle as usize).cloned().unwrap_or_else(|| format!("<invalid-str-{}>", handle))
+pub fn get_str<S: AsRef<str>>(s: S) -> String {
+    s.as_ref().to_string()
 }
 
 // ── Tag table ────────────────────────────────────────────────────────────────
@@ -152,8 +170,7 @@ static PROCESS_ARGS: OnceLock<Vec<String>> = OnceLock::new();
 #[track_caller]
 pub fn init_runtime() {
     PROCESS_ARGS.get_or_init(|| std::env::args().collect());
-    STRING_TABLE.get_or_init(|| Mutex::new(vec!["".to_string()]));
-    STRING_MAP.get_or_init(|| Mutex::new(HashMap::new()));
+    // STRING_TABLE / STRING_MAP removed: Value::Str is inline Arc<str> now.
 }
 
 #[track_caller]

@@ -191,7 +191,7 @@ mod tests {
     #[should_panic(expected = "non-numeric Value tag")]
     fn bridge_to_dec_panics_on_string() {
         let _ = bridge_to_dec(
-            Value::Str(0),
+            Value::Str("".into()),
             int_to_dec,
             dec_id,
             float_to_dec,

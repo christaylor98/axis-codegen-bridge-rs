@@ -12,7 +12,7 @@ fn bytes_value(bytes: &[u8]) -> Value {
 
 fn str_of(v: &Value) -> String {
     match v {
-        Value::Str(h) => get_str(*h),
+        Value::Str(h) => get_str(h),
         _ => panic!("expected Str, got {:?}", v),
     }
 }

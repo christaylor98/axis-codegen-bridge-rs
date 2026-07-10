@@ -138,18 +138,18 @@ fn term_to_str(v: &Value) -> String {
                 "UnitLit" => "unit()".to_string(),
                 "Var" => {
                     if let [Value::Str(s)] = fields.as_slice() {
-                        format!("var(name = {})", get_str(*s))
+                        format!("var(name = {})", get_str(s))
                     } else { kind }
                 }
                 "Lam" => {
                     if let [Value::Str(param), body] = fields.as_slice() {
-                        format!("lam(param = {}, body = {})", get_str(*param), term_to_str(body))
+                        format!("lam(param = {}, body = {})", get_str(param), term_to_str(body))
                     } else { kind }
                 }
                 "Let" => {
                     if let [Value::Str(name), val, body] = fields.as_slice() {
                         format!("let(name = {}, value = {},\nbody = {})",
-                            get_str(*name), term_to_str(val), term_to_str(body))
+                            get_str(name), term_to_str(val), term_to_str(body))
                     } else { kind }
                 }
                 "If" => {
@@ -166,7 +166,7 @@ fn term_to_str(v: &Value) -> String {
                 "Call" => {
                     if let [Value::Str(target), Value::List(args)] = fields.as_slice() {
                         let args_str: Vec<String> = args.iter().map(term_to_str).collect();
-                        format!("call(target = {}, args = [{}])", get_str(*target), args_str.join(", "))
+                        format!("call(target = {}, args = [{}])", get_str(target), args_str.join(", "))
                     } else { kind }
                 }
                 other => other.to_string(),
@@ -204,7 +204,7 @@ fn h1_block_body(v: &Value, depth: usize) -> String {
     if let Value::Ctor { tag, fields } = v {
         if get_tag_name(*tag) == "Let" {
             if let [Value::Str(name_h), val, body] = fields.as_slice() {
-                let name = get_str(*name_h);
+                let name = get_str(name_h);
                 let val_str = h1_expr(val, depth);
                 let rest = h1_block_body(body, depth);
                 return format!("let {} = {};\n{}{}", name, val_str, ind, rest);
@@ -231,7 +231,7 @@ fn h1_app(v: &Value, depth: usize) -> String {
     let (args, base) = h1_app_collect(v);
     let func_str = if let Value::Ctor { tag, fields } = base {
         if get_tag_name(*tag) == "Var" {
-            if let [Value::Str(s)] = fields.as_slice() { get_str(*s) }
+            if let [Value::Str(s)] = fields.as_slice() { get_str(s) }
             else { h1_expr(base, depth) }
         } else {
             format!("({})", h1_expr(base, depth))
@@ -257,12 +257,12 @@ fn h1_expr(v: &Value, depth: usize) -> String {
             }
             "UnitLit" => return "()".to_string(),
             "Var" => {
-                if let [Value::Str(s)] = fields.as_slice() { return get_str(*s); }
+                if let [Value::Str(s)] = fields.as_slice() { return get_str(s); }
             }
             "Lam" => {
                 if let [Value::Str(param), body] = fields.as_slice() {
                     return format!("fn({}) {{\n{}{}\n{}}}",
-                        get_str(*param), ind1, h1_block_body(body, depth + 1), ind);
+                        get_str(param), ind1, h1_block_body(body, depth + 1), ind);
                 }
             }
             "Let" => {
@@ -281,7 +281,7 @@ fn h1_expr(v: &Value, depth: usize) -> String {
             "Call" => {
                 if let [Value::Str(target), Value::List(args)] = fields.as_slice() {
                     let args_strs: Vec<String> = args.iter().map(|a| h1_expr(a, depth)).collect();
-                    return format!("{}({})", get_str(*target), args_strs.join(", "));
+                    return format!("{}({})", get_str(target), args_strs.join(", "));
                 }
             }
             other => return other.to_string(),
@@ -312,7 +312,7 @@ pub(crate) fn subst_value(name: &str, replacement: &Value, term: Value) -> Value
                 "Var" => {
                     if fields.len() == 1 {
                         if let Value::Str(n) = &fields[0] {
-                            if get_str(*n) == name {
+                            if get_str(n) == name {
                                 return replacement.clone();
                             }
                         }
@@ -322,7 +322,7 @@ pub(crate) fn subst_value(name: &str, replacement: &Value, term: Value) -> Value
                 "Lam" => {
                     if fields.len() == 2 {
                         let shadowed = if let Value::Str(p) = &fields[0] {
-                            get_str(*p) == name
+                            get_str(p) == name
                         } else { false };
                         if shadowed {
                             return Value::Ctor { tag, fields };
@@ -338,7 +338,7 @@ pub(crate) fn subst_value(name: &str, replacement: &Value, term: Value) -> Value
                 "Let" => {
                     if fields.len() == 3 {
                         let shadowed = if let Value::Str(b) = &fields[0] {
-                            get_str(*b) == name
+                            get_str(b) == name
                         } else { false };
                         let body  = fields.pop().unwrap();
                         let val   = fields.pop().unwrap();
@@ -412,7 +412,7 @@ pub fn ir_subst(v: Value) -> Value {
             let replacement = fields.pop().unwrap();
             let name_val    = fields.pop().unwrap();
             let name = match &name_val {
-                Value::Str(h) => get_str(*h),
+                Value::Str(h) => get_str(h),
                 _ => panic!("ir_subst: expected Str name, got {:?}", name_val),
             };
             subst_value(&name, &replacement, target)
@@ -431,11 +431,11 @@ pub fn ir_rename(v: Value) -> Value {
             let new_name = fields.pop().unwrap();
             let old_name = fields.pop().unwrap();
             let old_str = match &old_name {
-                Value::Str(h) => get_str(*h),
+                Value::Str(h) => get_str(h),
                 _ => panic!("ir_rename: expected Str old_name, got {:?}", old_name),
             };
             let new_str = match &new_name {
-                Value::Str(h) => get_str(*h),
+                Value::Str(h) => get_str(h),
                 _ => panic!("ir_rename: expected Str new_name, got {:?}", new_name),
             };
             match lam_term {
@@ -443,7 +443,7 @@ pub fn ir_rename(v: Value) -> Value {
                     let body   = fields.pop().unwrap();
                     let _param = fields.pop().unwrap();
                     let new_name_h = intern_str(&new_str);
-                    let new_var    = make_ctor("Var", vec![Value::Str(new_name_h)]);
+                    let new_var    = make_ctor("Var", vec![Value::Str(new_name_h.clone())]);
                     let new_body   = subst_value(&old_str, &new_var, body);
                     make_ctor("Lam", vec![Value::Str(new_name_h), new_body])
                 }
@@ -463,7 +463,7 @@ fn free_vars_inner(term: &Value, bound: &std::collections::HashSet<String>) -> s
             match kind.as_str() {
                 "Var" => {
                     if let [Value::Str(n)] = fields.as_slice() {
-                        let s = get_str(*n);
+                        let s = get_str(n);
                         if !bound.contains(&s) {
                             let mut set = std::collections::HashSet::new();
                             set.insert(s);
@@ -478,7 +478,7 @@ fn free_vars_inner(term: &Value, bound: &std::collections::HashSet<String>) -> s
                 "Lam" => {
                     if let [Value::Str(param), body] = fields.as_slice() {
                         let mut new_bound = bound.clone();
-                        new_bound.insert(get_str(*param));
+                        new_bound.insert(get_str(param));
                         free_vars_inner(body, &new_bound)
                     } else {
                         std::collections::HashSet::new()
@@ -488,7 +488,7 @@ fn free_vars_inner(term: &Value, bound: &std::collections::HashSet<String>) -> s
                     if let [Value::Str(bound_name), val, body] = fields.as_slice() {
                         let fv_val = free_vars_inner(val, bound);
                         let mut new_bound = bound.clone();
-                        new_bound.insert(get_str(*bound_name));
+                        new_bound.insert(get_str(bound_name));
                         let fv_body = free_vars_inner(body, &new_bound);
                         fv_val.union(&fv_body).cloned().collect()
                     } else {
@@ -538,8 +538,8 @@ pub fn ir_free_vars(v: Value) -> Value {
         .map(|s| Value::Str(intern_str(&s)))
         .collect();
     result.sort_by(|a, b| {
-        let sa = if let Value::Str(h) = a { get_str(*h) } else { String::new() };
-        let sb = if let Value::Str(h) = b { get_str(*h) } else { String::new() };
+        let sa = if let Value::Str(h) = a { get_str(h) } else { String::new() };
+        let sb = if let Value::Str(h) = b { get_str(h) } else { String::new() };
         sa.cmp(&sb)
     });
     Value::List(result)
@@ -556,7 +556,7 @@ pub fn ir_write_bundle(v: Value) -> Value {
         Value::Tuple(ref fields) if fields.len() == 2 => {
             let bundle_val = &fields[0];
             let path = match &fields[1] {
-                Value::Str(s) => get_str(*s),
+                Value::Str(s) => get_str(s),
                 other => panic!("ir_write_bundle: expected Str path, got {:?}", other),
             };
             let bundle = match value_to_bundle_05(bundle_val) {
@@ -628,12 +628,12 @@ fn value_to_bundle_05(v: &Value) -> Result<crate::core_ir_05::CoreBundle, String
     let constant_pool = pool_list.iter().enumerate().map(|(i, e)| match e {
         Value::Tuple(fs) if fs.len() == 2 => {
             let def_hash = match &fs[0] {
-                Value::Str(s) => hex_to_hash256(&get_str(*s))
+                Value::Str(s) => hex_to_hash256(&get_str(s))
                     .map_err(|e| format!("pool[{}] def_hash: {}", i, e))?,
                 other => return Err(format!("pool[{}]: expected Str def_hash, got {:?}", i, other)),
             };
             let payload = match &fs[1] {
-                Value::Str(s) => hex_to_bytes(&get_str(*s))
+                Value::Str(s) => hex_to_bytes(&get_str(s))
                     .map_err(|e| format!("pool[{}] payload: {}", i, e))?,
                 other => return Err(format!("pool[{}]: expected Str payload, got {:?}", i, other)),
             };
@@ -644,9 +644,9 @@ fn value_to_bundle_05(v: &Value) -> Result<crate::core_ir_05::CoreBundle, String
     let nodes = node_list.iter().enumerate().map(|(i, n)| match n {
         Value::Ctor { tag, fields } => match (get_tag_name(*tag).as_str(), fields.as_slice()) {
             ("CCall", [Value::Str(hex_id), Value::Str(tgt_name), Value::List(arg_refs)]) => {
-                let target_identity = hex_to_hash256(&get_str(*hex_id))
+                let target_identity = hex_to_hash256(&get_str(hex_id))
                     .map_err(|e| format!("node[{}] CCall identity: {}", i, e))?;
-                let target_name = get_str(*tgt_name);
+                let target_name = get_str(tgt_name);
                 let args = arg_refs.iter().enumerate()
                     .map(|(j, r)| parse_nr(r, &format!("node[{}] arg[{}]", i, j)))
                     .collect::<Result<Vec<_>, String>>()?;
@@ -1144,7 +1144,7 @@ mod fold_from_spec_tests {
 
     fn expect_str(v: &Value) -> String {
         match v {
-            Value::Str(s) => get_str(*s),
+            Value::Str(s) => get_str(s),
             other => panic!("expected Str, got {:?}", other),
         }
     }
@@ -1243,12 +1243,12 @@ transform_fn: my_t
         use crate::core_ir_05::{int_type_hash, hash256_to_hex, decode_int_payload, encode_int_payload};
         let _ = encode_int_payload; // suppress unused warning
         match &entry[0] {
-            Value::Str(s) => assert_eq!(get_str(*s), hash256_to_hex(&int_type_hash())),
+            Value::Str(s) => assert_eq!(get_str(s), hash256_to_hex(&int_type_hash())),
             other => panic!("expected Str def_hash, got {:?}", other),
         }
         match &entry[1] {
             Value::Str(s) => {
-                let payload_bytes = hex_to_bytes(&get_str(*s)).expect("valid hex payload");
+                let payload_bytes = hex_to_bytes(&get_str(s)).expect("valid hex payload");
                 let n = decode_int_payload(&payload_bytes).expect("valid int payload");
                 assert_eq!(n, 42);
             }
@@ -1297,7 +1297,7 @@ transform_fn: my_t
         let (hex_id, _tgt_name, arg_refs) = match &nodes[0] {
             Value::Ctor { tag, fields } if get_tag_name(*tag) == "CCall" => {
                 match fields.as_slice() {
-                    [Value::Str(id), Value::Str(name), Value::List(args)] => (get_str(*id), get_str(*name), args),
+                    [Value::Str(id), Value::Str(name), Value::List(args)] => (get_str(id), get_str(name), args),
                     _ => panic!("CCall shape: {:?}", fields),
                 }
             }
@@ -1324,7 +1324,7 @@ transform_fn: my_t
         for (i, expected_n) in [(0usize, 7i64), (1, 35)] {
             let (h, p) = match &pool[i] {
                 Value::Tuple(fs) => match fs.as_slice() {
-                    [Value::Str(h), Value::Str(p)] => (get_str(*h), get_str(*p)),
+                    [Value::Str(h), Value::Str(p)] => (get_str(h), get_str(p)),
                     _ => panic!("pool[{}] shape: {:?}", i, fs),
                 },
                 other => panic!("pool[{}]: expected Tuple, got {:?}", i, other),

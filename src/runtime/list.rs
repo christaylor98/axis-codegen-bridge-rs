@@ -163,7 +163,7 @@ pub fn list_str_len_lte_if_some(args: Value) -> Value {
             match &es[0] {
                 Value::List(elems) => match elems.get(idx as usize) {
                     Some(Value::Str(s)) => {
-                        let len = get_str(*s).chars().count() as i64;
+                        let len = get_str(s).chars().count() as i64;
                         Value::Int(if len <= max_len { 1 } else { 0 })
                     }
                     Some(_) => panic!("list_str_len_lte_if_some: list element is not Str"),

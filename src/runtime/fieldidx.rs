@@ -89,7 +89,7 @@ fn arg_int(v: &Value, who: &str, i: usize) -> i64 {
 }
 fn arg_str(v: &Value, who: &str, i: usize) -> String {
     match v {
-        Value::Str(h) => get_str(*h),
+        Value::Str(h) => get_str(h),
         other => panic!("{}: arg {} expected Text, got {:?}", who, i, other),
     }
 }

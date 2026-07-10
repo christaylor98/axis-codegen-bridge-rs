@@ -71,7 +71,7 @@ fn entry_to_value(e: &RegistryEntry) -> Value {
 
 fn name_from_value(v: &Value) -> Option<String> {
     match v {
-        Value::Str(h) => Some(get_str(*h)),
+        Value::Str(h) => Some(get_str(h)),
         Value::Unit => None,
         _ => None,
     }
@@ -197,7 +197,7 @@ pub fn registry_insert(v: Value) -> Value {
         Value::Tuple(ref es) if es.len() >= 3 => {
             match (&es[0], &es[1], &es[2]) {
                 (Value::Str(nh), Value::Str(hh), Value::Str(ph)) => {
-                    (get_str(*nh), get_str(*hh), get_str(*ph))
+                    (get_str(nh), get_str(hh), get_str(ph))
                 }
                 _ => {
                     return Value::Ctor {
@@ -285,7 +285,7 @@ pub fn registry_compound_id(v: Value) -> Value {
         Value::Tuple(ref es) if es.len() >= 2 => {
             match (&es[0], &es[1]) {
                 (Value::Str(mh), Value::Str(nh)) => {
-                    let compound = format!("{}.{}", get_str(*mh), get_str(*nh));
+                    let compound = format!("{}.{}", get_str(mh), get_str(nh));
                     Value::Str(intern_str(&compound))
                 }
                 _ => Value::Str(intern_str("")),

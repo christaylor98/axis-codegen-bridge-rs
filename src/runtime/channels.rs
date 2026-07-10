@@ -98,7 +98,7 @@ thread_local! {
 
 fn name_of(v: &Value) -> String {
     match v {
-        Value::Str(h) => get_str(*h),
+        Value::Str(h) => get_str(h),
         other => panic!("channel name must be Text, got {:?}", other),
     }
 }

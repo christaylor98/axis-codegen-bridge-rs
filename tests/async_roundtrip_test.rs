@@ -32,7 +32,7 @@ fn make_payload(round: usize) -> Value {
 fn process(v: &Value) -> Value {
     match v {
         Value::Int(n) => Value::Int(n * n),
-        Value::Str(h) => Value::Int(get_str(*h).chars().count() as i64),
+        Value::Str(h) => Value::Int(get_str(h).chars().count() as i64),
         Value::List(es) if es.iter().all(|e| matches!(e, Value::List(_))) => {
             let mut total: i64 = 0;
             for inner in es {

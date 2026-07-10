@@ -131,7 +131,7 @@ fn eval(term: Value) -> Value {
 
                 "Var" => {
                     let name = match fields.first() {
-                        Some(Value::Str(h)) => get_str(*h),
+                        Some(Value::Str(h)) => get_str(h),
                         _ => "<unknown>".to_string(),
                     };
                     panic!("ir_eval: unbound variable: {}", name)
@@ -214,7 +214,7 @@ fn apply_bindings(term: Value, bindings_val: &Value) -> Value {
             match pair {
                 Value::Tuple(kv) if kv.len() == 2 => {
                     let name = match &kv[0] {
-                        Value::Str(h) => get_str(*h),
+                        Value::Str(h) => get_str(h),
                         _ => panic!("ir_eval: binding key not Str"),
                     };
                     subst_value(&name, &kv[1], t)

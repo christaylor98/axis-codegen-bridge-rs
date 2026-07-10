@@ -32,7 +32,7 @@ pub fn ir_get_name(v: Value) -> Value {
     let (kind, fields) = expect_ctor("ir_get_name", v);
     match kind.as_str() {
         "Var" | "Lam" | "Let" => match &fields[0] {
-            Value::Str(h) => Value::Str(*h),
+            Value::Str(h) => Value::Str(h.clone()),
             other => panic!("ir_get_name: name field is not Str, got {:?}", other),
         },
         other => panic!("ir_get_name: term kind '{}' has no name field", other),

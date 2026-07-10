@@ -7,7 +7,7 @@ fn extract_two_strings(v: &Value) -> Option<(String, String)> {
     match v {
         Value::Tuple(es) if es.len() >= 2 => {
             match (&es[0], &es[1]) {
-                (Value::Str(ah), Value::Str(bh)) => Some((get_str(*ah), get_str(*bh))),
+                (Value::Str(ah), Value::Str(bh)) => Some((get_str(ah), get_str(bh))),
                 _ => None,
             }
         }
@@ -20,7 +20,7 @@ fn extract_three_strings(v: &Value) -> Option<(String, String, String)> {
         Value::Tuple(es) if es.len() >= 3 => {
             match (&es[0], &es[1], &es[2]) {
                 (Value::Str(ah), Value::Str(bh), Value::Str(ch)) => {
-                    Some((get_str(*ah), get_str(*bh), get_str(*ch)))
+                    Some((get_str(ah), get_str(bh), get_str(ch)))
                 }
                 _ => None,
             }

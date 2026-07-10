@@ -320,7 +320,7 @@ fn test_chr_newline_is_0x0a() {
     let nl = str_ops::chr(Value::Int(10));
     match &nl {
         Value::Str(h) => {
-            let text = axis_codegen_bridge::runtime::value::get_str(*h);
+            let text = axis_codegen_bridge::runtime::value::get_str(h);
             assert_eq!(text.len(), 1, "chr(10) must be exactly 1 char");
             assert_eq!(text.as_bytes()[0], 0x0A,
                 "chr(10) must be 0x0A (newline), got 0x{:02X}", text.as_bytes()[0]);
@@ -335,7 +335,7 @@ fn test_chr_tab_is_0x09() {
     let tab = str_ops::chr(Value::Int(9));
     match &tab {
         Value::Str(h) => {
-            let text = axis_codegen_bridge::runtime::value::get_str(*h);
+            let text = axis_codegen_bridge::runtime::value::get_str(h);
             assert_eq!(text.as_bytes()[0], 0x09, "chr(9) must be 0x09 (tab)");
         }
         other => panic!("chr(9) returned non-Str: {:?}", other),
@@ -349,7 +349,7 @@ fn test_chr_newline_concat_roundtrip() {
     let ab  = str_ops::str_concat(Value::Tuple(vec![s("a"), nl]));
     match &ab {
         Value::Str(h) => {
-            let text = axis_codegen_bridge::runtime::value::get_str(*h);
+            let text = axis_codegen_bridge::runtime::value::get_str(h);
             assert_eq!(text, "a\n", "concat with chr(10) should produce literal newline");
         }
         other => panic!("str_concat returned non-Str: {:?}", other),
