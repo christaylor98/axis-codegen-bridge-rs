@@ -1795,6 +1795,31 @@ fn index_build_batch
   idempotent    true
 end
 
+// idxseg_lookup(dir: Text, block_seq: Int) -> Text — T2 read side: scan the
+// dir's iseg-* segments (sorted-name order), return the block's LAST valid
+// entry "<sha256:hex>\t<len>\t<succinct>" or "" (never indexed / all torn).
+fn idxseg_lookup
+  identity 0x8caa218b9a932b379fc4279994cfadf20e6452e40cd6dcad1070ab6fb86a2636
+  kind     leaf
+  in       (Text, Int)
+  out      Text
+  effect   fullIo
+  deterministic false
+  idempotent    true
+end
+
+// index_rebuild_dir(dir: Text) -> Int — T2 storm-recovery: re-index every
+// block-*.bin in dir in ONE process / ONE segment append. Idempotent.
+fn index_rebuild_dir
+  identity 0x3bb54a8edc70fb75db7b3c075a039b4ae7cf662b656ada1134cfea1f5506020f
+  kind     leaf
+  in       (Text)
+  out      Int
+  effect   fullIo
+  deterministic false
+  idempotent    true
+end
+
 // ───────────── BRIDGE_BYTES_IO_M1 — resolves hld:axverity-text-to-bytes-dependency ─
 //
 // text_to_bytes(text: Text) -> Bytes

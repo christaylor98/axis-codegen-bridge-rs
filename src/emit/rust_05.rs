@@ -267,6 +267,8 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
 
     // ── Background indexer (indexer.rs — AXVERITY_INDEXER_THREADING_V1) ───────
     m.insert("index_build_batch",    "axis_codegen_bridge::runtime::indexer::index_build_batch");
+    m.insert("idxseg_lookup",        "axis_codegen_bridge::runtime::indexer::idxseg_lookup");
+    m.insert("index_rebuild_dir",    "axis_codegen_bridge::runtime::indexer::index_rebuild_dir");
 
     // ── Hot mem arena (hotmem.rs — AXVERITY_HOTMEM_CONSUMER_IMPLEMENTATION_V1,
     //    first slice) ────────────────────────────────────────────────────────

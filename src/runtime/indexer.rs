@@ -1,127 +1,123 @@
 //! AXVERITY_INDEXER_THREADING_V1 — background index-build wait-handler.
+//! T2 (batched per-shard artifacts): the index is stored in per-worker
+//! APPEND-ONLY SEGMENT files, one appended write per drained batch — NEVER one
+//! file per block. The original per-block `.idx` shape was exactly the
+//! one-file-per-key regression Landing A's generalized rule exists to kill
+//! ("nothing defaults to one file per key; an index is batched per shard,
+//! pack-shaped, never per key" — axVerity CLAUDE.md §19). This module now
+//! mirrors `walindex.rs`'s discipline instead:
 //!
-//! `index_build_batch` is the `wait()` handler run on each indexer `--entries`
-//! worker thread (paired with the thin M1 loop-step
-//! `lib_async/indexer_worker_step.m1`, exactly as `hotmem_write`/
-//! `wal_fast_batch_write` pair with their janitor steps). `wait()`'s handler
-//! slot is a raw untagged `fn(Value) -> Value` at the Rust ABI, which an M1
-//! composite cannot fill (its param would be a bare `Value::List`, which the
-//! surface parser rejects — CLAUDE.md §15), so the per-block build lives here
-//! in Rust rather than in an M1 `foreach`. The Merkle hash is the SAME sha2
-//! digest as the bridge's `content_hash`/`bytes_hash`.
+//!   * WRITE — each worker thread owns its own segment file
+//!     `<flush_dir>/index/iseg-<nanos>-<pid>`, minted THREAD-LOCALLY on first
+//!     use (per dir). The whole drained batch is serialized into one buffer
+//!     and lands in ONE `O_APPEND` write. No shared state on the write path:
+//!     no Mutex, no registry, no cross-thread file sharing. (Spike-4 check:
+//!     the only process-global here is the `std::time` + pid used ONCE per
+//!     worker-thread per dir to mint a unique segment name — startup-only,
+//!     the same posture as net.rs's handle counter; nothing global is touched
+//!     per block or per batch.)
+//!   * ENTRY — one self-validating text line per block:
+//!     `ISEG1\t<block_seq>\t<sha256:hex>\t<len>\t<succinct>\n`.
+//!     A torn tail (SIGKILL mid-append) fails parse and is skipped — the
+//!     index is a REBUILDABLE CACHE over immutable content-addressed blocks
+//!     (battle-suite S2 proved recovery), so a torn line degrades to
+//!     "not indexed", never to a wrong answer.
+//!   * READ — `idxseg_lookup` scans the dir's segments in sorted-name order
+//!     (names embed nanos, so sorted ≈ append order) and returns the LAST
+//!     valid entry for the block. Last-wins is what makes REPAIR-BY-APPEND
+//!     work: a corrupted entry is superseded by re-indexing (a fresh, later
+//!     segment), no in-place rewrite ever. Duplicate entries are harmless by
+//!     construction — a block is immutable, so every valid entry for a seq
+//!     is byte-identical in meaning.
+//!   * REBUILD — `index_rebuild_dir` re-indexes EVERY `block-*.bin` in one
+//!     process with one segment append (the storm-recovery path; invoking a
+//!     per-block CLI 300 times would recreate one-file-per-key through the
+//!     back door).
 //!
-//! It consumes the drained batch of seal-event descriptors produced by the
-//! seal-site tap's fire-and-forget `channel_send` (an UNBOUNDED, non-blocking
-//! hand-off — `SEAL_HANDOFF_O1_NONBLOCKING`; backlog is bounded by the
-//! resident-skip-list cap + raw-scan fallback, NOT by backpressure, since
-//! backpressure would block the writer). Each descriptor is a
-//! `Value::Tuple([Int(block_seq), Str(flush_dir), Int(byte_len),
-//! Int(idx_cell_addr)])`, and for each SEALED, DURABLE block this handler:
-//!
-//!   1. reads the block's flushed bytes READ-ONLY from
-//!      `<flush_dir>/block-<block_seq>.bin`. This is the durable, immutable
-//!      flush artifact the hotwrite-spike seal path already writes
-//!      (`hrw_seal_flush_reclaim`); reading it — rather than the still-resident
-//!      hot-mem `ptr` — sidesteps the reclaim/use-after-free lifetime hazard
-//!      the (unbuilt) `Arc<BlockLease>` lease of
-//!      `decl:hotmem-staging-batch-design-v1` was designed to solve.
-//!      `SEALED_BLOCKS_READ_ONLY`: this handler never writes block bytes.
-//!   2. computes the Merkle hash (`sha2::Sha256` — byte-identical to
-//!      `content_hash`/`bytes_hash`),
-//!   3. builds the succinct structure — SEAM STUB only: the real succinct
-//!      builder (rank/select structure) is separate M1 work, explicitly out of
-//!      scope for AXVERITY_INDEXER_THREADING_V1,
-//!   4. writes the index artifact to `<flush_dir>/index/block-<block_seq>.idx`,
-//!   5. flips the per-block index-status cell Unindexed(0) -> Indexed(1) with a
-//!      SINGLE `compare_exchange` (`ATOMIC_SINGLE_PASS_STATE_FLIP` — one CAS, no
-//!      third "partially indexed" state). The flip is LAST, after the artifact
-//!      is durably written, so a reader that observes `Indexed` can always find
-//!      the artifact. A reader that observes `Unindexed` must fall back to a raw
-//!      scan of the block — never a skip (the read-omission-is-unacceptable
-//!      invariant). Re-delivery of a descriptor is idempotent: the artifact is
-//!      rewritten identically and the second CAS simply fails (still `Indexed`).
-//!
-//! ## Concurrency posture (checked against Spike-4 / NO_NEW_GLOBAL_MUTEX)
-//!
-//! This handler holds NO shared bridge state: it touches only per-call file
-//! I/O and the caller-owned `AtomicI64` index-status cell (addressed by value,
-//! same discipline as `rawmem.rs`'s `cell_cas_raw` — the `Int` a descriptor
-//! carries IS the address). There is no process-global mutex, registry, or
-//! `HashMap` on this path — so N indexer worker threads running
-//! `index_build_batch` concurrently share nothing here. The one shared
-//! coordination point in the end-to-end path is the EXISTING channel-registry
-//! mutex + global condvar behind `channel_send`/`wait` (`channels.rs`); fanning
-//! every shard's seals through it is exactly what the intent's required
-//! Spike-4 fan-in next-test measures. This module adds no new one.
-//!
-//! Each idx cell is a distinct `AtomicI64` per block (minted by the seal tap via
-//! `cell_new_raw`), so two workers indexing two different blocks never touch the
-//! same cell; two workers racing the SAME block (a duplicate descriptor) is
-//! resolved by the CAS (exactly one wins the 0->1 transition; both write the
-//! same artifact bytes).
+//! Everything below the artifact format is unchanged from the pre-T2 module:
+//! `index_build_batch` is the `wait()` handler (`fn(Value) -> Value` at the
+//! Rust ABI — an M1 composite cannot fill that slot, CLAUDE.md §15), blocks
+//! are read READ-ONLY from the durable flushed `.bin`, the Merkle hash is the
+//! same sha2 digest as `content_hash`/`bytes_hash`, the succinct structure is
+//! a SEAM STUB, and each block's index-status cell flips Unindexed(0) ->
+//! Indexed(1) in ONE CAS — after the batch append, so a reader that observes
+//! `Indexed` can always find the entry; a reader observing `Unindexed` falls
+//! back to a raw scan, never a skip.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::io::Write;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use sha2::{Digest, Sha256};
 
-use super::value::{get_str, Value};
+use super::value::{get_str, intern_str, Value};
 
 const UNINDEXED: i64 = 0;
 const INDEXED: i64 = 1;
 
+thread_local! {
+    /// This worker thread's segment path per flush_dir. THREAD-LOCAL, never
+    /// shared — same "thread-owned, no shared registry" storage discipline as
+    /// logbuf.rs / walindex.rs. Minted once per (thread, dir).
+    static SEGS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+}
+
 fn as_int(field: &'static str, v: Value) -> i64 {
     match v {
         Value::Int(n) => n,
-        other => panic!("index_build_batch: {} expected Int, got {:?}", field, other),
+        other => panic!("indexer: {} expected Int, got {:?}", field, other),
     }
 }
 
 fn as_text(field: &'static str, v: Value) -> String {
     match v {
         Value::Str(h) => get_str(&h),
-        other => panic!("index_build_batch: {} expected Text, got {:?}", field, other),
+        other => panic!("indexer: {} expected Text, got {:?}", field, other),
     }
 }
 
-/// `index_build_batch(arg: Value) -> Value`   —   List(Tuple descriptor) -> Unit
-///
-/// The `wait()` handler. `wait` drains every pending seal descriptor into one
-/// `Value::List` and hands the whole batch to one call (`WAIT_ALWAYS_LIST`,
-/// `channels.rs`); this is the DESIRED batch-indexing behavior here (each
-/// descriptor is an independent, unordered index-build task — no per-message
-/// ack/ping-pong coordination is needed, unlike the GC tick/ack loop, because
-/// the producer is fire-and-forget).
-/// Also accepts a BARE descriptor (Ctor or Tuple, not wrapped in a List): the
-/// direct-call path used by the reindex/recovery CLI (`src/index_one.m1`),
-/// which invokes this fn as an ordinary registered bridge fn rather than as a
-/// wait-handler. Crash recovery = re-run every block through this path; the
-/// artifact write is idempotent, so re-indexing survivors is harmless.
-///
-/// Returns Int(n) = number of blocks indexed this call (Unit-compatible for
-/// existing callers, which all discard the result).
-#[track_caller]
-pub fn index_build_batch(arg: Value) -> Value {
-    let items = match arg {
-        Value::List(items) => items,
-        bare @ (Value::Ctor { .. } | Value::Tuple(_)) => vec![bare],
-        other => panic!(
-            "index_build_batch: expected List of descriptors or a bare descriptor, got {:?}",
-            other
-        ),
-    };
-    let n = items.len();
-    for item in items {
-        index_one(item);
-    }
-    Value::Int(n as i64)
+/// A fully-computed index entry, not yet written.
+struct Entry {
+    flush_dir: String,
+    line: String,
+    idx_cell: i64,
 }
 
-fn index_one(item: Value) {
-    // The descriptor is built in M1 via `Value(Int,Text,Int,Int)(..)`, which the
-    // bridge emits as a `Value::Ctor { fields }` (NOT a `Value::Tuple` — only raw
-    // bridge fns like `mem_reserve_raw` return `Value::Tuple`; see
-    // lib_hotwrite_workload/hrw_mint_block.m1's header). Accept BOTH: `Ctor` for
-    // the real M1 runtime path, `Tuple` for a bridge-side/test-built descriptor.
+/// SEAM STUB for the succinct structure (real builder is separate M1 work;
+/// only this fn changes when it lands).
+fn build_succinct_stub(bytes: &[u8]) -> String {
+    format!("SUCCINCT_STUB len={}", bytes.len())
+}
+
+/// Read the block READ-ONLY, hash it, and produce its entry line. Panics on a
+/// missing `.bin` (fail-stop, never a silent skip) and on a torn/short flush
+/// when `byte_len >= 0` is supplied.
+fn build_entry(block_seq: i64, flush_dir: String, byte_len: i64, idx_cell: i64) -> Entry {
+    let bin_path = format!("{}/block-{}.bin", flush_dir, block_seq);
+    let bytes = std::fs::read(&bin_path)
+        .unwrap_or_else(|e| panic!("index_build_batch: read {}: {}", bin_path, e));
+    if byte_len >= 0 && bytes.len() != byte_len as usize {
+        panic!(
+            "index_build_batch: {} is {} bytes, seal recorded byte_len={} (torn/short flush?)",
+            bin_path,
+            bytes.len(),
+            byte_len
+        );
+    }
+    let digest = Sha256::digest(&bytes);
+    let merkle: String = digest.iter().map(|b| format!("{:02x}", b)).collect();
+    let line = format!(
+        "ISEG1\t{}\tsha256:{}\t{}\t{}\n",
+        block_seq,
+        merkle,
+        bytes.len(),
+        build_succinct_stub(&bytes)
+    );
+    Entry { flush_dir, line, idx_cell }
+}
+
+fn unpack_descriptor(item: Value) -> (i64, String, i64, i64) {
     let fields: Vec<Value> = match item {
         Value::Ctor { fields, .. } => fields,
         Value::Tuple(es) => es,
@@ -141,56 +137,180 @@ fn index_one(item: Value) {
     let flush_dir = as_text("flush_dir", it.next().unwrap());
     let byte_len = as_int("byte_len", it.next().unwrap());
     let idx_cell = as_int("idx_cell", it.next().unwrap());
-
-    // 1. READ-ONLY durable bytes. The flushed .bin is immutable once written by
-    //    the seal path; we never touch the (possibly-reclaimed) hot-mem ptr.
-    let bin_path = format!("{}/block-{}.bin", flush_dir, block_seq);
-    let bytes = std::fs::read(&bin_path)
-        .unwrap_or_else(|e| panic!("index_build_batch: read {}: {}", bin_path, e));
-    // byte_len is the seal-time recorded length; the durable file is the source
-    // of truth for what we hash. A mismatch means a torn/short flush — surface
-    // it rather than silently indexing a partial block.
-    if byte_len >= 0 && bytes.len() != byte_len as usize {
-        panic!(
-            "index_build_batch: {} is {} bytes, seal recorded byte_len={} (torn/short flush?)",
-            bin_path,
-            bytes.len(),
-            byte_len
-        );
-    }
-
-    // 2. Merkle hash — same sha2 digest as content_hash/bytes_hash.
-    let digest = Sha256::digest(&bytes);
-    let merkle: String = digest.iter().map(|b| format!("{:02x}", b)).collect();
-
-    // 3. Succinct structure — SEAM STUB. Real builder is separate M1 work.
-    let succinct = build_succinct_stub(&bytes);
-
-    // 4. Write the index artifact durably BEFORE flipping the status cell.
-    let idx_dir = format!("{}/index", flush_dir);
-    std::fs::create_dir_all(&idx_dir)
-        .unwrap_or_else(|e| panic!("index_build_batch: mkdir {}: {}", idx_dir, e));
-    let idx_path = format!("{}/block-{}.idx", idx_dir, block_seq);
-    // IDX1 <tab> merkle <tab> len <tab> succinct-stub — one line, self-describing.
-    let artifact = format!("IDX1\tsha256:{}\t{}\t{}\n", merkle, bytes.len(), succinct);
-    std::fs::write(&idx_path, artifact.as_bytes())
-        .unwrap_or_else(|e| panic!("index_build_batch: write {}: {}", idx_path, e));
-
-    // 5. SINGLE-PASS atomic flip Unindexed(0) -> Indexed(1), LAST. Same
-    //    address-by-value discipline as rawmem::cell_cas_raw. A failed CAS means
-    //    the cell was already Indexed (duplicate descriptor) — no third state.
-    let cell = unsafe { &*(idx_cell as *const AtomicI64) };
-    let _ = cell.compare_exchange(UNINDEXED, INDEXED, Ordering::SeqCst, Ordering::SeqCst);
+    (block_seq, flush_dir, byte_len, idx_cell)
 }
 
-/// SEAM STUB for the succinct structure. The real rank/select succinct index is
-/// separate M1 work, explicitly out of scope for AXVERITY_INDEXER_THREADING_V1;
-/// this placeholder records only the block length so the artifact is
-/// self-describing and the seam is exercised end-to-end. When the real builder
-/// lands, only this function's body changes — the handler, artifact path, and
-/// status-cell protocol are stable.
-fn build_succinct_stub(bytes: &[u8]) -> String {
-    format!("SUCCINCT_STUB len={}", bytes.len())
+/// This thread's segment path for `dir`, minted on first use. Uniqueness =
+/// nanos + pid (cross-process safe: a recovery CLI gets its own, LATER-named
+/// segment, so its entries win the sorted-order last-wins read).
+fn segment_path_for(dir: &str) -> String {
+    SEGS.with(|segs| {
+        let mut segs = segs.borrow_mut();
+        if let Some(p) = segs.get(dir) {
+            return p.clone();
+        }
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock before epoch")
+            .as_nanos();
+        let p = format!("{}/index/iseg-{:019}-{}", dir, nanos, std::process::id());
+        segs.insert(dir.to_string(), p.clone());
+        p
+    })
+}
+
+/// Append the batch's entries: grouped by flush_dir, ONE write per dir.
+fn append_entries(entries: &[Entry]) {
+    let mut by_dir: HashMap<&str, String> = HashMap::new();
+    for e in entries {
+        by_dir.entry(&e.flush_dir).or_default().push_str(&e.line);
+    }
+    for (dir, buf) in by_dir {
+        let idx_dir = format!("{}/index", dir);
+        std::fs::create_dir_all(&idx_dir)
+            .unwrap_or_else(|e| panic!("index_build_batch: mkdir {}: {}", idx_dir, e));
+        let seg = segment_path_for(dir);
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&seg)
+            .unwrap_or_else(|e| panic!("index_build_batch: open {}: {}", seg, e));
+        f.write_all(buf.as_bytes())
+            .unwrap_or_else(|e| panic!("index_build_batch: append {}: {}", seg, e));
+    }
+}
+
+/// `index_build_batch(arg: Value) -> Value`   —   the `wait()` handler.
+///
+/// Accepts a List of descriptors (the channel-drain path) or a BARE
+/// descriptor (the direct-call path used by `src/index_one.m1`). Each
+/// descriptor is `(block_seq: Int, flush_dir: Text, byte_len: Int,
+/// idx_cell: Int)`; `idx_cell == 0` means "no cell" (rebuild/recovery paths)
+/// and skips the flip. Returns Int(n) = blocks indexed this call.
+///
+/// Ordering: ALL entries are computed, then appended (one write per dir),
+/// then ALL cells flip — `Indexed` implies the entry is visible.
+#[track_caller]
+pub fn index_build_batch(arg: Value) -> Value {
+    let items = match arg {
+        Value::List(items) => items,
+        bare @ (Value::Ctor { .. } | Value::Tuple(_)) => vec![bare],
+        other => panic!(
+            "index_build_batch: expected List of descriptors or a bare descriptor, got {:?}",
+            other
+        ),
+    };
+    let entries: Vec<Entry> = items
+        .into_iter()
+        .map(|item| {
+            let (seq, dir, len, cell) = unpack_descriptor(item);
+            build_entry(seq, dir, len, cell)
+        })
+        .collect();
+    append_entries(&entries);
+    // Single-pass atomic flips, LAST (ATOMIC_SINGLE_PASS_STATE_FLIP). A failed
+    // CAS means already Indexed (duplicate delivery) — no third state.
+    for e in &entries {
+        if e.idx_cell != 0 {
+            let cell = unsafe { &*(e.idx_cell as *const AtomicI64) };
+            let _ = cell.compare_exchange(UNINDEXED, INDEXED, Ordering::SeqCst, Ordering::SeqCst);
+        }
+    }
+    Value::Int(entries.len() as i64)
+}
+
+/// Parse one segment line; None if torn/invalid (skipped, never trusted).
+fn parse_entry_line(line: &str) -> Option<(i64, String)> {
+    let mut parts = line.split('\t');
+    if parts.next()? != "ISEG1" {
+        return None;
+    }
+    let seq: i64 = parts.next()?.parse().ok()?;
+    let merkle = parts.next()?;
+    if !merkle.starts_with("sha256:") || merkle.len() != 71 {
+        return None;
+    }
+    let len: i64 = parts.next()?.parse().ok()?;
+    let succinct = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((seq, format!("{}\t{}\t{}", merkle, len, succinct)))
+}
+
+/// Scan `dir`'s segments (sorted names ≈ append order) for `seq`'s LAST valid
+/// entry. Returns the entry payload `"<sha256:hex>\t<len>\t<succinct>"` or
+/// `None`.
+fn lookup(dir: &str, seq: i64) -> Option<String> {
+    let idx_dir = format!("{}/index", dir);
+    let mut seg_names: Vec<String> = match std::fs::read_dir(&idx_dir) {
+        Err(_) => return None, // never indexed at all
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("iseg-"))
+            .collect(),
+    };
+    seg_names.sort();
+    let mut found: Option<String> = None;
+    for name in seg_names {
+        let path = format!("{}/{}", idx_dir, name);
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        for line in text.lines() {
+            if let Some((s, entry)) = parse_entry_line(line) {
+                if s == seq {
+                    found = Some(entry); // last valid wins (repair-by-append)
+                }
+            }
+        }
+    }
+    found
+}
+
+/// `idxseg_lookup(dir: Text, block_seq: Int) -> Text`
+///
+/// The read side for M1 (`lib_async/block_read_indexed.m1`): returns the
+/// block's entry payload `"<sha256:hex>\t<len>\t<succinct>"`, or `""` when no
+/// valid entry exists (never indexed, or every entry for it is torn) — the M1
+/// caller maps `""` to the NOT_INDEXED sentinel.
+#[track_caller]
+pub fn idxseg_lookup(args: Value) -> Value {
+    let (dir_v, seq_v) = match args {
+        Value::Tuple(es) if es.len() == 2 => {
+            let mut it = es.into_iter();
+            (it.next().unwrap(), it.next().unwrap())
+        }
+        other => panic!("idxseg_lookup: expected (Text, Int), got {:?}", other),
+    };
+    let dir = as_text("dir", dir_v);
+    let seq = as_int("block_seq", seq_v);
+    Value::Str(intern_str(&lookup(&dir, seq).unwrap_or_default()))
+}
+
+/// `index_rebuild_dir(dir: Text) -> Int`
+///
+/// Storm-recovery: re-index EVERY `block-<seq>.bin` in `dir` in this one
+/// process — one segment file, one append. Idempotent (duplicate entries are
+/// harmless; last-wins read). No cells (they died with the crashed process).
+/// Returns the number of blocks indexed.
+#[track_caller]
+pub fn index_rebuild_dir(arg: Value) -> Value {
+    let dir = as_text("dir", arg);
+    let mut seqs: Vec<i64> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("index_rebuild_dir: read_dir {}: {}", dir, e))
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let n = e.file_name().to_string_lossy().into_owned();
+            n.strip_prefix("block-")?.strip_suffix(".bin")?.parse::<i64>().ok()
+        })
+        .collect();
+    seqs.sort_unstable();
+    let entries: Vec<Entry> = seqs
+        .iter()
+        .map(|&seq| build_entry(seq, dir.clone(), -1, 0))
+        .collect();
+    append_entries(&entries);
+    Value::Int(entries.len() as i64)
 }
 
 #[cfg(test)]
@@ -208,7 +328,11 @@ mod tests {
     }
 
     fn unique_dir(tag: &str) -> String {
-        let d = std::env::temp_dir().join(format!("axv-idx-{}-{}", tag, std::process::id()));
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let d = std::env::temp_dir().join(format!("axv-idx-{}-{}-{}", tag, std::process::id(), nanos));
         std::fs::create_dir_all(&d).unwrap();
         d.to_string_lossy().into_owned()
     }
@@ -216,7 +340,7 @@ mod tests {
     fn descriptor(block_seq: i64, flush_dir: &str, byte_len: i64, idx_cell: i64) -> Value {
         Value::Tuple(vec![
             Value::Int(block_seq),
-            Value::Str(super::super::value::intern_str(flush_dir)),
+            Value::Str(intern_str(flush_dir)),
             Value::Int(byte_len),
             Value::Int(idx_cell),
         ])
@@ -227,38 +351,50 @@ mod tests {
         digest.iter().map(|b| format!("{:02x}", b)).collect()
     }
 
+    /// The reader-visible entry for a block, via the same fn M1 uses.
+    fn lookup_str(dir: &str, seq: i64) -> String {
+        match idxseg_lookup(Value::Tuple(vec![
+            Value::Str(intern_str(dir)),
+            Value::Int(seq),
+        ])) {
+            Value::Str(h) => get_str(&h),
+            other => panic!("idxseg_lookup returned {:?}", other),
+        }
+    }
+
+    fn assert_entry_correct(dir: &str, seq: i64, payload: &[u8]) {
+        let entry = lookup_str(dir, seq);
+        assert!(!entry.is_empty(), "block {} has no valid entry", seq);
+        let mut f = entry.split('\t');
+        assert_eq!(f.next().unwrap(), format!("sha256:{}", expected_sha256(payload)));
+        assert_eq!(f.next().unwrap(), payload.len().to_string());
+        assert!(f.next().unwrap().starts_with("SUCCINCT_STUB"));
+    }
+
+    fn seg_count(dir: &str) -> usize {
+        std::fs::read_dir(format!("{}/index", dir))
+            .map(|rd| {
+                rd.filter_map(|e| e.ok())
+                    .filter(|e| e.file_name().to_string_lossy().starts_with("iseg-"))
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
     #[test]
-    fn indexes_one_block_writes_artifact_and_flips_cell() {
+    fn indexes_one_block_writes_entry_and_flips_cell() {
         let dir = unique_dir("one");
         let payload = b"PAYLOAD-block-0-contents".to_vec();
         std::fs::write(format!("{}/block-0.bin", dir), &payload).unwrap();
         let cell = mint_cell(UNINDEXED);
-
-        let out = index_build_batch(Value::List(vec![descriptor(
-            0,
-            &dir,
-            payload.len() as i64,
-            cell,
-        )]));
+        let out = index_build_batch(Value::List(vec![descriptor(0, &dir, payload.len() as i64, cell)]));
         assert_eq!(out, Value::Int(1));
-
-        // artifact written with the correct sha256 (== bytes_hash's digest)
-        let idx = std::fs::read_to_string(format!("{}/index/block-0.idx", dir)).unwrap();
-        assert!(idx.starts_with("IDX1\t"), "artifact header: {:?}", idx);
-        assert!(
-            idx.contains(&format!("sha256:{}", expected_sha256(&payload))),
-            "artifact merkle mismatch: {:?}",
-            idx
-        );
-        assert!(idx.contains(&format!("SUCCINCT_STUB len={}", payload.len())));
-
-        // status cell flipped Unindexed(0) -> Indexed(1), single pass
+        assert_entry_correct(&dir, 0, &payload);
         assert_eq!(cell_load(cell), INDEXED);
     }
 
     #[test]
     fn accepts_ctor_shape_descriptor_the_m1_runtime_path() {
-        // M1's Value(Int,Text,Int,Int)(..) yields Value::Ctor, not Value::Tuple.
         let dir = unique_dir("ctor");
         let payload = b"ctor-path-body".to_vec();
         std::fs::write(format!("{}/block-7.bin", dir), &payload).unwrap();
@@ -267,32 +403,45 @@ mod tests {
             tag: 0,
             fields: vec![
                 Value::Int(7),
-                Value::Str(super::super::value::intern_str(&dir)),
+                Value::Str(intern_str(&dir)),
                 Value::Int(payload.len() as i64),
                 Value::Int(cell),
             ],
         };
         index_build_batch(Value::List(vec![desc]));
-        assert!(std::path::Path::new(&format!("{}/index/block-7.idx", dir)).exists());
+        assert_entry_correct(&dir, 7, &payload);
         assert_eq!(cell_load(cell), INDEXED);
     }
 
     #[test]
-    fn batch_indexes_all_descriptors() {
-        let dir = unique_dir("batch");
+    fn bare_descriptor_direct_call_path() {
+        let dir = unique_dir("bare");
+        let payload = b"bare-descriptor-body".to_vec();
+        std::fs::write(format!("{}/block-0.bin", dir), &payload).unwrap();
+        let cell = mint_cell(UNINDEXED);
+        let out = index_build_batch(descriptor(0, &dir, payload.len() as i64, cell));
+        assert_eq!(out, Value::Int(1));
+        assert_eq!(cell_load(cell), INDEXED);
+        assert_entry_correct(&dir, 0, &payload);
+    }
+
+    #[test]
+    fn whole_batch_lands_in_one_segment_file() {
+        // THE T2 property: a 500-block batch produces ONE segment file on this
+        // thread — never one file per key.
+        let dir = unique_dir("onefile");
         let mut items = Vec::new();
-        let mut cells = Vec::new();
-        for seq in 0..5i64 {
-            let payload = format!("block-{}-body", seq).into_bytes();
+        let mut payloads = Vec::new();
+        for seq in 0..500i64 {
+            let payload = format!("b{}", seq).into_bytes();
             std::fs::write(format!("{}/block-{}.bin", dir, seq), &payload).unwrap();
-            let cell = mint_cell(UNINDEXED);
-            cells.push(cell);
-            items.push(descriptor(seq, &dir, payload.len() as i64, cell));
+            items.push(descriptor(seq, &dir, payload.len() as i64, mint_cell(UNINDEXED)));
+            payloads.push(payload);
         }
         index_build_batch(Value::List(items));
-        for (seq, cell) in cells.iter().enumerate() {
-            assert!(std::path::Path::new(&format!("{}/index/block-{}.idx", dir, seq)).exists());
-            assert_eq!(cell_load(*cell), INDEXED, "block {} not flipped", seq);
+        assert_eq!(seg_count(&dir), 1, "batched artifacts must be ONE file per worker");
+        for (seq, p) in payloads.iter().enumerate() {
+            assert_entry_correct(&dir, seq as i64, p);
         }
     }
 
@@ -305,44 +454,80 @@ mod tests {
         let d = || Value::List(vec![descriptor(0, &dir, payload.len() as i64, cell)]);
         index_build_batch(d());
         assert_eq!(cell_load(cell), INDEXED);
-        // second delivery: artifact rewritten identically, CAS fails, still Indexed
-        index_build_batch(d());
+        index_build_batch(d()); // duplicate entry appended; last-wins read, same content
         assert_eq!(cell_load(cell), INDEXED);
-        let idx = std::fs::read_to_string(format!("{}/index/block-0.idx", dir)).unwrap();
-        assert!(idx.contains(&format!("sha256:{}", expected_sha256(&payload))));
+        assert_entry_correct(&dir, 0, &payload);
     }
 
     #[test]
-    #[should_panic(expected = "torn/short flush")]
-    fn short_flush_is_surfaced_not_silently_indexed() {
-        let dir = unique_dir("short");
-        std::fs::write(format!("{}/block-0.bin", dir), b"only-8b?").unwrap(); // 8 bytes
-        let cell = mint_cell(UNINDEXED);
-        // seal recorded byte_len=999 but the durable file is 8 bytes -> panic
-        index_build_batch(Value::List(vec![descriptor(0, &dir, 999, cell)]));
-    }
-
-    // ── Battle-hardening suite (AXVERITY_INDEXER_THREADING_V1 load/edge) ────
-
-    #[test]
-    fn bare_descriptor_direct_call_path() {
-        // The reindex/recovery CLI path: a single descriptor, no List wrapper.
-        let dir = unique_dir("bare");
-        let payload = b"bare-descriptor-body".to_vec();
+    fn torn_tail_line_is_skipped_never_trusted() {
+        let dir = unique_dir("torn");
+        let payload = b"torn-tail-victim".to_vec();
         std::fs::write(format!("{}/block-0.bin", dir), &payload).unwrap();
-        let cell = mint_cell(UNINDEXED);
-        let out = index_build_batch(descriptor(0, &dir, payload.len() as i64, cell));
-        assert_eq!(out, Value::Int(1));
-        assert_eq!(cell_load(cell), INDEXED);
-        let idx = std::fs::read_to_string(format!("{}/index/block-0.idx", dir)).unwrap();
-        assert!(idx.contains(&format!("sha256:{}", expected_sha256(&payload))));
+        index_build_batch(descriptor(0, &dir, payload.len() as i64, mint_cell(UNINDEXED)));
+        // SIGKILL-mid-append simulation: truncate the segment mid-line.
+        let seg = std::fs::read_dir(format!("{}/index", dir))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .find(|e| e.file_name().to_string_lossy().starts_with("iseg-"))
+            .unwrap()
+            .path();
+        let bytes = std::fs::read(&seg).unwrap();
+        std::fs::write(&seg, &bytes[..bytes.len() / 2]).unwrap();
+        assert_eq!(lookup_str(&dir, 0), "", "torn entry must parse out, not lie");
+    }
+
+    #[test]
+    fn repair_by_append_wins_over_corrupted_entry() {
+        let dir = unique_dir("repair");
+        let payload = b"repairable-body".to_vec();
+        std::fs::write(format!("{}/block-0.bin", dir), &payload).unwrap();
+        index_build_batch(descriptor(0, &dir, payload.len() as i64, mint_cell(UNINDEXED)));
+        // corrupt the stored merkle IN PLACE (valid shape, wrong hash)
+        let seg = std::fs::read_dir(format!("{}/index", dir))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .find(|e| e.file_name().to_string_lossy().starts_with("iseg-"))
+            .unwrap()
+            .path();
+        let text = std::fs::read_to_string(&seg).unwrap().replace(
+            &expected_sha256(&payload)[..8],
+            "00000000",
+        );
+        std::fs::write(&seg, text).unwrap();
+        let bad = lookup_str(&dir, 0);
+        assert!(bad.starts_with("sha256:00000000"), "corrupted entry visible pre-repair");
+        // repair: rebuild appends a fresh, LATER segment; last-wins read heals
+        std::thread::sleep(std::time::Duration::from_millis(2)); // distinct nanos name
+        // rebuild runs on another thread so THIS thread's cached segment name
+        // (same file we corrupted) isn't reused — mirrors the real recovery
+        // shape, which is always a fresh process.
+        let d2 = dir.clone();
+        std::thread::spawn(move || index_rebuild_dir(Value::Str(intern_str(&d2))))
+            .join()
+            .unwrap();
+        assert_entry_correct(&dir, 0, &payload);
+    }
+
+    #[test]
+    fn rebuild_dir_reindexes_everything_in_one_segment() {
+        let dir = unique_dir("rebuild");
+        let mut payloads = Vec::new();
+        for seq in 0..40i64 {
+            let payload = format!("rebuild-{}", seq).into_bytes();
+            std::fs::write(format!("{}/block-{}.bin", dir, seq), &payload).unwrap();
+            payloads.push(payload);
+        }
+        let out = index_rebuild_dir(Value::Str(intern_str(&dir)));
+        assert_eq!(out, Value::Int(40));
+        assert_eq!(seg_count(&dir), 1, "rebuild must produce ONE segment");
+        for (seq, p) in payloads.iter().enumerate() {
+            assert_entry_correct(&dir, seq as i64, p);
+        }
     }
 
     #[test]
     fn concurrent_hammer_8_threads_200_blocks_each() {
-        // Real-world load shape: N workers indexing disjoint blocks
-        // concurrently. No shared bridge state on this path — must scale
-        // without corruption or lost flips.
         use std::thread;
         let dir = unique_dir("hammer");
         let mut all: Vec<(i64, Vec<u8>, i64)> = Vec::new();
@@ -353,39 +538,34 @@ mod tests {
         }
         let handles: Vec<_> = (0..8)
             .map(|t| {
-                let chunk: Vec<(i64, i64, usize)> = all
-                    [t * 200..(t + 1) * 200]
+                let chunk: Vec<(i64, i64, usize)> = all[t * 200..(t + 1) * 200]
                     .iter()
                     .map(|(s, p, c)| (*s, *c, p.len()))
                     .collect();
                 let d = dir.clone();
                 thread::spawn(move || {
-                    for (seq, cell, len) in chunk {
-                        index_build_batch(descriptor(seq, &d, len as i64, cell));
-                    }
+                    // one batch per thread: the realistic drained-batch shape
+                    let items: Vec<Value> = chunk
+                        .iter()
+                        .map(|&(seq, cell, len)| descriptor(seq, &d, len as i64, cell))
+                        .collect();
+                    index_build_batch(Value::List(items));
                 })
             })
             .collect();
         for h in handles {
             h.join().unwrap();
         }
+        // 8 worker threads -> at most 8 segment files, one each (thread-owned)
+        assert!(seg_count(&dir) <= 8, "expected <=8 per-worker segments, got {}", seg_count(&dir));
         for (seq, payload, cell) in &all {
             assert_eq!(cell_load(*cell), INDEXED, "block {} not flipped", seq);
-            let idx =
-                std::fs::read_to_string(format!("{}/index/block-{}.idx", dir, seq)).unwrap();
-            assert!(
-                idx.contains(&format!("sha256:{}", expected_sha256(payload))),
-                "block {} artifact merkle wrong",
-                seq
-            );
+            assert_entry_correct(&dir, *seq, payload);
         }
     }
 
     #[test]
     fn duplicate_race_8_threads_same_block() {
-        // Duplicate-descriptor delivery race: 8 threads all indexing the SAME
-        // block simultaneously. Exactly-one-CAS-wins; artifact identical from
-        // every writer; final state Indexed with a valid artifact.
         use std::thread;
         let dir = unique_dir("duprace");
         let payload = b"contended-block-body".to_vec();
@@ -406,15 +586,11 @@ mod tests {
             h.join().unwrap();
         }
         assert_eq!(cell_load(cell), INDEXED);
-        let idx = std::fs::read_to_string(format!("{}/index/block-0.idx", dir)).unwrap();
-        assert!(idx.contains(&format!("sha256:{}", expected_sha256(&payload))));
+        assert_entry_correct(&dir, 0, &payload);
     }
 
     #[test]
     fn binary_non_utf8_block_indexes_correctly() {
-        // Real-world: block bytes are arbitrary binary, not UTF-8 text. The
-        // handler is byte-based end to end (std::fs::read + sha2) — no
-        // bytes_to_text anywhere on the indexing path.
         let dir = unique_dir("binary");
         let payload: Vec<u8> = (0..=255u8).cycle().take(4096).collect();
         assert!(String::from_utf8(payload.clone()).is_err(), "fixture must be non-UTF8");
@@ -422,28 +598,24 @@ mod tests {
         let cell = mint_cell(UNINDEXED);
         index_build_batch(descriptor(0, &dir, payload.len() as i64, cell));
         assert_eq!(cell_load(cell), INDEXED);
-        let idx = std::fs::read_to_string(format!("{}/index/block-0.idx", dir)).unwrap();
-        assert!(idx.contains(&format!("sha256:{}", expected_sha256(&payload))));
+        assert_entry_correct(&dir, 0, &payload);
     }
 
     #[test]
     fn empty_block_indexes_with_empty_sha() {
-        // Edge: a sealed-but-empty block (0 bytes written before rotation).
         let dir = unique_dir("empty");
         std::fs::write(format!("{}/block-0.bin", dir), b"").unwrap();
         let cell = mint_cell(UNINDEXED);
         index_build_batch(descriptor(0, &dir, 0, cell));
         assert_eq!(cell_load(cell), INDEXED);
-        let idx = std::fs::read_to_string(format!("{}/index/block-0.idx", dir)).unwrap();
-        // sha256 of the empty byte sequence
-        assert!(idx.contains("sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"));
-        assert!(idx.contains("SUCCINCT_STUB len=0"));
+        let entry = lookup_str(&dir, 0);
+        assert!(entry.starts_with(
+            "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\t0\t"
+        ));
     }
 
     #[test]
     fn spike_sized_4mib_and_oversize_32mib_blocks() {
-        // The hotwrite spike's real block size (4 MiB) and an oversize case
-        // (32 MiB — §13's oversize-object precedent: never split, never reject).
         let dir = unique_dir("large");
         for (seq, mib) in [(0i64, 4usize), (1, 32)] {
             let payload: Vec<u8> = (0..mib * 1024 * 1024).map(|i| (i % 251) as u8).collect();
@@ -451,20 +623,12 @@ mod tests {
             let cell = mint_cell(UNINDEXED);
             index_build_batch(descriptor(seq, &dir, payload.len() as i64, cell));
             assert_eq!(cell_load(cell), INDEXED, "{}MiB block not flipped", mib);
-            let idx =
-                std::fs::read_to_string(format!("{}/index/block-{}.idx", dir, seq)).unwrap();
-            assert!(
-                idx.contains(&format!("sha256:{}", expected_sha256(&payload))),
-                "{}MiB block merkle wrong",
-                mib
-            );
+            assert_entry_correct(&dir, seq, &payload);
         }
     }
 
     #[test]
     fn ten_thousand_descriptor_batch() {
-        // WAIT_ALWAYS_LIST drains everything pending into ONE handler call —
-        // a deep backlog arrives as one huge batch. 10k blocks, one call.
         let dir = unique_dir("batch10k");
         let mut cells = Vec::new();
         let mut items = Vec::new();
@@ -477,6 +641,7 @@ mod tests {
         }
         let out = index_build_batch(Value::List(items));
         assert_eq!(out, Value::Int(10_000));
+        assert_eq!(seg_count(&dir), 1, "10k-block batch must land in one segment");
         for (seq, cell) in cells.iter().enumerate() {
             assert_eq!(cell_load(*cell), INDEXED, "block {} not flipped", seq);
         }
@@ -485,29 +650,47 @@ mod tests {
     #[test]
     #[should_panic(expected = "read")]
     fn missing_bin_is_fail_stop() {
-        // A descriptor for a block whose .bin never became durable (or was
-        // deleted) panics — fail-stop, never a silent skip that would leave
-        // the cell honestly Unindexed but the worker convinced it's done.
         let dir = unique_dir("missing");
         let cell = mint_cell(UNINDEXED);
         index_build_batch(descriptor(42, &dir, 10, cell));
+    }
+
+    #[test]
+    #[should_panic(expected = "torn/short flush")]
+    fn short_flush_is_surfaced_not_silently_indexed() {
+        let dir = unique_dir("short");
+        std::fs::write(format!("{}/block-0.bin", dir), b"only-8b?").unwrap();
+        let cell = mint_cell(UNINDEXED);
+        index_build_batch(Value::List(vec![descriptor(0, &dir, 999, cell)]));
+    }
+
+    #[test]
+    fn unicode_and_space_flush_dir() {
+        let base = unique_dir("uni");
+        let dir = format!("{}/flush dir — bloc κ", base);
+        std::fs::create_dir_all(&dir).unwrap();
+        let payload = b"unicode-dir-body".to_vec();
+        std::fs::write(format!("{}/block-0.bin", dir), &payload).unwrap();
+        let cell = mint_cell(UNINDEXED);
+        index_build_batch(descriptor(0, &dir, payload.len() as i64, cell));
+        assert_eq!(cell_load(cell), INDEXED);
+        assert_entry_correct(&dir, 0, &payload);
+    }
+
+    #[test]
+    fn never_indexed_block_lookup_is_empty() {
+        let dir = unique_dir("noidx");
+        std::fs::write(format!("{}/block-0.bin", dir), b"sealed-not-indexed").unwrap();
+        assert_eq!(lookup_str(&dir, 0), "");
     }
 
     // ── Spike-4 fan-in contention sweep (intent's REQUIRED next-test) ───────
     //
     // Measures the ONE shared coordination point in the seal->indexer path:
     // the channels.rs registry mutex + global condvar behind channel_send/wait.
-    // P producer threads flood-send realistic descriptor-shaped messages into
-    // one consumer wait-loop; aggregate msgs/sec per P is printed.
-    //
-    // PASS/FAIL bar (from AXVERITY_INDEXER_THREADING_V1 r2): NO regression
-    // toward the Spike-4 thread-path signature — aggregate throughput
-    // DEGRADING as producers are added (Spike-4: peak ~273k rec/s @ 8 cores,
-    // then FALLING; vs the 1.53M mutex-free process baseline). The hard assert
-    // here is the egregious collapse only (agg(16) > 0.5 * agg(1)); the full
-    // table is printed for human judgment against the softer bar.
-    //
-    // Run explicitly:
+    // PASS/FAIL bar (AXVERITY_INDEXER_THREADING_V1 r2): NO regression toward
+    // the Spike-4 degrading-with-cores signature; hard assert is the egregious
+    // collapse only (agg(16) > 0.5 * agg(1)).
     //   cargo test --release --lib contention_fanin_sweep -- --ignored --nocapture
     #[test]
     #[ignore = "explicit contention sweep — run with --ignored --nocapture"]
@@ -525,7 +708,7 @@ mod tests {
         }
 
         fn text(s: &str) -> Value {
-            Value::Str(super::super::value::intern_str(s))
+            Value::Str(intern_str(s))
         }
 
         const TOTAL: usize = 200_000;
@@ -534,8 +717,6 @@ mod tests {
         for p in [1usize, 4, 16] {
             let chan = format!("bat-fan-{}", p);
             RECEIVED.store(0, Ordering::SeqCst);
-
-            // Dedicated consumer thread: subscribe, drain until TOTAL seen.
             let c_chan = chan.clone();
             let consumer = thread::spawn(move || {
                 super::super::channels::event_subscribe(text(&c_chan));
@@ -543,7 +724,6 @@ mod tests {
                     super::super::channels::wait(count_handler);
                 }
             });
-
             let per = TOTAL / p;
             let start = Instant::now();
             let producers: Vec<_> = (0..p)
@@ -551,8 +731,6 @@ mod tests {
                     let p_chan = chan.clone();
                     thread::spawn(move || {
                         for i in 0..per {
-                            // Descriptor-shaped payload: same Ctor arity the
-                            // real seal tap sends.
                             let desc = Value::Ctor {
                                 tag: 0,
                                 fields: vec![
@@ -582,7 +760,6 @@ mod tests {
             );
             results.push((p, thr));
         }
-
         let agg1 = results[0].1;
         let agg16 = results[2].1;
         eprintln!(
@@ -598,12 +775,6 @@ mod tests {
     }
 
     // ── Index-build throughput probe (tuning baseline, run explicitly) ──────
-    //
-    // Measures the CURRENT pipeline cost per sealed block: disk read of the
-    // durable .bin + sha256 (Merkle) + succinct stub + artifact write + CAS
-    // flip. Spike-sized 4MiB blocks, warm page cache (each block written just
-    // before the timed pass — matches the real seal->index window, where the
-    // flush is seconds old and still cached). Single-thread and 8-thread.
     //   cargo test --release --lib index_throughput_probe -- --ignored --nocapture
     #[test]
     #[ignore = "explicit perf probe — run with --ignored --nocapture"]
@@ -612,17 +783,15 @@ mod tests {
         use std::time::Instant;
         const MIB: usize = 1024 * 1024;
         const BLOCK: usize = 4 * MIB;
-        const N: usize = 64; // 256 MiB per pass
+        const N: usize = 64;
 
         let dir = unique_dir("tput");
-        let mut work: Vec<(i64, i64)> = Vec::new(); // (seq, cell)
+        let mut work: Vec<(i64, i64)> = Vec::new();
         for seq in 0..N as i64 {
             let payload: Vec<u8> = (0..BLOCK).map(|i| ((i as i64 + seq) % 251) as u8).collect();
             std::fs::write(format!("{}/block-{}.bin", dir, seq), &payload).unwrap();
             work.push((seq, mint_cell(UNINDEXED)));
         }
-
-        // single-thread pass
         let t = Instant::now();
         for &(seq, cell) in &work {
             index_build_batch(descriptor(seq, &dir, BLOCK as i64, cell));
@@ -633,8 +802,6 @@ mod tests {
             "TPUT 1-thread : {} x 4MiB = {:.0} MiB in {:.3}s -> {:.0} MiB/s, {:.0} blocks/s",
             N, mb, s1, mb / s1, N as f64 / s1
         );
-
-        // 8-thread pass (fresh cells, same cached files)
         let cells2: Vec<i64> = (0..N).map(|_| mint_cell(UNINDEXED)).collect();
         let t = Instant::now();
         let handles: Vec<_> = (0..8)
@@ -659,9 +826,6 @@ mod tests {
             "TPUT 8-thread : {:.0} MiB in {:.3}s -> {:.0} MiB/s, {:.0} blocks/s ({:.1}x)",
             mb, s8, mb / s8, N as f64 / s8, s1 / s8
         );
-
-        // isolate the hash cost (the floor a smarter pipeline cannot beat
-        // without incremental hashing): sha256 over the same bytes, no I/O.
         let payload: Vec<u8> = (0..BLOCK).map(|i| (i % 251) as u8).collect();
         let t = Instant::now();
         for _ in 0..N {
@@ -675,28 +839,7 @@ mod tests {
     }
 
     // ── T1 SPIKE: Merkle-over-frame-hashes vs whole-block rehash ────────────
-    //
-    // The T1 tuning claim: blocks framed WAL-style (`H(64-hex) | L(10-digit
-    // payload len) | payload`, the Spike-3 format) already carry a per-record
-    // sha256 paid at WRITE time — so the indexer can derive its Merkle root
-    // from the existing leaf hashes instead of re-hashing the whole block.
-    //
-    // What this spike actually measures (per record size 100B / 1KiB / 8KiB):
-    //   baseline  — sha256 over the whole raw block (what index_one does now)
-    //   tree      — parse frames, hex-decode leaves, binary Merkle tree
-    //               (pairwise sha256 of 32B pairs) -> root. Gives O(log n)
-    //               inclusion proofs.
-    //   linear    — parse frames, hex-decode leaves, ONE sha256 over the
-    //               concatenated leaf bytes -> root. No cheap proofs, but
-    //               commits to the ordered record-hash set; cheapest sound
-    //               option when proofs aren't needed (they aren't today —
-    //               verification always has the whole block in hand).
-    //
-    // Honest accounting: leaves are 32B each, so the leaf set is 32/(record)
-    // of the raw bytes — the win SCALES WITH RECORD SIZE and this spike
-    // exists to find where it pays. Tree cost also carries per-digest
-    // overhead (a 64B input still costs ~2 sha256 compressions).
-    //
+    // (record-size-conditional — see the 2026-07-10 spike commit for verdict)
     //   cargo test --release --lib t1_merkle_spike -- --ignored --nocapture
     #[test]
     #[ignore = "explicit T1 spike — run with --ignored --nocapture"]
@@ -718,8 +861,6 @@ mod tests {
             }
             out
         }
-
-        // Build one framed block of ~4MiB for a given payload size.
         fn build_framed_block(payload_len: usize) -> (Vec<u8>, usize) {
             let mut block = Vec::with_capacity(BLOCK + 256);
             let mut n = 0usize;
@@ -734,8 +875,6 @@ mod tests {
             }
             (block, n)
         }
-
-        // Parse the frames, returning the decoded 32B leaves (no payload hash).
         fn parse_leaves(block: &[u8]) -> Vec<[u8; 32]> {
             let mut leaves = Vec::new();
             let mut off = 0usize;
@@ -748,7 +887,6 @@ mod tests {
             }
             leaves
         }
-
         fn merkle_tree_root(mut level: Vec<[u8; 32]>) -> [u8; 32] {
             while level.len() > 1 {
                 level = level
@@ -756,14 +894,13 @@ mod tests {
                     .map(|pair| {
                         let mut h = Sha256::new();
                         h.update(pair[0]);
-                        h.update(*pair.last().unwrap()); // odd leaf pairs with itself
+                        h.update(*pair.last().unwrap());
                         h.finalize().into()
                     })
                     .collect();
             }
             level[0]
         }
-
         fn linear_root(leaves: &[[u8; 32]]) -> [u8; 32] {
             let mut h = Sha256::new();
             for l in leaves {
@@ -776,37 +913,28 @@ mod tests {
         for payload_len in [100usize, 1024, 8192] {
             let (block, n) = build_framed_block(payload_len);
             let leaf_frac = (n * 32) as f64 / block.len() as f64;
-
-            // baseline: whole-block rehash
             let t = Instant::now();
             for _ in 0..REPS {
                 let _ = Sha256::digest(&block);
             }
             let base = t.elapsed().as_secs_f64() / REPS as f64;
-
-            // T1-tree: parse + hex-decode + binary tree
             let t = Instant::now();
             for _ in 0..REPS {
                 let leaves = parse_leaves(&block);
                 let _ = merkle_tree_root(leaves);
             }
             let tree = t.elapsed().as_secs_f64() / REPS as f64;
-
-            // T1-linear: parse + hex-decode + one linear hash over leaves
             let t = Instant::now();
             for _ in 0..REPS {
                 let leaves = parse_leaves(&block);
                 let _ = linear_root(&leaves);
             }
             let linear = t.elapsed().as_secs_f64() / REPS as f64;
-
-            // parse-only, to attribute cost
             let t = Instant::now();
             for _ in 0..REPS {
                 let _ = parse_leaves(&block);
             }
             let parse = t.elapsed().as_secs_f64() / REPS as f64;
-
             eprintln!(
                 "T1 rec={:5}B n={:6} leaves={:4.1}% | base {:7.3}ms | tree {:7.3}ms ({:4.1}x) | linear {:7.3}ms ({:4.1}x) | parse-only {:7.3}ms",
                 payload_len, n, leaf_frac * 100.0,
@@ -816,20 +944,5 @@ mod tests {
                 parse * 1e3
             );
         }
-    }
-
-    #[test]
-    fn unicode_and_space_flush_dir() {
-        // Real-world paths: spaces + non-ASCII directory names.
-        let base = unique_dir("uni");
-        let dir = format!("{}/flush dir — bloc κ", base);
-        std::fs::create_dir_all(&dir).unwrap();
-        let payload = b"unicode-dir-body".to_vec();
-        std::fs::write(format!("{}/block-0.bin", dir), &payload).unwrap();
-        let cell = mint_cell(UNINDEXED);
-        index_build_batch(descriptor(0, &dir, payload.len() as i64, cell));
-        assert_eq!(cell_load(cell), INDEXED);
-        let idx = std::fs::read_to_string(format!("{}/index/block-0.idx", dir)).unwrap();
-        assert!(idx.contains(&format!("sha256:{}", expected_sha256(&payload))));
     }
 }
