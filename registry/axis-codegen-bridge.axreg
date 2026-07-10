@@ -1776,6 +1776,25 @@ fn hash256_parse
   idempotent    true
 end
 
+// AXVERITY_INDEXER_THREADING_V1 — index_build_batch(batch: Value) -> Value
+//   The wait() handler for the "index-frame" channel. For each drained seal
+//   descriptor Tuple(block_seq, flush_dir, byte_len, idx_cell), reads the
+//   durable flushed .bin READ-ONLY, computes the Merkle hash (== content_hash's
+//   sha2 digest), writes <flush_dir>/index/block-<seq>.idx (succinct = stub),
+//   and flips the per-block index-status AtomicI64 cell 0->1 in one CAS.
+//   Impl: axis-codegen-bridge-rs/src/runtime/indexer.rs
+//   Identity is sha256(name_utf8) — DO NOT recompute.
+
+fn index_build_batch
+  identity 0x56dde0e56a3ab914898aa1a8d5796f4312ef937dacd1c6b74bb9843abcee7c40
+  kind     leaf
+  in       (Value)
+  out      Value
+  effect   fullIo
+  deterministic false
+  idempotent    true
+end
+
 // ───────────── BRIDGE_BYTES_IO_M1 — resolves hld:axverity-text-to-bytes-dependency ─
 //
 // text_to_bytes(text: Text) -> Bytes
