@@ -35,5 +35,6 @@ pub mod hotmem;
 pub mod oneshot;
 pub mod reclog;
 pub mod rawmem;
+pub mod mpsc_intrusive;
 
 pub use value::Value;
