@@ -87,11 +87,23 @@ pub(crate) fn wait_oneshot(id: i64) {
     registry().lock().unwrap().remove(&id);
 }
 
-/// Mark `id` done and wake its waiter. Idempotent and safe on an unknown id
-/// (a no-op) so a double-signal or a signal racing a completed wait cannot panic.
+/// Mark `id` done, wake its waiter, and RETIRE the cell from the registry.
+///
+/// Retiring here (not only in `wait_oneshot`) is what makes a FAST-mode caller —
+/// one that submits and acks WITHOUT ever waiting its oneshot — leak-free: the
+/// janitor's signal is the last event in that cell's life, so it must be the one
+/// to drop it, or the registry would grow by one entry per un-waited submission
+/// for the life of the process. It stays correct for a STRONG waiter too: the
+/// waiter took its own `Arc` clone under the registry lock in `wait_oneshot`
+/// BEFORE blocking, so removing the map entry here cannot free the cell out from
+/// under it — `*done = true` + `notify_all` still reach the waiter through its
+/// clone, and the waiter's own trailing `remove` becomes a harmless no-op. If the
+/// signal lands before the waiter even looks up the id, the waiter's `get` returns
+/// `None` and it returns immediately (the record is already durable) — also
+/// correct. Idempotent and safe on an unknown/already-retired id (a no-op).
 pub(crate) fn signal_oneshot(id: i64) {
-    let cell = match registry().lock().unwrap().get(&id) {
-        Some(c) => c.clone(),
+    let cell = match registry().lock().unwrap().remove(&id) {
+        Some(c) => c,
         None => return,
     };
     let mut done = cell.done.lock().unwrap();
