@@ -597,6 +597,83 @@ mod tests {
         );
     }
 
+    // ── Index-build throughput probe (tuning baseline, run explicitly) ──────
+    //
+    // Measures the CURRENT pipeline cost per sealed block: disk read of the
+    // durable .bin + sha256 (Merkle) + succinct stub + artifact write + CAS
+    // flip. Spike-sized 4MiB blocks, warm page cache (each block written just
+    // before the timed pass — matches the real seal->index window, where the
+    // flush is seconds old and still cached). Single-thread and 8-thread.
+    //   cargo test --release --lib index_throughput_probe -- --ignored --nocapture
+    #[test]
+    #[ignore = "explicit perf probe — run with --ignored --nocapture"]
+    fn index_throughput_probe() {
+        use std::thread;
+        use std::time::Instant;
+        const MIB: usize = 1024 * 1024;
+        const BLOCK: usize = 4 * MIB;
+        const N: usize = 64; // 256 MiB per pass
+
+        let dir = unique_dir("tput");
+        let mut work: Vec<(i64, i64)> = Vec::new(); // (seq, cell)
+        for seq in 0..N as i64 {
+            let payload: Vec<u8> = (0..BLOCK).map(|i| ((i as i64 + seq) % 251) as u8).collect();
+            std::fs::write(format!("{}/block-{}.bin", dir, seq), &payload).unwrap();
+            work.push((seq, mint_cell(UNINDEXED)));
+        }
+
+        // single-thread pass
+        let t = Instant::now();
+        for &(seq, cell) in &work {
+            index_build_batch(descriptor(seq, &dir, BLOCK as i64, cell));
+        }
+        let s1 = t.elapsed().as_secs_f64();
+        let mb = (N * BLOCK) as f64 / MIB as f64;
+        eprintln!(
+            "TPUT 1-thread : {} x 4MiB = {:.0} MiB in {:.3}s -> {:.0} MiB/s, {:.0} blocks/s",
+            N, mb, s1, mb / s1, N as f64 / s1
+        );
+
+        // 8-thread pass (fresh cells, same cached files)
+        let cells2: Vec<i64> = (0..N).map(|_| mint_cell(UNINDEXED)).collect();
+        let t = Instant::now();
+        let handles: Vec<_> = (0..8)
+            .map(|w| {
+                let d = dir.clone();
+                let chunk: Vec<(i64, i64)> = (0..N)
+                    .filter(|i| i % 8 == w)
+                    .map(|i| (i as i64, cells2[i]))
+                    .collect();
+                thread::spawn(move || {
+                    for (seq, cell) in chunk {
+                        index_build_batch(descriptor(seq, &d, BLOCK as i64, cell));
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        let s8 = t.elapsed().as_secs_f64();
+        eprintln!(
+            "TPUT 8-thread : {:.0} MiB in {:.3}s -> {:.0} MiB/s, {:.0} blocks/s ({:.1}x)",
+            mb, s8, mb / s8, N as f64 / s8, s1 / s8
+        );
+
+        // isolate the hash cost (the floor a smarter pipeline cannot beat
+        // without incremental hashing): sha256 over the same bytes, no I/O.
+        let payload: Vec<u8> = (0..BLOCK).map(|i| (i % 251) as u8).collect();
+        let t = Instant::now();
+        for _ in 0..N {
+            let _ = Sha256::digest(&payload);
+        }
+        let sh = t.elapsed().as_secs_f64();
+        eprintln!(
+            "TPUT sha256   : {:.0} MiB in {:.3}s -> {:.0} MiB/s (pure hash, 1 thread)",
+            mb, sh, mb / sh
+        );
+    }
+
     #[test]
     fn unicode_and_space_flush_dir() {
         // Real-world paths: spaces + non-ASCII directory names.
