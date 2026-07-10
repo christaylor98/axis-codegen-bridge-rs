@@ -674,6 +674,150 @@ mod tests {
         );
     }
 
+    // ── T1 SPIKE: Merkle-over-frame-hashes vs whole-block rehash ────────────
+    //
+    // The T1 tuning claim: blocks framed WAL-style (`H(64-hex) | L(10-digit
+    // payload len) | payload`, the Spike-3 format) already carry a per-record
+    // sha256 paid at WRITE time — so the indexer can derive its Merkle root
+    // from the existing leaf hashes instead of re-hashing the whole block.
+    //
+    // What this spike actually measures (per record size 100B / 1KiB / 8KiB):
+    //   baseline  — sha256 over the whole raw block (what index_one does now)
+    //   tree      — parse frames, hex-decode leaves, binary Merkle tree
+    //               (pairwise sha256 of 32B pairs) -> root. Gives O(log n)
+    //               inclusion proofs.
+    //   linear    — parse frames, hex-decode leaves, ONE sha256 over the
+    //               concatenated leaf bytes -> root. No cheap proofs, but
+    //               commits to the ordered record-hash set; cheapest sound
+    //               option when proofs aren't needed (they aren't today —
+    //               verification always has the whole block in hand).
+    //
+    // Honest accounting: leaves are 32B each, so the leaf set is 32/(record)
+    // of the raw bytes — the win SCALES WITH RECORD SIZE and this spike
+    // exists to find where it pays. Tree cost also carries per-digest
+    // overhead (a 64B input still costs ~2 sha256 compressions).
+    //
+    //   cargo test --release --lib t1_merkle_spike -- --ignored --nocapture
+    #[test]
+    #[ignore = "explicit T1 spike — run with --ignored --nocapture"]
+    fn t1_merkle_spike() {
+        use std::time::Instant;
+        const MIB: usize = 1024 * 1024;
+        const BLOCK: usize = 4 * MIB;
+        const REPS: usize = 32;
+
+        fn hex32(d: &[u8]) -> String {
+            d.iter().map(|b| format!("{:02x}", b)).collect()
+        }
+        fn unhex(s: &[u8]) -> [u8; 32] {
+            let mut out = [0u8; 32];
+            for i in 0..32 {
+                let hi = (s[2 * i] as char).to_digit(16).unwrap() as u8;
+                let lo = (s[2 * i + 1] as char).to_digit(16).unwrap() as u8;
+                out[i] = hi << 4 | lo;
+            }
+            out
+        }
+
+        // Build one framed block of ~4MiB for a given payload size.
+        fn build_framed_block(payload_len: usize) -> (Vec<u8>, usize) {
+            let mut block = Vec::with_capacity(BLOCK + 256);
+            let mut n = 0usize;
+            let frame_len = 64 + 10 + payload_len;
+            while block.len() + frame_len <= BLOCK {
+                let payload: Vec<u8> = (0..payload_len).map(|i| ((i + n) % 251) as u8).collect();
+                let h = hex32(&Sha256::digest(&payload));
+                block.extend_from_slice(h.as_bytes());
+                block.extend_from_slice(format!("{:010}", payload_len).as_bytes());
+                block.extend_from_slice(&payload);
+                n += 1;
+            }
+            (block, n)
+        }
+
+        // Parse the frames, returning the decoded 32B leaves (no payload hash).
+        fn parse_leaves(block: &[u8]) -> Vec<[u8; 32]> {
+            let mut leaves = Vec::new();
+            let mut off = 0usize;
+            while off + 74 <= block.len() {
+                let leaf = unhex(&block[off..off + 64]);
+                let len: usize =
+                    std::str::from_utf8(&block[off + 64..off + 74]).unwrap().parse().unwrap();
+                leaves.push(leaf);
+                off += 74 + len;
+            }
+            leaves
+        }
+
+        fn merkle_tree_root(mut level: Vec<[u8; 32]>) -> [u8; 32] {
+            while level.len() > 1 {
+                level = level
+                    .chunks(2)
+                    .map(|pair| {
+                        let mut h = Sha256::new();
+                        h.update(pair[0]);
+                        h.update(*pair.last().unwrap()); // odd leaf pairs with itself
+                        h.finalize().into()
+                    })
+                    .collect();
+            }
+            level[0]
+        }
+
+        fn linear_root(leaves: &[[u8; 32]]) -> [u8; 32] {
+            let mut h = Sha256::new();
+            for l in leaves {
+                h.update(l);
+            }
+            h.finalize().into()
+        }
+
+        eprintln!("T1 SPIKE  block=4MiB reps={REPS}  (times are per-block, warm)");
+        for payload_len in [100usize, 1024, 8192] {
+            let (block, n) = build_framed_block(payload_len);
+            let leaf_frac = (n * 32) as f64 / block.len() as f64;
+
+            // baseline: whole-block rehash
+            let t = Instant::now();
+            for _ in 0..REPS {
+                let _ = Sha256::digest(&block);
+            }
+            let base = t.elapsed().as_secs_f64() / REPS as f64;
+
+            // T1-tree: parse + hex-decode + binary tree
+            let t = Instant::now();
+            for _ in 0..REPS {
+                let leaves = parse_leaves(&block);
+                let _ = merkle_tree_root(leaves);
+            }
+            let tree = t.elapsed().as_secs_f64() / REPS as f64;
+
+            // T1-linear: parse + hex-decode + one linear hash over leaves
+            let t = Instant::now();
+            for _ in 0..REPS {
+                let leaves = parse_leaves(&block);
+                let _ = linear_root(&leaves);
+            }
+            let linear = t.elapsed().as_secs_f64() / REPS as f64;
+
+            // parse-only, to attribute cost
+            let t = Instant::now();
+            for _ in 0..REPS {
+                let _ = parse_leaves(&block);
+            }
+            let parse = t.elapsed().as_secs_f64() / REPS as f64;
+
+            eprintln!(
+                "T1 rec={:5}B n={:6} leaves={:4.1}% | base {:7.3}ms | tree {:7.3}ms ({:4.1}x) | linear {:7.3}ms ({:4.1}x) | parse-only {:7.3}ms",
+                payload_len, n, leaf_frac * 100.0,
+                base * 1e3,
+                tree * 1e3, base / tree,
+                linear * 1e3, base / linear,
+                parse * 1e3
+            );
+        }
+    }
+
     #[test]
     fn unicode_and_space_flush_dir() {
         // Real-world paths: spaces + non-ASCII directory names.
