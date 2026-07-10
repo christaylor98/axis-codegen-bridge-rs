@@ -40,5 +40,6 @@ pub mod interner_shard;
 pub mod mpsc_intrusive;
 pub mod interner_mutex_feed;
 pub mod interner_lockfree_feed;
+pub mod unified_wait;
 
 pub use value::Value;

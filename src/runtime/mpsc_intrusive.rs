@@ -93,6 +93,7 @@
 use std::ptr;
 use std::sync::atomic::{fence, AtomicPtr, Ordering};
 use std::thread::Thread;
+use std::time::Instant;
 
 struct Node<T> {
     next: AtomicPtr<Node<T>>,
@@ -258,6 +259,51 @@ impl<T> Queue<T> {
                             // park() returns immediately — the wakeup is
                             // unlosable. Spurious returns just re-loop.
                             std::thread::park();
+                            self.reclaim_waiter();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Deadline-bounded `pop_blocking`: block until a value is available OR
+    /// `deadline` passes, whichever first. Returns `None` on timeout. Same
+    /// single-consumer contract and same C1/C2/C3 wake protocol as
+    /// `pop_blocking` — `park_timeout` replaces `park`, and the deadline is
+    /// re-evaluated on every loop pass (spurious wakeups included). A value
+    /// already in the queue is returned even if the deadline has passed:
+    /// drain-before-timeout, so callers never see a timeout while data sits
+    /// unread.
+    pub fn pop_blocking_until(&self, deadline: Instant) -> Option<T> {
+        loop {
+            match self.pop() {
+                PopResult::Value(v) => return Some(v),
+                PopResult::Inconsistent => std::thread::yield_now(),
+                PopResult::Empty => {
+                    let now = Instant::now();
+                    if now >= deadline {
+                        return None;
+                    }
+                    let me = Box::into_raw(Box::new(std::thread::current()));
+                    let prev = self.waiter.swap(me, Ordering::SeqCst);
+                    debug_assert!(prev.is_null(), "single-consumer contract violated");
+                    if !prev.is_null() {
+                        // SAFETY: swap gave us ownership of the stale box.
+                        unsafe { drop(Box::from_raw(prev)) };
+                    }
+                    fence(Ordering::SeqCst);
+                    match self.pop() {
+                        PopResult::Value(v) => {
+                            self.reclaim_waiter();
+                            return Some(v);
+                        }
+                        PopResult::Inconsistent => {
+                            self.reclaim_waiter();
+                            std::thread::yield_now();
+                        }
+                        PopResult::Empty => {
+                            std::thread::park_timeout(deadline - now);
                             self.reclaim_waiter();
                         }
                     }
