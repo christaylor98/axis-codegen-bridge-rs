@@ -270,6 +270,13 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("idxseg_lookup",        "axis_codegen_bridge::runtime::indexer::idxseg_lookup");
     m.insert("index_rebuild_dir",    "axis_codegen_bridge::runtime::indexer::index_rebuild_dir");
 
+    // ── Live-path hot-block seal (AXVERITY_FRONTEND_WRITEPATH_INTEGRATION_V1) ──
+    //    hotblk_* = per-thread accumulator register (dumb persistence, no logic);
+    //    block_flush_write = the async seal-flush wait() handler (I/O glue).
+    m.insert("hotblk_get",           "axis_codegen_bridge::runtime::hotblk::hotblk_get");
+    m.insert("hotblk_set",           "axis_codegen_bridge::runtime::hotblk::hotblk_set");
+    m.insert("block_flush_write",    "axis_codegen_bridge::runtime::block_flush::block_flush_write");
+
     // ── Hot mem arena (hotmem.rs — AXVERITY_HOTMEM_CONSUMER_IMPLEMENTATION_V1,
     //    first slice) ────────────────────────────────────────────────────────
     m.insert("hotmem_write",         "axis_codegen_bridge::runtime::hotmem::hotmem_write");

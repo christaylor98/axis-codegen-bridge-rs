@@ -36,6 +36,8 @@ pub mod oneshot;
 pub mod reclog;
 pub mod rawmem;
 pub mod indexer;
+pub mod hotblk;
+pub mod block_flush;
 pub mod interner_shard;
 pub mod mpsc_intrusive;
 pub mod interner_mutex_feed;
