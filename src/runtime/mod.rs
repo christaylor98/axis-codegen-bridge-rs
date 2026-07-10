@@ -35,6 +35,9 @@ pub mod hotmem;
 pub mod oneshot;
 pub mod reclog;
 pub mod rawmem;
+pub mod interner_shard;
 pub mod mpsc_intrusive;
+pub mod interner_mutex_feed;
+pub mod interner_lockfree_feed;
 
 pub use value::Value;
