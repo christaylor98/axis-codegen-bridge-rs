@@ -131,7 +131,7 @@ pub fn reclog_submit(args: Value) -> Value {
     }
     let id = new_oneshot();
     let item = Value::Tuple(vec![Value::Int(id), frame, logp, bind_line]);
-    bounded_send_blocking(RECLOG_CHAN, item);
+    stream_submit(STREAM_FUSED, item);
     Value::Int(id)
 }
 
@@ -162,20 +162,76 @@ fn fsync_parent_dir(path: &str) {
     }
 }
 
-/// `reclog_flush_once(Unit) -> Int`
-///
-/// Drain one batch from the recovery-log channel (block until ≥1, bounded by
-/// cap OR window), durably write every payload frame + bind line, then signal
-/// every caller's oneshot. Returns the number of items committed.
-#[track_caller]
-pub fn reclog_flush_once(_: Value) -> Value {
-    let cap = batch_cap_env();
-    let window_ms = window_ms_env();
-    let batch = bounded_drain_batch(RECLOG_CHAN, cap, window_ms);
-    if batch.is_empty() {
-        return Value::Int(0);
-    }
+// ── Stream seam (AXVERITY_UNIFIED_DURABLE_STREAMS_V1 — phase 1) ──────────────
+// The group-commit engine is parameterized by a compile-time `stream_id` via
+// MATCH DISPATCH (two fixed streams ever, not a runtime registry — the stream
+// definitions are hand-written code, known at compile time; a registry would add
+// indirection and a slot for a wrong write_fn/channel pairing the compiler can't
+// catch). Phase 1 registers exactly ONE stream, FUSED, whose write path is the
+// pre-phase-1 payload-WAL + name-log flush VERBATIM (including its per-name fsync
+// loop). This is a PURE REFACTOR with zero behavior change: same channel, same
+// cap/window, same fsyncs (payload 1, name N), same ack ordering. Phase 2 adds a
+// NAME arm; phase 3 removes the name-write from FUSED; phase 4 handles the
+// payload .bin index. The match is exhaustive — a new stream is one arm.
+const STREAM_FUSED: &str = "fused";
 
+/// The bounded channel a stream drains. Match-dispatched; exhaustive.
+fn stream_chan(stream_id: &str) -> &'static str {
+    match stream_id {
+        STREAM_FUSED => RECLOG_CHAN,
+        other => panic!("stream_chan: unknown stream_id {:?}", other),
+    }
+}
+
+/// A stream's size-OR-timer release rule = (batch-size cap, window ms).
+fn stream_release(stream_id: &str) -> (usize, u64) {
+    match stream_id {
+        STREAM_FUSED => (batch_cap_env(), window_ms_env()),
+        other => panic!("stream_release: unknown stream_id {:?}", other),
+    }
+}
+
+/// Enqueue one work item onto a stream's channel (blocking on full = honest
+/// backpressure). Stream-agnostic apart from the channel selection.
+fn stream_submit(stream_id: &str, item: Value) {
+    bounded_send_blocking(stream_chan(stream_id), item);
+}
+
+/// Durably write one drained batch for `stream_id`, returning the oneshot ids to
+/// ack. This is the ONLY per-stream step; the drain/ack skeleton around it
+/// (`stream_flush_once`) is generic. Match-dispatched; exhaustive.
+fn write_batch(stream_id: &str, batch: Vec<Value>) -> Vec<i64> {
+    match stream_id {
+        STREAM_FUSED => write_batch_fused(batch),
+        other => panic!("write_batch: unknown stream_id {:?}", other),
+    }
+}
+
+/// GENERIC group-commit skeleton: drain one size-OR-timer batch, durably write it
+/// via the stream's `write_batch`, then ack every caller. Stream-agnostic. §3
+/// (signal) lives HERE, AFTER `write_batch` returns (all writes durable) — the
+/// identical batch-level ack-after-all-durable position the pre-refactor flush
+/// used (prior grounding: signal_oneshot already fired after the entire §1+§2).
+fn stream_flush_once(stream_id: &str) -> i64 {
+    let (cap, window_ms) = stream_release(stream_id);
+    let batch = bounded_drain_batch(stream_chan(stream_id), cap, window_ms);
+    if batch.is_empty() {
+        return 0;
+    }
+    let ids = write_batch(stream_id, batch);
+    // ── 3. Durable barrier passed — release every caller's ack ──
+    for id in &ids {
+        signal_oneshot(*id);
+    }
+    ids.len() as i64
+}
+
+/// FUSED stream write path — payload WAL frames + per-name bind logs, VERBATIM
+/// from the pre-phase-1 `reclog_flush_once` (its §1 + §2, incl. the audit marks).
+/// The per-name fsync loop is intentionally UNCHANGED in phase 1; phase 3 removes
+/// the name-write from this arm once the dedicated name stream passes its gate.
+/// Returns the batch's oneshot ids for the skeleton to ack (§3 moved out).
+fn write_batch_fused(batch: Vec<Value>) -> Vec<i64> {
     // Decode the batch into (oneshot id, frame bytes, name-log path, bind line).
     let mut ids: Vec<i64> = Vec::with_capacity(batch.len());
     let mut frames: Vec<Vec<u8>> = Vec::with_capacity(batch.len());
@@ -186,23 +242,23 @@ pub fn reclog_flush_once(_: Value) -> Value {
     for item in batch {
         let mut fields = match item {
             Value::Tuple(es) if es.len() == 4 => es.into_iter(),
-            other => panic!("reclog_flush_once: malformed item {:?}", other),
+            other => panic!("write_batch_fused: malformed item {:?}", other),
         };
         let id = match fields.next().unwrap() {
             Value::Int(n) => n,
-            other => panic!("reclog_flush_once: item field 0 (id) expected Int, got {:?}", other),
+            other => panic!("write_batch_fused: item field 0 (id) expected Int, got {:?}", other),
         };
         let frame = match fields.next().unwrap() {
             Value::Bytes(b) => b.to_vec(),
-            other => panic!("reclog_flush_once: item field 1 (frame) expected Bytes, got {:?}", other),
+            other => panic!("write_batch_fused: item field 1 (frame) expected Bytes, got {:?}", other),
         };
         let logp = match fields.next().unwrap() {
             Value::Str(h) => get_str(h),
-            other => panic!("reclog_flush_once: item field 2 (path) expected Text, got {:?}", other),
+            other => panic!("write_batch_fused: item field 2 (path) expected Text, got {:?}", other),
         };
         let line = match fields.next().unwrap() {
             Value::Bytes(b) => b.to_vec(),
-            other => panic!("reclog_flush_once: item field 3 (bind) expected Bytes, got {:?}", other),
+            other => panic!("write_batch_fused: item field 3 (bind) expected Bytes, got {:?}", other),
         };
         ids.push(id);
         frames.push(frame);
@@ -260,10 +316,13 @@ pub fn reclog_flush_once(_: Value) -> Value {
         fsync_parent_dir(".axverity/names/x");
     }
 
-    // ── 3. Durable barrier passed — release every caller's ack ──
-    for id in &ids {
-        signal_oneshot(*id);
-    }
+    ids
+}
 
-    Value::Int(ids.len() as i64)
+/// `reclog_flush_once(Unit) -> Int` — the FUSED stream's flush; the M1 janitor
+/// entry point. ABI UNCHANGED (reclog_janitor_step calls it verbatim); delegates
+/// to the generic skeleton with stream_id = FUSED. Returns the item count.
+#[track_caller]
+pub fn reclog_flush_once(_: Value) -> Value {
+    Value::Int(stream_flush_once(STREAM_FUSED))
 }
