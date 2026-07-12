@@ -292,6 +292,96 @@ fn sha256_hex(payload: &[u8]) -> String {
     Sha256::digest(payload).iter().map(|b| format!("{:02x}", b)).collect()
 }
 
+/// THE ONE production frame-scanner (AXVERITY_UNIFIED_DURABLE_STREAMS_V1, phase 2).
+///
+/// Walk the framed WAL segments `<prefix><seq>.log` forward from the watermark
+/// `(wm_seg, wm_off)`, hash-checking every frame, calling `visit` for each valid
+/// frame and STOPPING at the first torn/invalid one (the truncation frontier).
+/// Returns `(frontier_seg, frontier_off, frames_scanned)`.
+///
+/// Frame layout (Branch A — envelope extension carrying (table,seq,pk) OUTSIDE the
+/// content hash):
+///   `H(64 hex) | P(10 dec payload-len) | V(10 dec envelope-len) | env(V) | payload(P)`
+/// — an 84-byte fixed header, then the un-hashed envelope, then the payload. The
+/// content hash covers the PAYLOAD ONLY (`sha256_hex(payload) == H`); the envelope
+/// is never hashed, so object identity is unchanged by its presence. A frame is
+/// valid iff the whole `84 + V + P` extent is present AND the payload hash-matches
+/// — so a torn tail discards the object AND its binding together (env sits BEFORE
+/// the payload, so a hash-valid payload transitively guarantees an intact env under
+/// the truncation-only fault model). `visit` receives
+/// `(seg, payload_off, payload_len, env_bytes, hexh)`.
+///
+/// This is the SINGLE frame parser ALL index projections share (content-hash index
+/// via `walidx_rebuild`, the (table,pk)->hash projection via
+/// `pkindex::pkidx_rebuild`, and the field index via `fieldidx::fieldidx_rebuild`),
+/// so they can never drift on the frame layout (hard-limit
+/// FRAME_PARSERS_UPDATED_LOCKSTEP). Any layout change lives HERE, once. `visit`
+/// receives `(seg, payload_off, payload_len, env_bytes, payload_bytes, hexh)`.
+pub(crate) fn walk_frames<F>(prefix: &str, wm_seg: i64, wm_off: i64, mut visit: F) -> (i64, i64, i64)
+where
+    F: FnMut(i64, i64, i64, &[u8], &[u8], &str),
+{
+    let (mut cur_seg, mut off) = (wm_seg, wm_off);
+    let mut scanned: i64 = 0;
+    let (mut fr_seg, mut fr_off) = (wm_seg, wm_off);
+    loop {
+        let data = match read_segment(prefix, cur_seg) {
+            Some(d) => d,
+            None => break, // watermark segment no longer exists — stop
+        };
+        let dlen = data.len();
+        let mut off_us = if off < 0 { 0usize } else { off as usize };
+        let mut torn = false;
+        // Need the full 84-byte fixed header (H|P|V) before we can read V.
+        while off_us + 84 <= dlen {
+            let hexh = match std::str::from_utf8(&data[off_us..off_us + 64]) {
+                Ok(s) => s,
+                Err(_) => { torn = true; break; }
+            };
+            let plenf = match std::str::from_utf8(&data[off_us + 64..off_us + 74]) {
+                Ok(s) => s,
+                Err(_) => { torn = true; break; }
+            };
+            let vlenf = match std::str::from_utf8(&data[off_us + 74..off_us + 84]) {
+                Ok(s) => s,
+                Err(_) => { torn = true; break; }
+            };
+            let plen: usize = match plenf.trim().parse() {
+                Ok(n) => n,
+                Err(_) => { torn = true; break; }
+            };
+            let vlen: usize = match vlenf.trim().parse() {
+                Ok(n) => n,
+                Err(_) => { torn = true; break; }
+            };
+            let hdr_end = off_us + 84;
+            if hdr_end + vlen + plen > dlen {
+                torn = true; // envelope or payload torn at the tail
+                break;
+            }
+            let env = &data[hdr_end..hdr_end + vlen];
+            let payload = &data[hdr_end + vlen..hdr_end + vlen + plen];
+            if sha256_hex(payload) != hexh {
+                torn = true; // hash mismatch — torn/invalid frame
+                break;
+            }
+            visit(cur_seg, (hdr_end + vlen) as i64, plen as i64, env, payload, hexh);
+            off_us += 84 + vlen + plen;
+            scanned += 1;
+        }
+        let clean_end = !torn && off_us == dlen;
+        if clean_end && read_segment(prefix, cur_seg + 1).is_some() {
+            cur_seg += 1;
+            off = 0;
+            continue;
+        }
+        fr_seg = cur_seg;
+        fr_off = off_us as i64;
+        break; // torn frontier, or last segment exhausted
+    }
+    (fr_seg, fr_off, scanned)
+}
+
 /// `walidx_rebuild(h: Int, seg_prefix: Text, snap_path: Text) -> Int`
 ///
 /// Reconstruct the shard `h`: load the disposable snapshot at `snap_path` (if
@@ -303,11 +393,12 @@ fn sha256_hex(payload: &[u8]) -> String {
 /// Returns the number of frames scanned from the WAL (post-watermark), for
 /// diagnostics; the reconstructed shard is the real output.
 ///
-/// Frame layout (Spike-3): `H(64 hex) | L(10-digit payload byte-len) | payload(L)`
-/// — a 74-byte header. A clean short read (< a full frame) ends a segment; if a
-/// later segment exists the scan continues there at offset 0 (frames never span a
-/// segment boundary), otherwise it halts. A hash mismatch or an out-of-bounds
-/// length is a torn tail and halts the scan.
+/// Frame layout (Branch A): `H(64 hex) | P(10 payload-len) | V(10 envelope-len) |
+/// env(V) | payload(P)` — an 84-byte fixed header, then the un-hashed envelope,
+/// then the payload. The per-frame walk + torn-tail rule lives in `walk_frames`
+/// (the ONE shared production scanner); this fn only loads the disposable snapshot
+/// and threads a content-index visitor into it. A clean short read ends a segment;
+/// a hash mismatch or out-of-bounds length is a torn tail and halts the scan.
 #[track_caller]
 pub fn walidx_rebuild(args: Value) -> Value {
     let es = match args {
@@ -326,52 +417,14 @@ pub fn walidx_rebuild(args: Value) -> Value {
 
         let (wm_seg, wm_off) = load_snapshot(&mut sh.map, &snap_path);
         bump_frontier(sh, wm_seg, wm_off);
-        let (mut cur_seg, mut off) = (wm_seg, wm_off);
-        let mut scanned: i64 = 0;
-
-        loop {
-            let data = match read_segment(&prefix, cur_seg) {
-                Some(d) => d,
-                None => break, // watermark segment no longer exists — stop
-            };
-            let dlen = data.len();
-            let mut off_us = if off < 0 { 0usize } else { off as usize };
-            let mut torn = false;
-            while off_us + 74 <= dlen {
-                let hexh = match std::str::from_utf8(&data[off_us..off_us + 64]) {
-                    Ok(s) => s,
-                    Err(_) => { torn = true; break; }
-                };
-                let lenf = match std::str::from_utf8(&data[off_us + 64..off_us + 74]) {
-                    Ok(s) => s,
-                    Err(_) => { torn = true; break; }
-                };
-                let plen: usize = match lenf.trim().parse() {
-                    Ok(n) => n,
-                    Err(_) => { torn = true; break; }
-                };
-                if off_us + 74 + plen > dlen {
-                    torn = true; // payload torn at the tail
-                    break;
-                }
-                let payload = &data[off_us + 74..off_us + 74 + plen];
-                if sha256_hex(payload) != hexh {
-                    torn = true; // hash mismatch — torn/invalid frame
-                    break;
-                }
-                sh.map.insert(hexh.to_string(), (cur_seg, (off_us + 74) as i64, plen as i64));
-                off_us += 74 + plen;
-                scanned += 1;
-            }
-            let clean_end = !torn && off_us == dlen;
-            if clean_end && read_segment(&prefix, cur_seg + 1).is_some() {
-                cur_seg += 1;
-                off = 0;
-                continue;
-            }
-            bump_frontier(sh, cur_seg, off_us as i64); // torn/exhausted → frontier
-            break; // torn frontier, or last segment exhausted
-        }
+        // Content-hash index visitor: key = payload digest, value = (seg, payload
+        // offset, payload len). The envelope is ignored here (the pk-index consumes
+        // it via the same walk in pkindex.rs). One scanner, two projections.
+        let map = &mut sh.map;
+        let (fr_seg, fr_off, scanned) = walk_frames(&prefix, wm_seg, wm_off, |seg, off, len, _env, _payload, hexh| {
+            map.insert(hexh.to_string(), (seg, off, len));
+        });
+        bump_frontier(sh, fr_seg, fr_off); // torn/exhausted → frontier
         scanned
     });
     Value::Int(scanned)

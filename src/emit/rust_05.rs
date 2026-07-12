@@ -275,7 +275,19 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     //    block_flush_write = the async seal-flush wait() handler (I/O glue).
     m.insert("hotblk_get",           "axis_codegen_bridge::runtime::hotblk::hotblk_get");
     m.insert("hotblk_set",           "axis_codegen_bridge::runtime::hotblk::hotblk_set");
+
+    // ── ISOLATION MEASUREMENT ONLY (HOTWRITE_ADMISSION_MINIMAL_CAPTURE_V1) ──
+    //    single-call collapse of the per-record capture/stamp/hash/write cycle.
+    m.insert("hotwrite_batch_run",   "axis_codegen_bridge::runtime::hotwrite_batch::hotwrite_batch_run");
+    m.insert("hotwrite_batch_run_c", "axis_codegen_bridge::runtime::hotwrite_batch::hotwrite_batch_run_c");
+    m.insert("hotwrite_batch_run_c_durable", "axis_codegen_bridge::runtime::hotwrite_batch::hotwrite_batch_run_c_durable");
     m.insert("block_flush_write",    "axis_codegen_bridge::runtime::block_flush::block_flush_write");
+
+    // ── TEMPORARY timing instrumentation (AXVERITY_INSERT_PATH_TIMING_AUDIT_V1) ─
+    m.insert("ts_mark",              "axis_codegen_bridge::runtime::tsmark::ts_mark");
+    m.insert("ts_mark_val",          "axis_codegen_bridge::runtime::tsmark::ts_mark_val");
+    m.insert("ts_flush",             "axis_codegen_bridge::runtime::tsmark::ts_flush");
+    m.insert("channel_depth",        "axis_codegen_bridge::runtime::channels::channel_depth");
 
     // ── Hot mem arena (hotmem.rs — AXVERITY_HOTMEM_CONSUMER_IMPLEMENTATION_V1,
     //    first slice) ────────────────────────────────────────────────────────
@@ -297,6 +309,13 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("walidx_get",           "axis_codegen_bridge::runtime::walindex::walidx_get");
     m.insert("walidx_snapshot",      "axis_codegen_bridge::runtime::walindex::walidx_snapshot");
     m.insert("walidx_rebuild",       "axis_codegen_bridge::runtime::walindex::walidx_rebuild");
+    // ── pk-index: rebuildable (table,pk)->current-hash projection over the same
+    //    shared frame-walk (pkindex.rs — BRIDGE_PKINDEX_V1,
+    //    AXVERITY_UNIFIED_DURABLE_STREAMS_V1 phase 2). Replay-only, never fsynced.
+    m.insert("pkidx_open",           "axis_codegen_bridge::runtime::pkindex::pkidx_open");
+    m.insert("pkidx_has",            "axis_codegen_bridge::runtime::pkindex::pkidx_has");
+    m.insert("pkidx_get",            "axis_codegen_bridge::runtime::pkindex::pkidx_get");
+    m.insert("pkidx_rebuild",        "axis_codegen_bridge::runtime::pkindex::pkidx_rebuild");
 
     // ── Recovery-log group commit + ack backpath
     //    (AXVERITY_HOTPATH_PARALLEL_DISPATCH_V1) ──────────────────────────────

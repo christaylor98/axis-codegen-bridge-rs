@@ -22,6 +22,7 @@ libc = "0.2"
 
 [build-dependencies]
 capnpc = "0.19"
+cc = "1"
 
 [dev-dependencies]
 tempfile = "3.0"

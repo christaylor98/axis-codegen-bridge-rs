@@ -127,6 +127,19 @@ pub fn channel_send(args: Value) -> Value {
     Value::Unit
 }
 
+/// `channel_depth(name: Text) -> Int` — TEMPORARY instrumentation
+/// (AXVERITY_INSERT_PATH_TIMING_AUDIT_V1): the current number of pending items in
+/// `name`'s unbounded queue (e.g. sealed-but-not-yet-flushed block jobs on
+/// "hotmem-frame"). Read-only: locks the queue, reads len, unlocks. No effect on
+/// any functional path.
+#[track_caller]
+pub fn channel_depth(name: Value) -> Value {
+    let n = name_of(&name);
+    let chan = channel_for(&n);
+    let d = chan.queue.lock().unwrap().len();
+    Value::Int(d as i64)
+}
+
 /// `event_subscribe(name: Text) -> Unit`. Registers the current context as a
 /// waiter on `name` and declares the channel buffer eagerly. Idempotent per
 /// context — subscribing twice to the same name is a no-op.

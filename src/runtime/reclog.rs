@@ -289,14 +289,17 @@ fn write_batch_fused(batch: Vec<Value>) -> Vec<i64> {
             .write_all(frame)
             .unwrap_or_else(|e| panic!("reclog: write frame to {}: {}", seg_path, e));
     }
+    super::tsmark::mark(70); // AUDIT (uncommitted): before payload WAL fsync
     seg_file
         .sync_all()
         .unwrap_or_else(|e| panic!("reclog: fsync WAL segment {}: {}", seg_path, e));
+    super::tsmark::mark(71); // AUDIT (uncommitted): after payload WAL fsync
     if seg_new {
         fsync_parent_dir(&seg_path);
     }
 
     // ── 2. Name-log binds: append per name, one data fsync per distinct name ──
+    super::tsmark::mark(72); // AUDIT (uncommitted): before name-log fsync loop
     let mut any_name_new = false;
     for logp in &name_order {
         let (mut nf, nf_new) = open_append(logp);
@@ -315,6 +318,7 @@ fn write_batch_fused(batch: Vec<Value>) -> Vec<i64> {
         // the batch's newly-created ones.
         fsync_parent_dir(".axverity/names/x");
     }
+    super::tsmark::mark(73); // AUDIT (uncommitted): after name-log fsync loop
 
     ids
 }

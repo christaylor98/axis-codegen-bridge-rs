@@ -41,10 +41,8 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::Path;
-
-use sha2::{Digest, Sha256};
 
 use super::value::{get_str, intern_str, Value};
 
@@ -247,22 +245,8 @@ fn load_snapshot(map: &mut HashMap<String, Vec<String>>, path: &str) -> (i64, i6
     (wm_seg, wm_off)
 }
 
-fn read_segment(prefix: &str, seq: i64) -> Option<Vec<u8>> {
-    let path = format!("{}{}.log", prefix, seq);
-    match File::open(&path) {
-        Ok(mut f) => {
-            let mut buf = Vec::new();
-            f.read_to_end(&mut buf)
-                .unwrap_or_else(|e| panic!("fieldidx_rebuild: read {}: {}", path, e));
-            Some(buf)
-        }
-        Err(_) => None,
-    }
-}
-
-fn sha256_hex(payload: &[u8]) -> String {
-    Sha256::digest(payload).iter().map(|b| format!("{:02x}", b)).collect()
-}
+// (read_segment + sha256_hex removed — the frame walk now lives in the ONE shared
+//  scanner walindex::walk_frames, which owns segment reads and hash-checking.)
 
 /// Extract `(field, value)` cells from a decoded RECORD/FIELDIDX payload and
 /// insert them (keyed to `hash`) into `map`. `RECORD\tc1=v1\tc2=v2\t...` cells
@@ -301,10 +285,13 @@ fn index_payload(map: &mut HashMap<String, Vec<String>>, text: &str, own_hash: &
 }
 
 /// `fieldidx_rebuild(h: Int, seg_prefix: Text, snap_path: Text) -> Int`
-/// Load the disposable snapshot, then forward-replay the framed WAL segments
-/// from the watermark, hash-checking every frame (same scanner shape as
-/// `walidx_rebuild`) and indexing RECORD/FIELDIDX payloads. Stops at the
-/// first torn/invalid frame. Returns frames scanned (diagnostics).
+/// Load the disposable snapshot, then forward-replay the framed WAL via the ONE
+/// shared scanner `walindex::walk_frames` (AXVERITY_UNIFIED_DURABLE_STREAMS_V1
+/// phase 2 — new 84-byte H|P|V|env|payload layout), indexing RECORD/FIELDIDX
+/// payloads. The field index ignores the (table,seq,pk) envelope; it indexes the
+/// payload text exactly as before. Sharing the scanner keeps this parser in
+/// lockstep with the content-hash and pk indexes (hard-limit
+/// FRAME_PARSERS_UPDATED_LOCKSTEP). Returns frames scanned (diagnostics).
 #[track_caller]
 pub fn fieldidx_rebuild(args: Value) -> Value {
     let es = match args {
@@ -323,54 +310,14 @@ pub fn fieldidx_rebuild(args: Value) -> Value {
 
         let (wm_seg, wm_off) = load_snapshot(&mut sh.map, &snap_path);
         bump_frontier(sh, wm_seg, wm_off);
-        let (mut cur_seg, mut off) = (wm_seg, wm_off);
-        let mut scanned: i64 = 0;
-
-        loop {
-            let data = match read_segment(&prefix, cur_seg) {
-                Some(d) => d,
-                None => break,
-            };
-            let dlen = data.len();
-            let mut off_us = if off < 0 { 0usize } else { off as usize };
-            let mut torn = false;
-            while off_us + 74 <= dlen {
-                let hexh = match std::str::from_utf8(&data[off_us..off_us + 64]) {
-                    Ok(s) => s,
-                    Err(_) => { torn = true; break; }
-                };
-                let lenf = match std::str::from_utf8(&data[off_us + 64..off_us + 74]) {
-                    Ok(s) => s,
-                    Err(_) => { torn = true; break; }
-                };
-                let plen: usize = match lenf.trim().parse() {
-                    Ok(n) => n,
-                    Err(_) => { torn = true; break; }
-                };
-                if off_us + 74 + plen > dlen {
-                    torn = true;
-                    break;
-                }
-                let payload = &data[off_us + 74..off_us + 74 + plen];
-                if sha256_hex(payload) != hexh {
-                    torn = true;
-                    break;
-                }
+        let map = &mut sh.map;
+        let (fr_seg, fr_off, scanned) =
+            super::walindex::walk_frames(&prefix, wm_seg, wm_off, |_seg, _off, _len, _env, payload, hexh| {
                 if let Ok(text) = std::str::from_utf8(payload) {
-                    index_payload(&mut sh.map, text, hexh);
+                    index_payload(map, text, hexh);
                 }
-                off_us += 74 + plen;
-                scanned += 1;
-            }
-            let clean_end = !torn && off_us == dlen;
-            if clean_end && read_segment(&prefix, cur_seg + 1).is_some() {
-                cur_seg += 1;
-                off = 0;
-                continue;
-            }
-            bump_frontier(sh, cur_seg, off_us as i64);
-            break;
-        }
+            });
+        bump_frontier(sh, fr_seg, fr_off);
         scanned
     });
     Value::Int(scanned)
