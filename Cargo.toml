@@ -25,3 +25,10 @@ capnpc = "0.19"
 
 [dev-dependencies]
 tempfile = "3.0"
+
+# loom is only pulled in / compiled under `--cfg loom` (never in normal builds
+# or the standard test run). Used by tests/loom_arena.rs to model the Hot Mem
+# arena pin/fence/publish/scan/free protocol exhaustively under the C11 memory
+# model. Run: RUSTFLAGS="--cfg loom" cargo test --test loom_arena --release
+[target.'cfg(loom)'.dependencies]
+loom = "0.7"

@@ -65,7 +65,7 @@ use std::mem::{size_of, ManuallyDrop, MaybeUninit};
 use std::marker::PhantomData;
 use std::ptr;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// Tag bit: head field encodes inline value when bit 0 is set.
 /// Block pointers are always ≥8-byte aligned so bit 0 is always 0 for pointers.
@@ -240,7 +240,7 @@ impl<T> Cell<T> {
     // SAFETY: must be called by the single owning writer only.
     // =========================================================================
 
-    pub unsafe fn write(&mut self, value: T) -> WriteResult {
+    pub unsafe fn write(&self, value: T) -> WriteResult {
         let new_epoch = self.writer_epoch() + 1;
 
         if size_of::<T>() <= 4 {
@@ -267,7 +267,7 @@ impl<T> Cell<T> {
     // SAFETY: must be called by the single owning writer only.
     // =========================================================================
 
-    pub unsafe fn append(&mut self, value: T) -> WriteResult {
+    pub unsafe fn append(&self, value: T) -> WriteResult {
         let new_epoch = self.writer_epoch() + 1;
 
         let prev_bits = self.head.load(Ordering::Relaxed);
@@ -284,7 +284,7 @@ impl<T> Cell<T> {
 
     // ── Epoch-explicit variants used by Ring ──────────────────────────────────
 
-    pub unsafe fn append_with_epoch(&mut self, value: T, epoch: u64) -> WriteResult {
+    pub unsafe fn append_with_epoch(&self, value: T, epoch: u64) -> WriteResult {
         let prev_bits = self.head.load(Ordering::Relaxed);
         let prev: *const Block<T> = if prev_bits == 0 || prev_bits & INLINE_TAG != 0 {
             ptr::null()
@@ -296,7 +296,7 @@ impl<T> Cell<T> {
         WriteResult { epoch }
     }
 
-    pub unsafe fn write_with_epoch(&mut self, value: T, epoch: u64) -> WriteResult {
+    pub unsafe fn write_with_epoch(&self, value: T, epoch: u64) -> WriteResult {
         if size_of::<T>() <= 4 {
             self.head.store(encode_inline(value, epoch), Ordering::Release);
         } else {
@@ -1118,11 +1118,44 @@ struct RetiredEntry<T> {
 }
 
 pub struct BridgedCell<T> {
-    inner:   Cell<T>,
-    /// Heap blocks that have been superseded by a later mutable write but
-    /// might still be reachable through a live ReadRef. Drained by
-    /// reclaim().
-    retired: Vec<RetiredEntry<T>>,
+    inner: Cell<T>,
+}
+
+// SAFETY: BridgedCell now holds ONLY `Cell<T>`, whose entire cross-thread
+// surface is the atomic head word (see Cell's own `unsafe impl Sync`). There
+// is no interior-mutable writer-private state here anymore — the retired list
+// and sweep counters moved to `Writer<T>` (below). Send + Sync therefore
+// AUTO-DERIVE for `T: Send` via the field; no manual assertion, and in
+// particular no `UnsafeCell` blanket. This deletes the exact aliasing-UB site
+// the redesign targets: nothing ever forms `&mut BridgedCell`, so no
+// `noalias` claim is ever made over state a reader can concurrently touch.
+
+/// The single writer capability for a `BridgedCell`. Owns all writer-private
+/// state (the retired-block list and the reclaim back-off counters) and is the
+/// ONLY type exposing the mutating / reclaiming methods.
+///
+/// Enforced single-writer discipline (what makes the shared cell sound):
+///   * `!Clone`  — exactly one `Writer` exists per cell; a second cannot be
+///                 minted, so two concurrent writers is a *type error*, not a
+///                 documented convention.
+///   * `!Sync`   — auto (holds a `Vec` of raw `*const Block` pointers); a
+///                 `&Writer` cannot cross threads, so two threads cannot
+///                 co-call the `&mut self` mutators even by sharing a ref.
+///   * `Send`    — via the narrow `unsafe impl` below, so the one handle can
+///                 be MOVED onto the dedicated writer thread (e.g. the hotmem
+///                 janitor) at startup. Moving transfers sole ownership; it
+///                 never shares.
+///
+/// The mutators take `&mut self`, so even within the writer thread the borrow
+/// checker forbids overlapping writes. The widest `&mut` ever formed is
+/// `&mut Vec<RetiredEntry>` — memory no reader ever references.
+pub struct Writer<T> {
+    cell:          Arc<BridgedCell<T>>,
+    /// Heap blocks superseded by a later mutable write but possibly still
+    /// reachable through a live ReadRef. Drained by reclaim(). Writer-private:
+    /// no reader ever references this, which is why a plain `Vec` (not an
+    /// `UnsafeCell`) is sound here.
+    retired:       Vec<RetiredEntry<T>>,
     /// Writes remaining before the next watermark-triggered reclaim attempt.
     /// Non-zero when back-off is active (floors were starved on last sweep).
     sweep_skip:    u32,
@@ -1131,17 +1164,40 @@ pub struct BridgedCell<T> {
     sweep_backoff: u32,
 }
 
-unsafe impl<T: Send> Send for BridgedCell<T> {}
-unsafe impl<T: Send> Sync for BridgedCell<T> {}
+// SAFETY: `Writer<T>` holds an `Arc<BridgedCell<T>>` (Send for T: Send) and a
+// `Vec<RetiredEntry<T>>` of raw block pointers the writer owns EXCLUSIVELY.
+// Sending the whole `Writer` to another thread moves that sole ownership
+// wholesale — it never creates a second reference to any block, so no
+// cross-thread aliasing arises. `Sync` is deliberately NOT implemented, so a
+// `&Writer` cannot cross threads.
+unsafe impl<T: Send> Send for Writer<T> {}
 
 impl<T> BridgedCell<T> {
-    pub fn new() -> Self {
-        BridgedCell { inner: Cell::new(), retired: Vec::new(), sweep_skip: 0, sweep_backoff: 0 }
+    /// Construct a shared cell and its unique writer capability.
+    ///
+    /// Returns `(Arc<BridgedCell<T>>, Writer<T>)`: clone the `Arc` for every
+    /// reader thread; move the single `Writer` onto the sole writer thread.
+    /// There is no way to obtain a second `Writer` for the same cell.
+    pub fn new() -> (Arc<BridgedCell<T>>, Writer<T>) {
+        let cell = Arc::new(BridgedCell { inner: Cell::new() });
+        let writer = Writer {
+            cell:          Arc::clone(&cell),
+            retired:       Vec::new(),
+            sweep_skip:    0,
+            sweep_backoff: 0,
+        };
+        (cell, writer)
     }
 
     /// Inner Cell — for callers that need cell-level features (epoch(),
     /// chain(), etc.) without going through the bridge.
     pub fn inner(&self) -> &Cell<T> { &self.inner }
+}
+
+impl<T> Writer<T> {
+    /// The shared cell this writer feeds — for reads on the writer thread, or
+    /// to clone additional reader `Arc`s.
+    pub fn cell(&self) -> &Arc<BridgedCell<T>> { &self.cell }
 
     /// Current count of retired-but-not-yet-freed blocks.
     /// Used by reclaim_if_watermark and by tests.
@@ -1157,8 +1213,8 @@ impl<T> BridgedCell<T> {
     // SAFETY: single writer per cell only — same as Cell::write.
     // =========================================================================
     pub unsafe fn write(&mut self, value: T) -> WriteResult {
-        let old_bits = self.inner.head.load(Ordering::Relaxed);
-        let result = unsafe { self.inner.write(value) };
+        let old_bits = self.cell.inner.head.load(Ordering::Relaxed);
+        let result = unsafe { self.cell.inner.write(value) };
         if old_bits != 0 && (old_bits & INLINE_TAG == 0) {
             let old_ptr = old_bits as *const Block<T>;
             // SAFETY: old_ptr came out of Box::into_raw via Cell::write/append
@@ -1203,8 +1259,14 @@ impl<T> BridgedCell<T> {
     // SAFETY: single writer per cell only — same as write().
     // =========================================================================
     pub unsafe fn write_lazy(&mut self, value: T, registry: &ReaderRegistry) -> WriteResult {
-        let old_bits = self.inner.head.load(Ordering::Relaxed);
-        let result = unsafe { self.inner.write(value) };
+        let old_bits = self.cell.inner.head.load(Ordering::Relaxed);
+        let result = unsafe { self.cell.inner.write(value) };
+
+        // HAZARD-POINTER STORE-LOAD BARRIER (writer side, bug 2): pairs with
+        // read_ref's fence — orders the new-head publish before we observe
+        // reader pins (has_any_reader / floor_min below), closing the SB race
+        // that would free a block a live reader still points at.
+        std::sync::atomic::fence(Ordering::SeqCst);
 
         // Inline or first-ever-write: no Block to dispose of.
         if old_bits == 0 || (old_bits & INLINE_TAG != 0) {
@@ -1248,8 +1310,8 @@ impl<T> BridgedCell<T> {
     // previously published Block epoch for this cell.
     // =========================================================================
     pub unsafe fn write_with_epoch(&mut self, value: T, epoch: u64) -> WriteResult {
-        let old_bits = self.inner.head.load(Ordering::Relaxed);
-        let result = unsafe { self.inner.write_with_epoch(value, epoch) };
+        let old_bits = self.cell.inner.head.load(Ordering::Relaxed);
+        let result = unsafe { self.cell.inner.write_with_epoch(value, epoch) };
         if old_bits != 0 && (old_bits & INLINE_TAG == 0) {
             let old_ptr = old_bits as *const Block<T>;
             let retired_epoch = unsafe { (*old_ptr).epoch };
@@ -1268,9 +1330,11 @@ impl<T> BridgedCell<T> {
     // SAFETY: single writer per cell only.
     // =========================================================================
     pub unsafe fn append(&mut self, value: T) -> WriteResult {
-        unsafe { self.inner.append(value) }
+        unsafe { self.cell.inner.append(value) }
     }
+}
 
+impl<T> BridgedCell<T> {
     // =========================================================================
     // READ (owned clone) — MATERIALISE-OUT, pins NOTHING
     //
@@ -1323,6 +1387,18 @@ impl<T> BridgedCell<T> {
         //    block) until step 4 tightens the floor to the actual epoch.
         slot.store(1, Ordering::Release);
 
+        // HAZARD-POINTER STORE-LOAD BARRIER (AXVERITY_HOTMEM_ARENA_SOUNDNESS_
+        // FIX_V1, bug 2): without this, the pin store above and the head load
+        // below form a store-buffering (SB) pattern with the writer's (head
+        // store; floor scan). Release/Acquire alone permits BOTH sides to miss
+        // each other, so the writer can free a block this reader is about to
+        // dereference (UAF). SeqCst fences on both sides forbid the SB outcome.
+        // This is the canonical hazard-pointer fence; it is load-bearing, not a
+        // belt-and-braces addition — confirmed by the probe going red→green
+        // with it (masked in the old 66 tests only because their Mutex is a
+        // full barrier).
+        std::sync::atomic::fence(Ordering::SeqCst);
+
         // 2. Acquire head — synchronises with writer's Release store.
         let bits = self.inner.head.load(Ordering::Acquire);
         if bits == 0 {
@@ -1371,7 +1447,9 @@ impl<T> BridgedCell<T> {
             })
         }
     }
+}
 
+impl<T> Writer<T> {
     // =========================================================================
     // RECLAIM — fresh Acquire scan, then free retired blocks below floor_min
     //
@@ -1386,6 +1464,9 @@ impl<T> BridgedCell<T> {
     // Returns the number of blocks actually freed.
     // =========================================================================
     pub fn reclaim(&mut self, registry: &ReaderRegistry) -> usize {
+        // Store-load barrier pairing with read_ref's pin fence (see write_lazy,
+        // bug 2).
+        std::sync::atomic::fence(Ordering::SeqCst);
         let floor_min = registry.floor_min();
         let mut freed = 0usize;
         let mut i = 0;
@@ -1440,28 +1521,51 @@ impl<T> BridgedCell<T> {
     }
 }
 
-impl<T> Default for BridgedCell<T> {
-    fn default() -> Self { Self::new() }
-}
-
 impl<T> Drop for BridgedCell<T> {
     fn drop(&mut self) {
-        // Free everything still on the retired list. By the time Drop
-        // runs there are no live ReadRefs (they would borrow self).
-        for entry in self.retired.drain(..) {
-            unsafe { let _ = Box::from_raw(entry.ptr as *mut Block<T>); }
-        }
-        // Free the current head if it is a heap Block (a Block at head
-        // from append() chains is also freed here — the prev chain is
-        // not walked; chain-truncation is explicitly out of scope, so
-        // append-chain blocks behind head remain leaked, matching the
-        // pre-bridge baseline behaviour).
+        // The shared cell is dropped only when the LAST Arc is released —
+        // which includes the Writer's own clone (the Writer holds one). So by
+        // the time this runs there is no live Writer and no live reader (a
+        // ReadRef borrows the Arc), and freeing the current head Block is
+        // safe. Free the head if it is a heap Block (a Block at head from an
+        // append() chain is freed here too — the prev chain is not walked;
+        // chain-truncation is out of scope, so append-chain blocks behind head
+        // remain leaked, matching the pre-bridge baseline).
         let bits = self.inner.head.load(Ordering::Relaxed);
         if bits != 0 && (bits & INLINE_TAG == 0) {
             unsafe { let _ = Box::from_raw(bits as *mut Block<T>); }
             // Stop any future loader from observing the dangling pointer.
             self.inner.head.store(0, Ordering::Relaxed);
         }
+    }
+}
+
+impl<T> Drop for Writer<T> {
+    fn drop(&mut self) {
+        // LEAK-ON-DROP (AXVERITY_HOTMEM_ARENA_SOUNDNESS_FIX_V1, bug 3).
+        //
+        // We deliberately DO NOT free the retired blocks here. A `ReadRef`
+        // holds raw pointers into a block, NOT a borrow of the Writer, so the
+        // type system does not prevent a live `ReadRef` into a retired block at
+        // drop time — freeing here races that reader (bug 3, caught by Miri).
+        // Freeing was safe in the pre-split `&mut self` design ONLY because the
+        // borrow checker serialised it against reads; the Arc split — which
+        // makes concurrent reader threads first-class — removed that guarantee.
+        //
+        // Leaking is sound and effectively free because `Writer::drop` is
+        // at-most-once-per-process-lifetime (TRACED, CONFIRMED): the hotmem
+        // arena is a process-global `OnceLock` cell fed by ONE janitor entry
+        // thread (spawned once by the `--entries` driver, never respawned;
+        // `OnceLock` forbids mid-process arena recreation), and `AdaptiveCell`'s
+        // Writer is a startup-time testkit sink dropped — if ever — only at
+        // `process::exit`. In every case the Writer outlives all readers, or
+        // the whole process is exiting, so the leaked `Block` allocations are
+        // reclaimed by the OS at exit. Steady-state reclamation still happens
+        // via `reclaim` / `write_lazy`'s immediate-free; only the residual
+        // retired list AT TEARDOWN is intentionally leaked.
+        //
+        // The `retired` Vec's own backing storage drops normally after this;
+        // only the heap `Block` allocations the raw pointers refer to leak.
     }
 }
 
@@ -1816,8 +1920,9 @@ pub struct AdaptiveCell<T: Copy> {
     ctrl:        AtomicU64,
     /// Cold-mode (and hot-mode mirror) inline slot. Always current.
     slot:        UnsafeCell<MaybeUninit<T>>,
-    /// Hot-mode block path + retired list.
-    hot:         BridgedCell<T>,
+    /// Hot-mode block path + retired list — the single-owner Writer capability
+    /// (carries its own reader `Arc`; reached for pinned reads via `hot.cell()`).
+    hot:         Writer<T>,
     /// Writer-private hysteresis counter (no atomicity needed).
     cool_streak: u64,
     /// Writer-private hot-write count for periodic sweeping.
@@ -1829,10 +1934,14 @@ unsafe impl<T: Copy + Send> Sync for AdaptiveCell<T> {}
 
 impl<T: Copy> AdaptiveCell<T> {
     pub fn new() -> Self {
+        // AdaptiveCell owns its arena privately (single-owner): keep only the
+        // Writer; the paired reader Arc stays alive via the Writer's own clone,
+        // and read_pinned reaches it through `self.hot.cell()`.
+        let (_shared, hot) = BridgedCell::new();
         AdaptiveCell {
             ctrl:        AtomicU64::new(0),
             slot:        UnsafeCell::new(MaybeUninit::uninit()),
-            hot:         BridgedCell::new(),
+            hot,
             cool_streak: 0,
             hot_writes:  0,
         }
@@ -1976,7 +2085,7 @@ impl<T: Copy> AdaptiveCell<T> {
                     std::thread::yield_now();
                     continue;
                 }
-                match self.hot.read_ref(&handle.floors, last_epoch) {
+                match self.hot.cell().read_ref(&handle.floors, last_epoch) {
                     Some(r) => {
                         let c1 = self.ctrl.load(Ordering::Acquire);
                         if c1 & MODE_HOT == 0 {
@@ -2748,7 +2857,6 @@ mod bridge_tests {
     use super::*;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AO};
-    use std::sync::Mutex;
     use std::thread;
     use std::time::Duration;
 
@@ -2783,18 +2891,19 @@ mod bridge_tests {
     fn adversarial_a_readref_held_concurrent_writes_and_reclaim() {
         let drops    = Arc::new(AtomicU64::new(0));
         let registry = Arc::new(ReaderRegistry::new());
-        let cell     = Arc::new(Mutex::new(BridgedCell::<Tracked>::new()));
+        // Real lock-free shape: one shared cell + one Writer. write() and
+        // reclaim() are BOTH Writer &mut methods, so they cannot run on two
+        // separate threads — they are interleaved on the single writer thread
+        // (which still races the pinned reader on the main thread; that is the
+        // property under test — nothing is freed below a pinned floor).
+        let (cell, mut writer) = BridgedCell::<Tracked>::new();
 
         // Seed cell at epoch 1.
-        unsafe { cell.lock().unwrap().write(Tracked::new(42, &drops)); }
+        unsafe { writer.write(Tracked::new(42, &drops)); }
 
         let handle = registry.acquire();
-        // Acquire ReadRef under the lock, then release the lock — we want
-        // the writer/reclaimer to run concurrently while we hold r.
-        let r = {
-            let c = cell.lock().unwrap();
-            c.read_ref(&handle, 0).expect("must read")
-        };
+        // Pin a ReadRef on the main thread while the writer thread hammers.
+        let r = cell.read_ref(&handle, 0).expect("must read");
         let pinned_epoch = r.epoch;
         let pinned_value = r.value;
         assert_eq!(pinned_value, 42);
@@ -2804,41 +2913,25 @@ mod bridge_tests {
 
         let stop = Arc::new(AtomicBool::new(false));
 
-        // Writer thread: hammers writes while r is pinned at epoch 1.
-        // Every write retires the previous block; reclaim can only free
-        // blocks with retired_epoch < floor_min == pinned_epoch == 1.
-        // Since epochs start at 1, nothing < 1 → reclaim frees nothing.
-        let cw = Arc::clone(&cell);
+        // Writer thread: hammers write + reclaim while r is pinned at epoch 1.
+        // Every write retires the previous block; reclaim can only free blocks
+        // with retired_epoch < floor_min == pinned_epoch == 1. Since epochs
+        // start at 1, nothing < 1 → reclaim frees nothing while pinned.
         let dw = Arc::clone(&drops);
         let sw = Arc::clone(&stop);
-        let writer = thread::spawn(move || {
+        let rw = Arc::clone(&registry);
+        let writer_thread = thread::spawn(move || {
             let mut i = 1u64;
             while !sw.load(AO::Acquire) {
-                {
-                    let mut c = cw.lock().unwrap();
-                    unsafe { c.write(Tracked::new(1000 + i, &dw)); }
-                }
+                unsafe { writer.write(Tracked::new(1000 + i, &dw)); }
+                writer.reclaim(&rw);   // concurrent reclaim, must free nothing
                 i += 1;
                 thread::yield_now();
             }
-            i - 1   // number of writes from this thread
+            (writer, i - 1)   // hand the Writer back + number of writes
         });
 
-        // Reclaimer thread: hammers reclaim() concurrently.
-        let cr = Arc::clone(&cell);
-        let rr = Arc::clone(&registry);
-        let sr = Arc::clone(&stop);
-        let reclaimer = thread::spawn(move || {
-            let mut sweeps = 0u64;
-            while !sr.load(AO::Acquire) {
-                cr.lock().unwrap().reclaim(&rr);
-                sweeps += 1;
-                thread::yield_now();
-            }
-            sweeps
-        });
-
-        // Reader: dereference r repeatedly while writer/reclaimer hammer.
+        // Reader: dereference r repeatedly while the writer thread hammers.
         // r.value must stay == pinned_value (no UAF, no mutation of freed memory).
         for _ in 0..20_000 {
             let v = r.value;
@@ -2847,8 +2940,7 @@ mod bridge_tests {
         }
 
         stop.store(true, AO::Release);
-        let n_writes  = writer.join().unwrap();
-        let _ = reclaimer.join().unwrap();
+        let (mut writer, n_writes) = writer_thread.join().unwrap();
 
         // While r was pinned at epoch 1, no retired block could be freed
         // (every retired_epoch ≥ 1 ≥ floor_min). drops counter unchanged.
@@ -2859,7 +2951,7 @@ mod bridge_tests {
 
         // Now drop r → floor goes to MAX → reclaim can free everything.
         drop(r);
-        let freed = cell.lock().unwrap().reclaim(&registry);
+        let freed = writer.reclaim(&registry);
         // The current head (epoch 1 + n_writes) is alive; everything else
         // (1 .. 1 + n_writes - 1 in some order) was retired and now freed.
         assert_eq!(freed as u64, n_writes,
@@ -2868,7 +2960,8 @@ mod bridge_tests {
             "{} Tracked dropped via reclaim sweep", n_writes);
 
         drop(handle);
-        drop(cell);   // BridgedCell::Drop frees the current head, +1 drop
+        drop(cell);
+        drop(writer);   // last Arc → BridgedCell::Drop frees the current head, +1
         assert_eq!(drops.load(AO::Relaxed), n_writes + 1,
             "after cell drop, all Tracked accounted for");
     }
@@ -2880,33 +2973,34 @@ mod bridge_tests {
         let drops    = Arc::new(AtomicU64::new(0));
         let registry = ReaderRegistry::new();
         let handle   = registry.acquire();
-        let mut cell: BridgedCell<Tracked> = BridgedCell::new();
+        let (cell, mut writer) = BridgedCell::<Tracked>::new();
 
-        unsafe { cell.write(Tracked::new(1, &drops)); }     // epoch 1
+        unsafe { writer.write(Tracked::new(1, &drops)); }     // epoch 1
         let r = cell.read_ref(&handle, 0).unwrap();
         assert_eq!(r.value, 1);
         assert_eq!(r.epoch, 1);
 
-        unsafe { cell.write(Tracked::new(2, &drops)); }     // epoch 2, retires block 1
-        assert_eq!(cell.retired_len(), 1);
+        unsafe { writer.write(Tracked::new(2, &drops)); }     // epoch 2, retires block 1
+        assert_eq!(writer.retired_len(), 1);
 
         // Sweep while pinned — must NOT free.
-        let freed_while_pinned = cell.reclaim(&registry);
+        let freed_while_pinned = writer.reclaim(&registry);
         assert_eq!(freed_while_pinned, 0);
-        assert_eq!(cell.retired_len(), 1, "still pinned");
+        assert_eq!(writer.retired_len(), 1, "still pinned");
         assert_eq!(drops.load(AO::Relaxed), 0, "no Tracked dropped yet");
 
         // Release the ReadRef.
         drop(r);
 
         // Sweep again — block 1 must be freed.
-        let freed = cell.reclaim(&registry);
+        let freed = writer.reclaim(&registry);
         assert_eq!(freed, 1, "block freed after ReadRef dropped");
-        assert_eq!(cell.retired_len(), 0);
+        assert_eq!(writer.retired_len(), 0);
         assert_eq!(drops.load(AO::Relaxed), 1, "one Tracked dropped");
 
         drop(handle);
         drop(cell);
+        drop(writer);   // last Arc → BridgedCell::Drop frees the current head
         assert_eq!(drops.load(AO::Relaxed), 2, "current head also dropped");
     }
 
@@ -2917,9 +3011,9 @@ mod bridge_tests {
         let drops    = Arc::new(AtomicU64::new(0));
         let registry = ReaderRegistry::new();
         let _handle  = registry.acquire();   // claim a slot so any pinning would show
-        let mut cell: BridgedCell<Tracked> = BridgedCell::new();
+        let (cell, mut writer) = BridgedCell::<Tracked>::new();
 
-        unsafe { cell.write(Tracked::new(42, &drops)); }    // epoch 1
+        unsafe { writer.write(Tracked::new(42, &drops)); }    // epoch 1
 
         // Pre-condition: nobody pinning anything.
         assert_eq!(registry.floor_min(), u64::MAX,
@@ -2933,6 +3027,7 @@ mod bridge_tests {
             _ => panic!("expected value"),
         };
         assert_eq!(owned.value, 42);
+        // (read stays on the shared cell; write/reclaim on the writer)
 
         // Floor still MAX — read() did not pin.
         assert_eq!(registry.floor_min(), u64::MAX,
@@ -2942,9 +3037,9 @@ mod bridge_tests {
         // gets retired by the first new write and freed by the sweep —
         // even though `owned` is still alive.
         for i in 1..=10u64 {
-            unsafe { cell.write(Tracked::new(100 + i, &drops)); }
+            unsafe { writer.write(Tracked::new(100 + i, &drops)); }
         }
-        let freed = cell.reclaim(&registry);
+        let freed = writer.reclaim(&registry);
         // We did 10 writes after the initial seed → 10 retirements →
         // 10 blocks freeable (floor_min == MAX).
         assert_eq!(freed, 10, "all 10 retired blocks freed despite owned read");
@@ -2958,7 +3053,8 @@ mod bridge_tests {
         drop(owned);                       // +1 drop (the owned clone)
         assert_eq!(drops.load(AO::Relaxed), 11);
 
-        drop(cell);                        // +1 drop (current head)
+        drop(cell);
+        drop(writer);                      // last Arc → +1 drop (current head)
         assert_eq!(drops.load(AO::Relaxed), 12,
             "11 writes total + 1 owned clone = 12 Tracked drops");
     }
@@ -2968,7 +3064,7 @@ mod bridge_tests {
     #[test]
     fn adversarial_d_floor_min_reflects_slowest_reader() {
         let registry = ReaderRegistry::new();
-        let mut cell: BridgedCell<u64> = BridgedCell::new();
+        let (cell, mut writer) = BridgedCell::<u64>::new();
 
         let mut handles: Vec<ReaderHandle> = Vec::new();
         let mut refs:    Vec<ReadRef<u64>> = Vec::new();
@@ -2976,7 +3072,7 @@ mod bridge_tests {
 
         // Stagger: write epoch i, take ReadRef at epoch i, keep it live.
         for i in 1..=5u64 {
-            unsafe { cell.write(i * 10); }
+            unsafe { writer.write(i * 10); }
             let h = registry.acquire();
             let r = cell.read_ref(&h, 0).expect("must read");
             assert_eq!(r.epoch, i);
@@ -3014,9 +3110,11 @@ mod bridge_tests {
     #[test]
     fn adversarial_e_panicking_reader_releases_slot() {
         let registry = Arc::new(ReaderRegistry::new());
-        let cell     = Arc::new(Mutex::new(BridgedCell::<u64>::new()));
+        // Writer stays on the main thread (the sole writer); the panicking
+        // reader gets an Arc clone of the shared cell for read_ref.
+        let (cell, mut writer) = BridgedCell::<u64>::new();
 
-        unsafe { cell.lock().unwrap().write(42u64); }   // epoch 1, Block path (u64 > 4B)
+        unsafe { writer.write(42u64); }   // epoch 1, Block path (u64 > 4B)
 
         // Silence panic output for this one expected panic.
         let prev_hook = std::panic::take_hook();
@@ -3026,7 +3124,7 @@ mod bridge_tests {
         let rr = Arc::clone(&registry);
         let panicking = thread::spawn(move || {
             let handle = rr.acquire();
-            let _r = cr.lock().unwrap().read_ref(&handle, 0).expect("must read");
+            let _r = cr.read_ref(&handle, 0).expect("must read");
             // At this point: handle's slot pins epoch 1.
             assert_ne!(rr.floor_min(), u64::MAX);
             panic!("simulated reader panic — should unwind ReadRef and Handle drops");
@@ -3044,8 +3142,8 @@ mod bridge_tests {
             "panicked reader must have released its slot");
 
         // Reclamation now proceeds. Write again to retire block 1, then sweep.
-        unsafe { cell.lock().unwrap().write(43u64); }
-        let freed = cell.lock().unwrap().reclaim(&registry);
+        unsafe { writer.write(43u64); }
+        let freed = writer.reclaim(&registry);
         assert_eq!(freed, 1, "block freeable after panicked reader's slot was released");
     }
 
@@ -3057,40 +3155,32 @@ mod bridge_tests {
 
         let drops      = Arc::new(AtomicU64::new(0));
         let registry   = Arc::new(ReaderRegistry::new());
-        let cell       = Arc::new(Mutex::new(BridgedCell::<Tracked>::new()));
+        // One shared cell + one Writer. write() and reclaim_if_watermark() are
+        // both Writer &mut methods, so they interleave on the single writer
+        // thread; the 4 reader threads share Arc clones. This is the real
+        // lock-free production shape (was Arc<Mutex<BridgedCell>>).
+        let (cell, mut writer) = BridgedCell::<Tracked>::new();
         let n_writes   = Arc::new(AtomicU64::new(0));
         let stop       = Arc::new(AtomicBool::new(false));
         let overflow_before = HOLD_STACK_OVERFLOW_HITS.load(AO::Relaxed);
 
         // Seed.
-        unsafe { cell.lock().unwrap().write(Tracked::new(0, &drops)); }
+        unsafe { writer.write(Tracked::new(0, &drops)); }
         n_writes.fetch_add(1, AO::Relaxed);
 
-        // Writer.
-        let cw = Arc::clone(&cell);
+        // Writer + opportunistic reclaimer (interleaved on the one writer
+        // thread). Hands the Writer back on join for the final sweep.
         let dw = Arc::clone(&drops);
         let nw = Arc::clone(&n_writes);
-        let writer = thread::spawn(move || {
+        let rw = Arc::clone(&registry);
+        let writer_thread = thread::spawn(move || {
             for i in 1..=TARGET_WRITES {
-                {
-                    let mut c = cw.lock().unwrap();
-                    unsafe { c.write(Tracked::new(i, &dw)); }
-                }
+                unsafe { writer.write(Tracked::new(i, &dw)); }
                 nw.fetch_add(1, AO::Relaxed);
+                writer.reclaim_if_watermark(&rw);
                 if i % 1024 == 0 { thread::yield_now(); }
             }
-        });
-
-        // Reclaimer (uses the watermark gate opportunistically, plus a
-        // final unconditional sweep at exit).
-        let cr = Arc::clone(&cell);
-        let rr = Arc::clone(&registry);
-        let sr = Arc::clone(&stop);
-        let reclaimer = thread::spawn(move || {
-            while !sr.load(AO::Acquire) {
-                cr.lock().unwrap().reclaim_if_watermark(&rr);
-                thread::yield_now();
-            }
+            writer
         });
 
         // Multiple reader threads, each holding a transient ReadRef briefly.
@@ -3104,13 +3194,10 @@ mod bridge_tests {
                 let mut last_epoch = 0u64;
                 let mut reads = 0u64;
                 while !sr2.load(AO::Acquire) {
-                    // Acquire ReadRef under the lock, then USE it briefly
-                    // outside the lock (this is the realistic pattern the
-                    // bridge is designed for — pin then release lock).
-                    let r_opt = {
-                        let c = cr2.lock().unwrap();
-                        c.read_ref(&handle, last_epoch)
-                    };
+                    // Pin a ReadRef and use it briefly (the realistic pattern
+                    // the bridge is designed for). No lock — the shared cell is
+                    // read concurrently with the writer via the atomic head.
+                    let r_opt = cr2.read_ref(&handle, last_epoch);
                     if let Some(r) = r_opt {
                         last_epoch = r.epoch;
                         let _v = r.value;
@@ -3123,19 +3210,20 @@ mod bridge_tests {
             }));
         }
 
-        writer.join().unwrap();
+        let mut writer = writer_thread.join().unwrap();
         stop.store(true, AO::Release);
-        let _ = reclaimer.join().unwrap();
         let total_reads: u64 = readers.into_iter()
             .map(|h| h.join().unwrap()).sum();
 
         // No more readers. One last full sweep to drain the retired list.
-        let final_freed = cell.lock().unwrap().reclaim(&registry);
+        let final_freed = writer.reclaim(&registry);
 
         let writes_total = n_writes.load(AO::Relaxed);
         let drops_before_cell = drops.load(AO::Relaxed);
 
-        drop(cell);  // BridgedCell::Drop frees current head + any leftovers.
+        drop(cell);
+        drop(writer);  // last Arc → Writer::Drop drains retired, then
+                       // BridgedCell::Drop frees current head + any leftovers.
 
         let drops_after = drops.load(AO::Relaxed);
         let overflow_after = HOLD_STACK_OVERFLOW_HITS.load(AO::Relaxed);
@@ -3169,11 +3257,11 @@ mod bridge_tests {
         // oldest, and dropping them all releases the slot to MAX.
         let registry = ReaderRegistry::new();
         let handle = registry.acquire();
-        let mut cell: BridgedCell<u64> = BridgedCell::new();
+        let (cell, mut writer) = BridgedCell::<u64>::new();
 
         let mut refs = vec![];
         for i in 1..=8u64 {
-            unsafe { cell.write(i); }
+            unsafe { writer.write(i); }
             refs.push(cell.read_ref(&handle, 0).expect("must read"));
         }
         // If any push overflowed, the conservative-fallback floor would
@@ -3194,7 +3282,7 @@ mod bridge_tests {
         let drops    = Arc::new(AtomicU64::new(0));
         let registry = ReaderRegistry::new();
         let handle   = registry.acquire();
-        let mut cell: BridgedCell<Tracked> = BridgedCell::new();
+        let (cell, mut writer) = BridgedCell::<Tracked>::new();
 
         let before = HOLD_STACK_OVERFLOW_HITS.load(AO::Relaxed);
 
@@ -3202,7 +3290,7 @@ mod bridge_tests {
         let mut refs = vec![];
         let mut epochs = vec![];
         for i in 1..=12u64 {
-            unsafe { cell.write(Tracked::new(i, &drops)); }
+            unsafe { writer.write(Tracked::new(i, &drops)); }
             let r = cell.read_ref(&handle, 0).expect("must read");
             epochs.push(r.epoch);
             refs.push(r);
@@ -3219,7 +3307,7 @@ mod bridge_tests {
         assert!(floor <= 1, "floor_min {} must pin epoch 1", floor);
 
         // Reclaim while pinned: must free NOTHING.
-        let freed_while_pinned = cell.reclaim(&registry);
+        let freed_while_pinned = writer.reclaim(&registry);
         assert_eq!(freed_while_pinned, 0);
         assert_eq!(drops.load(AO::Relaxed), 0);
 
@@ -3229,10 +3317,11 @@ mod bridge_tests {
         assert_eq!(registry.floor_min(), u64::MAX);
 
         // Sweep — everything should be freeable now.
-        let freed = cell.reclaim(&registry);
+        let freed = writer.reclaim(&registry);
         assert_eq!(freed, 11, "11 retired blocks freed (current head not retired)");
         drop(handle);
         drop(cell);
+        drop(writer);   // last Arc → BridgedCell::Drop frees the current head
         assert_eq!(drops.load(AO::Relaxed), 12, "12 Tracked dropped total");
     }
 
@@ -3257,27 +3346,28 @@ mod bridge_tests {
     fn write_lazy_level_b_frees_immediately_when_no_reader_ever() {
         let drops    = Arc::new(AtomicU64::new(0));
         let registry = ReaderRegistry::new();
-        let mut cell: BridgedCell<Tracked> = BridgedCell::new();
+        let (cell, mut writer) = BridgedCell::<Tracked>::new();
 
         assert!(!registry.has_any_reader(), "no handle issued yet");
 
-        unsafe { cell.write_lazy(Tracked::new(1, &drops), &registry); }
+        unsafe { writer.write_lazy(Tracked::new(1, &drops), &registry); }
         // First write — nothing to retire (no old block).
-        assert_eq!(cell.retired_len(), 0);
+        assert_eq!(writer.retired_len(), 0);
         assert_eq!(drops.load(AO::Relaxed), 0);
 
         // Subsequent writes: old block gets freed IMMEDIATELY (Level B)
         // because !registry.has_any_reader(). Retired list stays empty.
         for i in 2..=50u64 {
-            unsafe { cell.write_lazy(Tracked::new(i, &drops), &registry); }
-            assert_eq!(cell.retired_len(), 0,
+            unsafe { writer.write_lazy(Tracked::new(i, &drops), &registry); }
+            assert_eq!(writer.retired_len(), 0,
                 "Level B: retired list must stay empty when no reader ever existed");
         }
 
         // 49 old blocks freed (writes 2..=50 each superseded the previous).
         assert_eq!(drops.load(AO::Relaxed), 49);
 
-        drop(cell);  // frees current head, +1 drop
+        drop(cell);
+        drop(writer);  // last Arc → frees current head, +1 drop
         assert_eq!(drops.load(AO::Relaxed), 50);
     }
 
@@ -3288,22 +3378,23 @@ mod bridge_tests {
         let drops    = Arc::new(AtomicU64::new(0));
         let registry = ReaderRegistry::new();
         let _handle  = registry.acquire();   // flips any_handle_ever → Level B disabled
-        let mut cell: BridgedCell<Tracked> = BridgedCell::new();
+        let (cell, mut writer) = BridgedCell::<Tracked>::new();
 
         assert!(registry.has_any_reader());
 
         // No live ReadRef → all slots are u64::MAX → floor_min = MAX.
         // Level A: floor_min > old_epoch (MAX > anything), so every old
         // block is freed immediately — retired list stays empty.
-        unsafe { cell.write_lazy(Tracked::new(1, &drops), &registry); }
+        unsafe { writer.write_lazy(Tracked::new(1, &drops), &registry); }
         for i in 2..=30u64 {
-            unsafe { cell.write_lazy(Tracked::new(i, &drops), &registry); }
-            assert_eq!(cell.retired_len(), 0,
+            unsafe { writer.write_lazy(Tracked::new(i, &drops), &registry); }
+            assert_eq!(writer.retired_len(), 0,
                 "Level A: floor_min == MAX, retired list must stay empty");
         }
         assert_eq!(drops.load(AO::Relaxed), 29, "29 old blocks freed immediately");
 
         drop(cell);
+        drop(writer);
         assert_eq!(drops.load(AO::Relaxed), 30);
     }
 
@@ -3314,17 +3405,17 @@ mod bridge_tests {
         let drops    = Arc::new(AtomicU64::new(0));
         let registry = ReaderRegistry::new();
         let handle   = registry.acquire();
-        let mut cell: BridgedCell<Tracked> = BridgedCell::new();
+        let (cell, mut writer) = BridgedCell::<Tracked>::new();
 
-        unsafe { cell.write_lazy(Tracked::new(1, &drops), &registry); }     // epoch 1
+        unsafe { writer.write_lazy(Tracked::new(1, &drops), &registry); }     // epoch 1
         let r = cell.read_ref(&handle, 0).unwrap();
         assert_eq!(r.epoch, 1);
         assert_eq!(registry.floor_min(), 1);
 
         // Now write — old block (epoch 1) is pinned. Level A fails
         // (floor_min == 1 not > old_epoch == 1) → must retire.
-        unsafe { cell.write_lazy(Tracked::new(2, &drops), &registry); }
-        assert_eq!(cell.retired_len(), 1,
+        unsafe { writer.write_lazy(Tracked::new(2, &drops), &registry); }
+        assert_eq!(writer.retired_len(), 1,
             "must retire when floor_min ≤ old_epoch");
         assert_eq!(drops.load(AO::Relaxed), 0, "block 1 still alive");
 
@@ -3333,18 +3424,19 @@ mod bridge_tests {
 
         // Existing retired entry still needs an explicit reclaim sweep —
         // write_lazy only decides about the CURRENT old block.
-        unsafe { cell.write_lazy(Tracked::new(3, &drops), &registry); }
+        unsafe { writer.write_lazy(Tracked::new(3, &drops), &registry); }
         // Block 2 was just superseded; floor_min == MAX > 2, so freed.
         // Retired list still holds block 1 from before (unchanged).
-        assert_eq!(cell.retired_len(), 1);
+        assert_eq!(writer.retired_len(), 1);
         assert_eq!(drops.load(AO::Relaxed), 1, "block 2 freed by Level A");
 
-        let freed = cell.reclaim(&registry);
+        let freed = writer.reclaim(&registry);
         assert_eq!(freed, 1, "reclaim sweep drains block 1");
         assert_eq!(drops.load(AO::Relaxed), 2);
 
         drop(handle);
         drop(cell);
+        drop(writer);
         assert_eq!(drops.load(AO::Relaxed), 3);
     }
 
@@ -3359,24 +3451,25 @@ mod bridge_tests {
 
         let drops    = Arc::new(AtomicU64::new(0));
         let registry = Arc::new(ReaderRegistry::new());
-        let cell     = Arc::new(Mutex::new(BridgedCell::<Tracked>::new()));
+        // One shared cell + one Writer: the Writer moves onto the writer thread
+        // (returned on join for the final sweep); the reader thread shares an
+        // Arc clone. No Mutex — the real lock-free shape.
+        let (cell, mut writer) = BridgedCell::<Tracked>::new();
         let n_writes = Arc::new(AtomicU64::new(0));
         let stop     = Arc::new(AtomicBool::new(false));
 
-        unsafe { cell.lock().unwrap().write_lazy(Tracked::new(0, &drops), &registry); }
+        unsafe { writer.write_lazy(Tracked::new(0, &drops), &registry); }
         n_writes.fetch_add(1, AO::Relaxed);
 
-        let cw = Arc::clone(&cell);
         let dw = Arc::clone(&drops);
         let rw = Arc::clone(&registry);
         let nw = Arc::clone(&n_writes);
-        let writer = thread::spawn(move || {
+        let writer_thread = thread::spawn(move || {
             for i in 1..=TARGET_WRITES {
-                let mut c = cw.lock().unwrap();
-                unsafe { c.write_lazy(Tracked::new(i, &dw), &rw); }
-                drop(c);
+                unsafe { writer.write_lazy(Tracked::new(i, &dw), &rw); }
                 nw.fetch_add(1, AO::Relaxed);
             }
+            writer
         });
 
         let cr = Arc::clone(&cell);
@@ -3387,10 +3480,7 @@ mod bridge_tests {
             let mut last = 0u64;
             let mut reads = 0u64;
             while !sr.load(AO::Acquire) {
-                let r_opt = {
-                    let c = cr.lock().unwrap();
-                    c.read_ref(&handle, last)
-                };
+                let r_opt = cr.read_ref(&handle, last);
                 if let Some(r) = r_opt {
                     last = r.epoch;
                     let _ = r.value;
@@ -3400,17 +3490,18 @@ mod bridge_tests {
             reads
         });
 
-        writer.join().unwrap();
+        let mut writer = writer_thread.join().unwrap();
         stop.store(true, AO::Release);
         let _ = reader.join().unwrap();
 
         // Drain any retirements left from the racy windows where Level A
         // had to retire (reader was pinning at the moment of write).
-        let _ = cell.lock().unwrap().reclaim(&registry);
+        let _ = writer.reclaim(&registry);
 
         let writes_total = n_writes.load(AO::Relaxed);
         let drops_before = drops.load(AO::Relaxed);
         drop(cell);
+        drop(writer);
         let drops_after = drops.load(AO::Relaxed);
 
         // Same reconciliation as the adversarial_f stress test.
@@ -3685,28 +3776,28 @@ mod double_buffer_tests {
     fn reclaim_if_watermark_backs_off_on_starved_floor() {
         let reg = ReaderRegistry::new();
         let handle = reg.acquire();
-        let mut cell: BridgedCell<u64> = BridgedCell::new();
+        let (cell, mut writer) = BridgedCell::<u64>::new();
 
         // First write so read_ref returns Some and we can pin a floor.
-        unsafe { cell.write(0u64) };
+        unsafe { writer.write(0u64) };
         // Pin floor_min at epoch 1 for the lifetime of this test.
         let _pin = cell.read_ref(&handle, 0).unwrap();
 
         // Write well past WATERMARK; each write retires a block, and
         // reclaim_if_watermark triggers but frees 0 (floor is pinned).
         for i in 1..=(WATERMARK as u64 + 20) {
-            unsafe { cell.write(i) };
-            cell.reclaim_if_watermark(&reg);
+            unsafe { writer.write(i) };
+            writer.reclaim_if_watermark(&reg);
         }
 
         // Back-off must have engaged.
-        assert!(cell.sweep_skip > 0,
+        assert!(writer.sweep_skip > 0,
             "sweep_skip should be > 0 after repeated zero-freed sweeps");
 
         // retired_len must be bounded (not growing to MBs).
         let max_expected = WATERMARK + SWEEP_BACKOFF_CAP as usize + 20;
-        assert!(cell.retired_len() <= max_expected,
-            "retired_len {} exceeds bound {}", cell.retired_len(), max_expected);
+        assert!(writer.retired_len() <= max_expected,
+            "retired_len {} exceeds bound {}", writer.retired_len(), max_expected);
     }
 }
 

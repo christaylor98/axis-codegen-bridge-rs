@@ -8,62 +8,55 @@
 //! `fn(Value) -> Value` dispatch ABI and picks the concurrency discipline
 //! that makes doing so sound.
 //!
-//! ## OPEN, UNRESOLVED SOUNDNESS ISSUE — do not treat this module as sound
+//! ## SOUNDNESS — resolved by the Writer/shared-cell split
+//! (AXVERITY_HOTMEM_ARENA_SOUNDNESS_FIX_V1)
 //!
-//! This module wraps the arena in `UnsafeCell` with a manually-asserted
-//! `unsafe impl Sync`, on the theory that a single writer thread taking
-//! conceptual `&mut BridgedCell` never overlaps with reader threads taking
-//! concurrent `&BridgedCell`, so the atomic head/floor protocol alone is
-//! enough to make it sound. **That theory does not hold.** Rust's aliasing
-//! rules require *some* synchronization between a live `&mut T` on one
-//! thread and a live `&T` on another thread into the *same* allocation —
-//! the atomic protocol only proves the data a reader can reach stays
-//! consistent, it does not license bypassing that requirement. Tellingly,
-//! EVERY existing adversarial concurrency test in `non_blocking_memory.rs`
-//! for exactly this write_lazy/read_ref interaction
-//! (`write_lazy_stress_concurrent_safe`,
-//! `adversarial_a_readref_held_concurrent_writes_and_reclaim`, and the
-//! double-buffer equivalent) wraps the `BridgedCell` in `Mutex`, including
-//! on the *reader* side — this module's raw-`UnsafeCell` bypass is the only
-//! caller anywhere in the codebase NOT covered by that "66 tests, ASan-clean"
-//! claim.
+//! This module previously wrapped the arena in `UnsafeCell<BridgedCell>` with a
+//! manually-asserted `unsafe impl Sync`, synthesising a `&mut BridgedCell` for
+//! the writer thread while reader threads held `&BridgedCell` into the SAME
+//! allocation. That is textbook `noalias` UB — a live `&mut T` on one thread
+//! aliasing a live `&T` on another licenses the compiler to miscompile,
+//! regardless of how correct the underlying atomic head/floor protocol is. It
+//! reproduced as invalid-UTF8 reads escalating to SIGSEGV within seconds under
+//! pure concurrent write/read (see `uaf_isolation_probe` below).
 //!
-//! Confirmed empirically, in two stages:
-//!   1. `hotmem_read` originally called `BridgedCell::read()` (owned,
-//!      pins-nothing). Since it never pinned the reader floor, `write_lazy`'s
-//!      immediate-free optimization always believed no reader existed and
-//!      freed the superseded Block right away — a plain use-after-free.
-//!      Reproduced as glibc heap corruption
-//!      (`free(): unaligned chunk detected in tcache 2`) within ~3s under
-//!      concurrent pg_server INSERT load. FIXED: `hotmem_read` now uses
-//!      `read_ref()`, which pins the floor before dereferencing and releases
-//!      it only after the byte copy is made (see that function's own doc
-//!      comment below).
-//!   2. Even with (1) fixed, an isolated stress test hammering only
-//!      `hotmem_write`/`hotmem_read` in a tight loop — no SQL parsing, no
-//!      wire protocol, no reclog — reproduced invalid-UTF8 corrupted reads
-//!      within seconds, escalating to a hard SIGSEGV (see
-//!      `uaf_isolation_probe` below; `cargo test --release --lib
-//!      uaf_isolation_probe -- --nocapture --ignored`). This is the
-//!      `UnsafeCell`-aliasing violation described above, NOT another
-//!      instance of bug (1) — grepped the whole crate, confirmed there is no
-//!      second `BridgedCell::read()` call site.
+//! The fix (in `non_blocking_memory.rs`): `BridgedCell` was split so the shared
+//! half holds ONLY the atomic head (`Cell<T>`) and auto-derives `Sync` with no
+//! `unsafe` and no `UnsafeCell`, while all writer-private state (the retired
+//! list, sweep counters) and every mutating/reclaiming method moved to a
+//! separate `Writer<T>`. `Writer` is `!Clone` + `!Sync` (so a second writer, or
+//! a shared `&Writer`, is a *type error*) and `Send` (so the one handle can be
+//! moved onto the janitor thread). The mutators take `&mut self` on the
+//! `Writer`, so the widest `&mut` ever formed is `&mut Vec<RetiredEntry>` —
+//! memory no reader references. `&mut BridgedCell` is never formed anywhere, so
+//! the aliasing UB is structurally impossible.
 //!
-//! **A `Mutex`-wrapped arena was drafted as the mechanical fix (matching the
-//! crate's own validated pattern) but explicitly REJECTED (Chris,
-//! 2026-07-09): "no mutex, ever — it's a crutch with massive overhead, and
-//! avoiding exactly that is the point of this mem manager." A lock-free
-//! redesign is planned instead; this module is reverted to its pre-Mutex,
-//! read_ref-fixed-but-still-unsound state as the known-bad baseline for that
-//! redesign to replace.** Do not add new readers/writers against this
-//! module's current `UnsafeCell` scheme, and do not reintroduce a `Mutex`
-//! here without checking back — both are considered closed directions.
+//! Consequently THIS module no longer needs any `unsafe impl`: the shared cell
+//! lives behind `Arc<BridgedCell>` (auto-`Sync`) in `ARENA_SHARED`; readers
+//! hold `&BridgedCell` via the `Arc`; the single `Writer` lives in the janitor
+//! thread's TLS (it is `!Sync`, so cannot sit in a `static`). No `Mutex` — the
+//! rejected direction ("no mutex, ever", Chris 2026-07-09) — is used or
+//! reintroduced.
+//!
+//! Acceptance: `uaf_isolation_probe` below runs with ZERO changes to its test
+//! body and must now PASS (it is no longer `#[ignore]`d). That was the
+//! pre-registered acceptance check for this redesign.
+//!
+//! Earlier bug (also fixed, kept for the record): `hotmem_read` once called the
+//! owned, pins-nothing `BridgedCell::read()`, so `write_lazy`'s immediate-free
+//! optimisation always believed no reader existed and freed the superseded
+//! Block right away — a plain use-after-free (`free(): unaligned chunk detected
+//! in tcache 2` within ~3s under concurrent INSERT load). `hotmem_read` uses
+//! `read_ref()`, which pins the reader's floor before dereferencing and
+//! releases it only after the byte copy is made.
 //!
 //! **Exactly one thread ever calls `hotmem_write`: the dedicated
-//! "hotmem-frame" channel janitor thread.** Every producer (pg_server
-//! workers, CLI one-shots) only ever calls `channel_send` — fire-and-forget,
-//! never touches the arena directly. That invariant holds today but, per the
-//! above, is not sufficient on its own for soundness.
+//! "hotmem-frame" channel janitor thread.** Every producer (pg_server workers,
+//! CLI one-shots) only ever calls `channel_send` — fire-and-forget, never
+//! touches the arena directly. This invariant is now BACKED by the type system
+//! for the shared cell (`Writer` is the sole mutate capability and is `!Clone`
+//! `!Sync`); the one residual `unsafe` is the narrow `unsafe impl Send for
+//! Writer` (exclusive-ownership move), audited in `non_blocking_memory.rs`.
 //!
 //! The arena is explicitly NOT durable and NOT critical — the WAL is still
 //! the durability boundary (see `wal_put.m1`'s `channel_send` hook); losing
@@ -71,10 +64,10 @@
 //! no-op for correctness. That is what makes the best-effort `channel_send`
 //! hand-off (rather than a blocking/acked path) the right choice here.
 
-use std::cell::{Cell as StdCell, RefCell, UnsafeCell};
+use std::cell::{Cell as StdCell, RefCell};
 use std::sync::{Arc, OnceLock};
 
-use super::non_blocking_memory::{BridgedCell, ReaderHandle, ReaderRegistry};
+use super::non_blocking_memory::{BridgedCell, ReaderHandle, ReaderRegistry, Writer};
 use super::value::Value;
 
 /// The arena payload: a shared reference to the exact byte buffer the WAL
@@ -83,26 +76,13 @@ use super::value::Value;
 /// second copy of anything a writer produced.
 type Payload = Arc<Vec<u8>>;
 
-/// `UnsafeCell` wrapper — KNOWN UNSOUND, see module doc comment. Kept as the
-/// baseline for the planned lock-free redesign (a `Mutex` was drafted and
-/// rejected — no lock, ever).
-struct Arena {
-    cell: UnsafeCell<BridgedCell<Payload>>,
-}
-
-// SAFETY: NOT actually established — see module doc comment's "OPEN,
-// UNRESOLVED SOUNDNESS ISSUE" section. This assertion is the thing that
-// needs to become true under the redesign, not a proof that it already is.
-unsafe impl Sync for Arena {}
-
-static ARENA: OnceLock<Arena> = OnceLock::new();
+/// The reader-facing shared arena cell. `None` until the sole writer thread's
+/// first `hotmem_write` mints the `(Arc<BridgedCell>, Writer)` pair and
+/// publishes the `Arc` here. Readers only ever observe it through a shared
+/// `&BridgedCell` — no `&mut`, no `UnsafeCell`. `Arc<BridgedCell<Payload>>` is
+/// auto-`Sync`, so the old `unsafe impl Sync for Arena` is gone entirely.
+static ARENA_SHARED: OnceLock<Arc<BridgedCell<Payload>>> = OnceLock::new();
 static READERS: OnceLock<ReaderRegistry> = OnceLock::new();
-
-fn arena() -> &'static Arena {
-    ARENA.get_or_init(|| Arena {
-        cell: UnsafeCell::new(BridgedCell::new()),
-    })
-}
 
 fn readers() -> &'static ReaderRegistry {
     READERS.get_or_init(ReaderRegistry::new)
@@ -117,6 +97,13 @@ thread_local! {
     /// (epoch, missed) from this thread's most recent `hotmem_read` — M1
     /// has no tuples, so `hotmem_epoch`/`hotmem_missed` split this out.
     static LAST: StdCell<(i64, i64)> = const { StdCell::new((0, 0)) };
+
+    /// The sole writer capability, lazily minted on this thread's first
+    /// `hotmem_write`. Lives in TLS because `Writer` is `!Sync` and cannot sit
+    /// in a plain `static`; the single-janitor-thread invariant means exactly
+    /// one thread ever populates this. The paired `Arc` is published to
+    /// `ARENA_SHARED` at the same moment (first-writer-wins).
+    static WRITER: RefCell<Option<Writer<Payload>>> = const { RefCell::new(None) };
 }
 
 /// `hotmem_write(arg: Value) -> Value`   —   List(Bytes) -> Unit
@@ -139,24 +126,37 @@ pub fn hotmem_write(arg: Value) -> Value {
     if items.is_empty() {
         return Value::Unit;
     }
-    let a = arena();
     let reg = readers();
-    // SAFETY: sole writer thread invariant — see module doc comment.
-    let cell = unsafe { &mut *a.cell.get() };
-    for item in items {
-        let bytes = match item {
-            Value::Bytes(b) => b,
-            other => panic!("hotmem_write: expected Bytes item, got {:?}", other),
-        };
-        // SAFETY: single-writer-per-cell, upheld by the same invariant.
-        unsafe {
-            cell.write_lazy(Arc::new(bytes), reg);
+    WRITER.with(|w| {
+        let mut w = w.borrow_mut();
+        if w.is_none() {
+            // First write on this (the sole janitor) thread: mint the paired
+            // (shared cell, writer) and publish the Arc for readers. First
+            // writer wins; a stray second writer thread (a contract violation)
+            // would get its own orphan cell no reader observes — harmless
+            // rather than UB, which is strictly better than the old shared
+            // `&mut` scheme.
+            let (cell, writer) = BridgedCell::new();
+            let _ = ARENA_SHARED.set(cell);
+            *w = Some(writer);
         }
-    }
-    // Opportunistic, watermark-gated — bounds retired-list growth without
-    // scanning reader floors on every single write. See
-    // `BridgedCell::reclaim_if_watermark`'s own doc comment.
-    cell.reclaim_if_watermark(reg);
+        let writer = w.as_mut().expect("writer just initialised above");
+        for item in items {
+            let bytes = match item {
+                Value::Bytes(b) => b,
+                other => panic!("hotmem_write: expected Bytes item, got {:?}", other),
+            };
+            // SAFETY: sole `&mut` owner of `writer` on the single writer
+            // thread — `write_lazy`'s single-writer contract is upheld.
+            unsafe {
+                writer.write_lazy(Arc::new(bytes), reg);
+            }
+        }
+        // Opportunistic, watermark-gated — bounds retired-list growth without
+        // scanning reader floors on every single write. See
+        // `Writer::reclaim_if_watermark`'s own doc comment.
+        writer.reclaim_if_watermark(reg);
+    });
     Value::Unit
 }
 
@@ -208,11 +208,15 @@ pub fn hotmem_read(arg: Value) -> Value {
         Value::Int(n) => n.max(0) as u64,
         other => panic!("hotmem_read: expected Int, got {:?}", other),
     };
-    let a = arena();
-    // SAFETY: `&self` read, concurrent with the sole writer thread's
-    // `&mut self` window — sound under the atomic head/floor protocol
-    // documented on `BridgedCell`/`Cell`. See module doc comment.
-    let cell = unsafe { &*a.cell.get() };
+    // Shared `&BridgedCell` — never `&mut`, never `UnsafeCell`. `None` means no
+    // writer has published yet (arena empty).
+    let cell = match ARENA_SHARED.get() {
+        Some(cell) => cell,
+        None => {
+            LAST.with(|l| l.set((0, 0)));
+            return Value::Bytes(Vec::new());
+        }
+    };
     READER.with(|r| {
         if r.borrow().is_none() {
             *r.borrow_mut() = Some(readers().acquire());
@@ -273,8 +277,11 @@ mod uaf_isolation_probe {
     use std::thread;
     use std::time::Duration;
 
+    // ACCEPTANCE TEST (AXVERITY_HOTMEM_ARENA_SOUNDNESS_FIX_V1): formerly
+    // `#[ignore]`d as known-failing against the UnsafeCell scheme. The redesign
+    // must make it pass with ZERO changes to the body below — that is the
+    // pre-registered gate. Un-ignored deliberately.
     #[test]
-    #[ignore = "known-failing: open UnsafeCell-aliasing soundness issue, see module doc comment"]
     fn concurrent_write_read_never_corrupts() {
         let stop = StdArc::new(AtomicBool::new(false));
         let bad = StdArc::new(AtomicUsize::new(0));
@@ -343,5 +350,58 @@ mod uaf_isolation_probe {
         let b = bad.load(AtoOrd::Relaxed);
         eprintln!("writes={w} reads={r} nonempty_reads={ne} bad={b}");
         assert_eq!(b, 0, "corrupted/malformed reads observed: {b}");
+    }
+
+    // Bounded, Miri-friendly variant of the probe above: fixed iteration
+    // counts, no wall-clock sleep, content-validated. Small enough to run
+    // under `cargo +nightly miri test` (tree-borrows) as an authoritative
+    // UB / data-race check on the concurrent write/read path.
+    #[test]
+    fn concurrent_write_read_bounded() {
+        const WRITES: u64 = if cfg!(miri) { 40 } else { 20_000 };
+        const TAG_LEN: usize = "PAYLOAD-00000000000000000000-END".len();
+        let done = StdArc::new(AtomicBool::new(false));
+        let bad = StdArc::new(AtomicUsize::new(0));
+
+        let w_done = done.clone();
+        let writer = thread::spawn(move || {
+            for i in 0..WRITES {
+                let payload = format!("PAYLOAD-{:020}-END", i).into_bytes();
+                hotmem_write(Value::List(vec![Value::Bytes(payload)]));
+            }
+            w_done.store(true, AtoOrd::Release);
+        });
+
+        let r_done = done.clone();
+        let r_bad = bad.clone();
+        let reader = thread::spawn(move || {
+            let mut last_epoch: i64 = 0;
+            loop {
+                let v = hotmem_read(Value::Int(last_epoch));
+                if let Value::Bytes(b) = v {
+                    if !b.is_empty() {
+                        let ok = match String::from_utf8(b) {
+                            Ok(s) => {
+                                s.len() == TAG_LEN
+                                    && s.starts_with("PAYLOAD-")
+                                    && s.ends_with("-END")
+                            }
+                            Err(_) => false,
+                        };
+                        if !ok {
+                            r_bad.fetch_add(1, AtoOrd::Relaxed);
+                        }
+                    }
+                }
+                last_epoch = LAST.with(|l| l.get().0);
+                if r_done.load(AtoOrd::Acquire) {
+                    break;
+                }
+            }
+        });
+
+        writer.join().unwrap();
+        reader.join().unwrap();
+        assert_eq!(bad.load(AtoOrd::Relaxed), 0, "corrupted reads observed");
     }
 }
