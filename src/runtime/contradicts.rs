@@ -196,6 +196,61 @@ pub fn contradicts_any(args: Value) -> Value {
     })
 }
 
+// ── Warm singleton (daemon fast-path) ────────────────────────────────────────
+// A per-thread WARM adjacency, rebuilt ONCE at daemon-worker startup
+// (`contradicts_warm`) then queried per request (`contradicts_any_warm`) with NO
+// per-call rebuild — the warm host the routing note (§D1) calls for. Same
+// fail-closed-loud AC-1 discipline: `contradicts_any_warm` PANICS if this thread
+// never warmed.
+
+thread_local! {
+    static WARM: RefCell<Option<AdjShard>> = const { RefCell::new(None) };
+}
+
+/// `contradicts_warm(seg_prefix: Text) -> Int` — (re)build THIS thread's WARM
+/// singleton by a full forward WAL replay; returns frames scanned. Call once at
+/// daemon-worker startup, before serving requests.
+#[track_caller]
+pub fn contradicts_warm(arg: Value) -> Value {
+    let prefix = match arg {
+        Value::Str(h) => get_str(h),
+        other => panic!("contradicts_warm: expected Text seg_prefix, got {:?}", other),
+    };
+    let mut adj: HashMap<String, HashSet<String>> = HashMap::new();
+    let (_fs, _fo, scanned) =
+        walk_frames(&prefix, 0, 0, |_seg, _off, _len, env, _payload, _hexh| {
+            if let Some((a, b)) = env_pair(env) {
+                adj.entry(a.clone()).or_default().insert(b.clone());
+                adj.entry(b).or_default().insert(a);
+            }
+        });
+    WARM.with(|w| {
+        *w.borrow_mut() = Some(AdjShard { shard: "warm".to_string(), rebuilt: true, adj });
+    });
+    Value::Int(scanned)
+}
+
+/// `contradicts_any_warm(from: Text) -> Bool` — depth-1 out-edge existence check
+/// against THIS thread's WARM singleton. PANICS if the thread never warmed (AC-1).
+#[track_caller]
+pub fn contradicts_any_warm(arg: Value) -> Value {
+    let from = match arg {
+        Value::Str(h) => get_str(h),
+        other => panic!("contradicts_any_warm: expected Text from-addr, got {:?}", other),
+    };
+    WARM.with(|w| {
+        let w = w.borrow();
+        match w.as_ref() {
+            None => panic!(
+                "contradicts_any_warm: WARM singleton NEVER REBUILT in this process/thread \
+                 — refusing a cold/empty answer (would silently allow a contradicted \
+                 promotion). Call contradicts_warm at daemon-worker startup."
+            ),
+            Some(sh) => Value::Bool(sh.adj.get(&from).is_some_and(|s| !s.is_empty())),
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,5 +355,24 @@ mod tests {
     fn cold_has_panics_not_empty() {
         let h = open();
         let _ = has(h, "sha256:a", "sha256:b");
+    }
+
+    #[test]
+    fn warm_singleton_then_query() {
+        // WARM is thread-local; the std test harness runs each test on its own
+        // thread, so this thread's singleton starts None and is fresh.
+        let seg = cframe("sha256:w1", "sha256:w2", b"wp");
+        let p = write_seg(&seg);
+        assert!(matches!(contradicts_warm(Value::Str(intern_str(&p))), Value::Int(_)));
+        assert!(matches!(contradicts_any_warm(Value::Str(intern_str("sha256:w1"))), Value::Bool(true)));
+        assert!(matches!(contradicts_any_warm(Value::Str(intern_str("sha256:w2"))), Value::Bool(true)));
+        assert!(matches!(contradicts_any_warm(Value::Str(intern_str("sha256:none"))), Value::Bool(false)));
+    }
+
+    #[test]
+    #[should_panic(expected = "NEVER REBUILT")]
+    fn cold_warm_query_panics() {
+        // Fresh thread ⇒ WARM is None ⇒ a query must PANIC, never return false (AC-1).
+        let _ = contradicts_any_warm(Value::Str(intern_str("sha256:x")));
     }
 }

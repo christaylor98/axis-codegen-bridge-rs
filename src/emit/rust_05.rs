@@ -320,6 +320,8 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("contradicts_rebuild",  "axis_codegen_bridge::runtime::contradicts::contradicts_rebuild");
     m.insert("contradicts_has",      "axis_codegen_bridge::runtime::contradicts::contradicts_has");
     m.insert("contradicts_any",      "axis_codegen_bridge::runtime::contradicts::contradicts_any");
+    m.insert("contradicts_warm",     "axis_codegen_bridge::runtime::contradicts::contradicts_warm");
+    m.insert("contradicts_any_warm", "axis_codegen_bridge::runtime::contradicts::contradicts_any_warm");
 
     // ── Recovery-log group commit + ack backpath
     //    (AXVERITY_HOTPATH_PARALLEL_DISPATCH_V1) ──────────────────────────────
