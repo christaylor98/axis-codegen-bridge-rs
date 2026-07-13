@@ -41,6 +41,7 @@ pub mod indexer;
 pub mod hotblk;
 pub mod hotwrite_batch;
 pub mod block_flush;
+pub mod slablock;
 pub mod tsmark;
 pub mod interner_shard;
 pub mod mpsc_intrusive;

@@ -283,6 +283,17 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("hotwrite_batch_run_c_durable", "axis_codegen_bridge::runtime::hotwrite_batch::hotwrite_batch_run_c_durable");
     m.insert("block_flush_write",    "axis_codegen_bridge::runtime::block_flush::block_flush_write");
 
+    // ── SLA-tiered block writer, PHASE A ISOLATED — NOT wired into any live
+    //    path (slablock.rs — BRIDGE_SLABLOCK_V1,
+    //    AXVERITY_RECLOG_SLA_BLOCK_BUILD_PHASE_A_V1; cutover requires a
+    //    separate intent) ────────────────────────────────────────────────────
+    m.insert("slab_open",            "axis_codegen_bridge::runtime::slablock::slab_open");
+    m.insert("slab_append",          "axis_codegen_bridge::runtime::slablock::slab_append");
+    m.insert("slab_tick",            "axis_codegen_bridge::runtime::slablock::slab_tick");
+    m.insert("slab_seal",            "axis_codegen_bridge::runtime::slablock::slab_seal");
+    m.insert("slab_stats",           "axis_codegen_bridge::runtime::slablock::slab_stats");
+    m.insert("slab_sealed",          "axis_codegen_bridge::runtime::slablock::slab_sealed");
+
     // ── TEMPORARY timing instrumentation (AXVERITY_INSERT_PATH_TIMING_AUDIT_V1) ─
     m.insert("ts_mark",              "axis_codegen_bridge::runtime::tsmark::ts_mark");
     m.insert("ts_mark_val",          "axis_codegen_bridge::runtime::tsmark::ts_mark_val");
