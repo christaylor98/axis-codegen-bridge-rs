@@ -287,6 +287,34 @@ pub(crate) fn bounded_send_blocking(name: &str, item: Value) {
     ch.not_empty.notify_one();
 }
 
+/// Non-blocking TRY-send for SHADOW taps (BRIDGE_SLABSHADOW_V1,
+/// AXVERITY_RECLOG_SLA_BLOCK_SHADOW_VALIDATION_V1): push if below capacity,
+/// DROP otherwise — returns whether the item was enqueued. NEVER blocks and
+/// never grows the queue past `cap`, so a dead/lagging consumer costs the
+/// producer exactly one lock + len check per call (bounded memory, bounded
+/// latency — the failure-isolation contract a measurement-only tap needs).
+/// Deliberately NOT used by the recovery-log path, whose CHANNELS_BLOCK_NOT_DROP
+/// hard limit requires `bounded_send_blocking` above.
+pub(crate) fn bounded_try_send(name: &str, item: Value) -> bool {
+    let ch = bounded_channel_for(name);
+    let mut q = ch.queue.lock().unwrap();
+    if q.len() >= ch.cap {
+        return false;
+    }
+    q.push_back(item);
+    drop(q);
+    ch.not_empty.notify_one();
+    true
+}
+
+/// Current depth of a bounded channel (test-support; the bounded twin of
+/// `channel_depth`). Locks, reads len, unlocks. cfg(test): only the shadow
+/// drills use it today — lift the gate if runtime instrumentation ever needs it.
+#[cfg(test)]
+pub(crate) fn bounded_len(name: &str) -> usize {
+    bounded_channel_for(name).queue.lock().unwrap().len()
+}
+
 /// Block until ≥1 item, then accumulate one batch until `max` items OR
 /// `window_ms` since the first item — first wins. Draining frees room and wakes
 /// blocked producers. Internal Rust entry — reclog.rs's janitor drains here.

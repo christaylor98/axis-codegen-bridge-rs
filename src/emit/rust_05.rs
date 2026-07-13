@@ -293,6 +293,13 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("slab_seal",            "axis_codegen_bridge::runtime::slablock::slab_seal");
     m.insert("slab_stats",           "axis_codegen_bridge::runtime::slablock::slab_stats");
     m.insert("slab_sealed",          "axis_codegen_bridge::runtime::slablock::slab_sealed");
+    // ── Shadow validation tap (slabshadow.rs — BRIDGE_SLABSHADOW_V1,
+    //    AXVERITY_RECLOG_SLA_BLOCK_SHADOW_VALIDATION_V1): measurement only.
+    //    submit = post-ack drop-on-full try-send from pg_exec_insert (env-gated
+    //    AXVERITY_SLAB_SHADOW=1); flush_once = the shadow janitor round. The
+    //    ack path gates on reclog alone, unchanged. ──────────────────────────
+    m.insert("slab_shadow_submit",     "axis_codegen_bridge::runtime::slabshadow::slab_shadow_submit");
+    m.insert("slab_shadow_flush_once", "axis_codegen_bridge::runtime::slabshadow::slab_shadow_flush_once");
 
     // ── TEMPORARY timing instrumentation (AXVERITY_INSERT_PATH_TIMING_AUDIT_V1) ─
     m.insert("ts_mark",              "axis_codegen_bridge::runtime::tsmark::ts_mark");
