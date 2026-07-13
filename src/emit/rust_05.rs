@@ -316,6 +316,10 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("pkidx_has",            "axis_codegen_bridge::runtime::pkindex::pkidx_has");
     m.insert("pkidx_get",            "axis_codegen_bridge::runtime::pkindex::pkidx_get");
     m.insert("pkidx_rebuild",        "axis_codegen_bridge::runtime::pkindex::pkidx_rebuild");
+    m.insert("contradicts_open",     "axis_codegen_bridge::runtime::contradicts::contradicts_open");
+    m.insert("contradicts_rebuild",  "axis_codegen_bridge::runtime::contradicts::contradicts_rebuild");
+    m.insert("contradicts_has",      "axis_codegen_bridge::runtime::contradicts::contradicts_has");
+    m.insert("contradicts_any",      "axis_codegen_bridge::runtime::contradicts::contradicts_any");
 
     // ── Recovery-log group commit + ack backpath
     //    (AXVERITY_HOTPATH_PARALLEL_DISPATCH_V1) ──────────────────────────────

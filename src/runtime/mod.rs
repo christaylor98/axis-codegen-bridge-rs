@@ -28,6 +28,7 @@ pub mod logbuf;
 pub mod prealloc;
 pub mod walindex;
 pub mod pkindex;
+pub mod contradicts;
 pub mod walshard;
 pub mod chunk;
 pub mod fieldidx;

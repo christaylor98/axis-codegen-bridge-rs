@@ -140,6 +140,13 @@ fn env_to_name(env: &[u8]) -> Option<String> {
     let s = std::str::from_utf8(env).ok()?;
     let mut it = s.split('\t');
     let table = it.next()?;
+    // Skip non-row envelopes that share the WAL stream: fact-lineage frames
+    // ("FACT\t…", assert_fact) and contradicts edges ("CONTRADICTS\t…") are not
+    // pk-bindings — indexing them would materialize spurious "FACT:<agent>" /
+    // "CONTRADICTS:<b>" bindings (ASSERT_FACT_PROMOTE_TO_LIVE_BUILD_V1).
+    if table == "FACT" || table == "CONTRADICTS" {
+        return None;
+    }
     let _seq = it.next()?;
     let pk = it.next()?;
     Some(format!("{}:{}", table, pk))
