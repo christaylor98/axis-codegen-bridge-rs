@@ -63,6 +63,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("unit_id",    "axis_codegen_bridge::runtime::arith::unit_id");
     m.insert("const_unit", "axis_codegen_bridge::runtime::arith::unit_id");
     m.insert("seq_unit",   "axis_codegen_bridge::runtime::arith::seq_unit");
+    m.insert("seq",        "axis_codegen_bridge::runtime::arith::seq");
 
     // Boolean
     m.insert("bool_and",    "axis_codegen_bridge::runtime::bool_ops::bool_and");
@@ -812,14 +813,15 @@ fn longest_common_prefix(paths: &[ScopePath]) -> ScopePath {
 /// Errs on the one shape this analysis cannot soundly resolve: a
 /// zero-consumer ("orphan") node — a discarded value, e.g. `let _ = eff();
 /// tail` — sitting inside a `CIf` whose `then_` is a bare pool ref (no
-/// anchor to pin exactly where "then" ends and "else" begins). Not
-/// reachable from M1 today: M1's `IfExpr` grammar only ever allows a single
-/// bare `Expr` per arm (see `nf_lowering.rs`'s `"IfExpr"` case and
-/// `m1-parse.yaml`'s `IfExpr` rule — no `LetExpr` alternative), so a branch
-/// can never contain a let-chain to discard in the first place. This check
-/// exists so that the day some producer's `IfExpr`-equivalent DOES allow
-/// that (a let-chain per arm), the build fails loudly right here instead of
-/// silently hoisting the orphan to top level and reintroducing
+/// anchor to pin exactly where "then" ends and "else" begins). As of
+/// 2026-07-15 M1's `IfExpr` branches ARE `Body` (they can hold a let-chain),
+/// but the compiler now threads every discarded branch effect into the arm's
+/// result via `seq(eff, result)` (`nf_lowering.rs` `seq_scope_arm_effects`),
+/// so a branch orphan is given a consumer edge before it ever reaches this
+/// analysis — no orphan-in-branch is emitted from M1. This check therefore
+/// stays dormant for M1 today, and exists so that if some producer ever emits
+/// a raw un-threaded orphan under a pool-ref branch, the build fails loudly
+/// right here instead of silently hoisting it to top level and reintroducing
 /// BRANCH_SCOPING_V1's exact bug for that one node.
 fn compute_branch_paths(bundle: &CoreBundle) -> Result<Vec<ScopePath>, String> {
     let n = bundle.nodes.len();

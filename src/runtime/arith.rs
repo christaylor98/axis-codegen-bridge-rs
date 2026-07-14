@@ -290,6 +290,23 @@ pub fn seq_unit(args: Value) -> Value {
     }
 }
 
+/// Sequence a computation before a result of any type: `seq(Tuple(a, b)) -> b`.
+///
+/// The first argument is evaluated purely for its ordering/effect (it is already
+/// materialised as its own `let node_N` by the time `seq` runs) and the second is
+/// returned unchanged. The M1 compiler injects `seq` when lowering a discarded
+/// side-effecting binding inside an `if` arm (`let _ = eff(); tail`), so that the
+/// effect becomes a data-dependency of the arm's result and the branch-scoping
+/// emitter keeps it inside that arm (BRANCH_SCOPING_V1). Unlike `seq_unit` this is
+/// type-agnostic in both positions, since a branch result may be any Value.
+#[track_caller]
+pub fn seq(args: Value) -> Value {
+    match args {
+        Value::Tuple(mut es) if es.len() >= 2 => es.swap_remove(1),
+        _ => panic!("seq: expected Tuple(_, _)"),
+    }
+}
+
 #[cfg(test)]
 mod dec_agg_tests {
     use super::*;
