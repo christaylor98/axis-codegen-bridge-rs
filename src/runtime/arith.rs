@@ -1,4 +1,5 @@
 use super::value::Value;
+use rust_decimal::{Decimal, RoundingStrategy};
 
 macro_rules! int_bin_op {
     ($name:ident, $op:tt) => {
@@ -214,6 +215,44 @@ pub fn dec_eq(args: Value) -> Value {
     }
 }
 
+/// dec_div(Dec, Dec) -> Dec. Decimal division scaled to 16 fractional digits,
+/// rounded half-away-from-zero — chosen to reproduce real Postgres 15's numeric
+/// AVG output byte-for-byte (e.g. AVG(1,2) -> "1.5000000000000000", AVG(5,3) ->
+/// "1.6666666666666667"). round_dp fixes the scale to exactly 16 (padding trailing
+/// zeros), so to_string matches PG. Division by zero panics (AVG's finalizer never
+/// calls this with count 0 — an empty group short-circuits to NULL before here).
+/// AXVERITY_PGWIRE_SUM_AVG_MIN_MAX_V1.
+#[track_caller]
+pub fn dec_div(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Dec(x), Value::Dec(y)) => {
+                if *y == Decimal::ZERO { panic!("dec_div: division by zero") }
+                // round_dp fixes the rounding at 16 dp (half-away-from-zero, matching
+                // PG); rescale then pads trailing zeros to a fixed scale of 16 so
+                // to_string yields PG's "1.5000000000000000" rather than "1.5".
+                let mut q = (x / y).round_dp_with_strategy(16, RoundingStrategy::MidpointAwayFromZero);
+                q.rescale(16);
+                Value::Dec(q)
+            }
+            _ => panic!("dec_div: expected two Dec values"),
+        },
+        _ => panic!("dec_div: expected Tuple(Dec, Dec)"),
+    }
+}
+
+/// dec_to_text(Dec) -> Text. Render a Decimal to its canonical decimal string via
+/// Decimal::to_string (scale-preserving, so a scale-16 value keeps its trailing
+/// zeros). The Dec-typed counterpart of int_to_str; the seam that puts a computed
+/// AVG on the wire as a numeric text value. AXVERITY_PGWIRE_SUM_AVG_MIN_MAX_V1.
+#[track_caller]
+pub fn dec_to_text(d: Value) -> Value {
+    match d {
+        Value::Dec(x) => Value::Str(super::value::intern_str(&x.to_string())),
+        _ => panic!("dec_to_text: expected Dec"),
+    }
+}
+
 /// float_eq(Float, Float) -> Bool. Typed IEEE-754 f64 equality — the Float-typed
 /// counterpart of int_eq. Uses the standard `==`, so NaN != NaN and +0.0 == -0.0,
 /// identical to how value_eq already compares Value::Float. Exact bit-equality is
@@ -248,5 +287,26 @@ pub fn seq_unit(args: Value) -> Value {
         }
         Value::Unit => Value::Unit,
         _ => panic!("seq_unit: expected Tuple(Unit, Unit) or Unit"),
+    }
+}
+
+#[cfg(test)]
+mod dec_agg_tests {
+    use super::*;
+    use super::super::coerce::int_to_dec;
+
+    fn div(a: i64, b: i64) -> String {
+        let q = dec_div(Value::Tuple(vec![int_to_dec(Value::Int(a)), int_to_dec(Value::Int(b))]));
+        match dec_to_text(q) { Value::Str(s) => s.to_string(), _ => panic!("expected Str") }
+    }
+
+    #[test]
+    fn avg_matches_pg15_scale_and_rounding() {
+        // real PG-15 numeric AVG(int): scale 16, half-away-from-zero
+        assert_eq!(div(3, 2), "1.5000000000000000");   // AVG(1,2)
+        assert_eq!(div(6, 3), "2.0000000000000000");   // AVG(1,2,3)
+        assert_eq!(div(5, 3), "1.6666666666666667");   // repeating -> rounds up
+        assert_eq!(div(2, 3), "0.6666666666666667");
+        assert_eq!(div(1, 1), "1.0000000000000000");
     }
 }

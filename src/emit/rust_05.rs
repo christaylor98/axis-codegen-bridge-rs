@@ -50,6 +50,8 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("dec_gt",   "axis_codegen_bridge::runtime::arith::dec_gt");
     m.insert("dec_gte",  "axis_codegen_bridge::runtime::arith::dec_gte");
     m.insert("dec_eq",   "axis_codegen_bridge::runtime::arith::dec_eq");
+    m.insert("dec_div",  "axis_codegen_bridge::runtime::arith::dec_div");
+    m.insert("dec_to_text", "axis_codegen_bridge::runtime::arith::dec_to_text");
     m.insert("float_lt",  "axis_codegen_bridge::runtime::arith::float_lt");
     m.insert("float_lte", "axis_codegen_bridge::runtime::arith::float_lte");
     m.insert("float_gt",  "axis_codegen_bridge::runtime::arith::float_gt");
