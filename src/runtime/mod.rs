@@ -26,6 +26,8 @@ pub mod net;
 pub mod seek;
 pub mod logbuf;
 pub mod mmapseg;
+pub mod bindidx;
+pub mod contentidx;
 pub mod prealloc;
 pub mod walindex;
 pub mod pkindex;

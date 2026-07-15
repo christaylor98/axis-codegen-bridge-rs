@@ -264,6 +264,12 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("mmapseg_read",         "axis_codegen_bridge::runtime::mmapseg::mmapseg_read");
     m.insert("mmapseg_frontier",     "axis_codegen_bridge::runtime::mmapseg::mmapseg_frontier");
     m.insert("mmapseg_flush_file",   "axis_codegen_bridge::runtime::mmapseg::mmapseg_flush_file");
+    // -- shared sharded name->hash binding index (bindidx.rs - AXVERITY_STORAGE_SUBSTRATE_DURABILITY_V1 slice 3a) --
+    m.insert("bindidx_put",          "axis_codegen_bridge::runtime::bindidx::bindidx_put");
+    m.insert("bindidx_get",          "axis_codegen_bridge::runtime::bindidx::bindidx_get");
+    // -- PROTOTYPE B2: shared sharded content-hash->bytes index (contentidx.rs) --
+    m.insert("contentidx_put",       "axis_codegen_bridge::runtime::contentidx::contentidx_put");
+    m.insert("contentidx_get",       "axis_codegen_bridge::runtime::contentidx::contentidx_get");
     m.insert("logbuf_open",          "axis_codegen_bridge::runtime::logbuf::logbuf_open");
     m.insert("logbuf_append",        "axis_codegen_bridge::runtime::logbuf::logbuf_append");
     m.insert("logbuf_sync",          "axis_codegen_bridge::runtime::logbuf::logbuf_sync");
