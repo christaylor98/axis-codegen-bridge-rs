@@ -263,6 +263,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("mmapseg_msync",        "axis_codegen_bridge::runtime::mmapseg::mmapseg_msync");
     m.insert("mmapseg_read",         "axis_codegen_bridge::runtime::mmapseg::mmapseg_read");
     m.insert("mmapseg_frontier",     "axis_codegen_bridge::runtime::mmapseg::mmapseg_frontier");
+    m.insert("mmapseg_flush_file",   "axis_codegen_bridge::runtime::mmapseg::mmapseg_flush_file");
     m.insert("logbuf_open",          "axis_codegen_bridge::runtime::logbuf::logbuf_open");
     m.insert("logbuf_append",        "axis_codegen_bridge::runtime::logbuf::logbuf_append");
     m.insert("logbuf_sync",          "axis_codegen_bridge::runtime::logbuf::logbuf_sync");
