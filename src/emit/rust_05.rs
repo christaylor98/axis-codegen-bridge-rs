@@ -257,6 +257,12 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     // ── Seek / range read (seek.rs — BRIDGE_SEEK_V1, spike:axverity-spike1) ─────
     m.insert("fs_read_range",        "axis_codegen_bridge::runtime::seek::fs_read_range");
     // ── Log buffer (logbuf.rs — BRIDGE_LOGBUF_V1, spike:axverity-spike1) ────────
+    // ── mmap-backed durable append segment (mmapseg.rs — AXVERITY_STORAGE_SUBSTRATE_DURABILITY_V1) ──
+    m.insert("mmapseg_open",         "axis_codegen_bridge::runtime::mmapseg::mmapseg_open");
+    m.insert("mmapseg_append",       "axis_codegen_bridge::runtime::mmapseg::mmapseg_append");
+    m.insert("mmapseg_msync",        "axis_codegen_bridge::runtime::mmapseg::mmapseg_msync");
+    m.insert("mmapseg_read",         "axis_codegen_bridge::runtime::mmapseg::mmapseg_read");
+    m.insert("mmapseg_frontier",     "axis_codegen_bridge::runtime::mmapseg::mmapseg_frontier");
     m.insert("logbuf_open",          "axis_codegen_bridge::runtime::logbuf::logbuf_open");
     m.insert("logbuf_append",        "axis_codegen_bridge::runtime::logbuf::logbuf_append");
     m.insert("logbuf_sync",          "axis_codegen_bridge::runtime::logbuf::logbuf_sync");
