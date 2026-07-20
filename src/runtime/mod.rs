@@ -28,6 +28,7 @@ pub mod logbuf;
 pub mod mmapseg;
 pub mod bindidx;
 pub mod contentidx;
+pub mod qhm;
 pub mod prealloc;
 pub mod walindex;
 pub mod pkindex;

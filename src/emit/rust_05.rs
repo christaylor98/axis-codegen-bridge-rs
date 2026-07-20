@@ -270,6 +270,12 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     // -- PROTOTYPE B2: shared sharded content-hash->bytes index (contentidx.rs) --
     m.insert("contentidx_put",       "axis_codegen_bridge::runtime::contentidx::contentidx_put");
     m.insert("contentidx_get",       "axis_codegen_bridge::runtime::contentidx::contentidx_get");
+    // -- query-hotmem trial (qhm.rs — AXVERITY_QUERY_HOTMEM_FIX_TRIALS_V1);
+    //    variant selected at runtime by AXVERITY_QHM_VARIANT (off|mutex|lfa|lfb) --
+    m.insert("qhm_put",              "axis_codegen_bridge::runtime::qhm::qhm_put");
+    m.insert("qhm_get",              "axis_codegen_bridge::runtime::qhm::qhm_get");
+    m.insert("qhm_flush",            "axis_codegen_bridge::runtime::qhm::qhm_flush");
+    m.insert("qhm_stats",            "axis_codegen_bridge::runtime::qhm::qhm_stats");
     m.insert("logbuf_open",          "axis_codegen_bridge::runtime::logbuf::logbuf_open");
     m.insert("logbuf_append",        "axis_codegen_bridge::runtime::logbuf::logbuf_append");
     m.insert("logbuf_sync",          "axis_codegen_bridge::runtime::logbuf::logbuf_sync");
