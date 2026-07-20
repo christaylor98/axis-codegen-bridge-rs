@@ -24,20 +24,60 @@
 //!
 //!   off    — inert: `qhm_get` always misses, `qhm_put` no-ops. The read path
 //!            then falls through to the existing tiers UNCHANGED, so this IS the
-//!            baseline. (`contentidx` remains populated at its tier-3 position.)
+//!            pre-qhm baseline. (`contentidx` remains populated at its tier-3
+//!            position.) Selectable fallback; NO LONGER the default.
 //!   mutex  — RAM-FIRST control: a sharded `Mutex<HashMap>` + FIFO, structurally
 //!            identical to `contentidx` but consulted first and independently
 //!            capped. Isolates the "RAM-first reorder" effect from the
 //!            "lock-free engine" effect — NOT lock-free (writes and reads both
-//!            take the shard mutex briefly).
+//!            take the shard mutex briefly). Selectable fallback; not default.
 //!   lfa    — LOCK-FREE reads via `non_blocking_memory`, seal-then-reclaim with
-//!            PER-SEAL reclaim (fine granularity).
-//!   lfb    — same engine, seal-then-reclaim with WATERMARK/epoch-BATCHED reclaim
-//!            (`reclaim_if_watermark`, coarse granularity).
+//!            PER-SEAL reclaim (fine granularity). Selectable fallback; not default.
+//!   lfb    — **SHIPPED DEFAULT.** Same lock-free engine as `lfa`, seal-then-reclaim
+//!            with WATERMARK/epoch-BATCHED reclaim (`reclaim_if_watermark`, coarse
+//!            granularity — fewer floor scans for identical memory at these scales).
 //!
-//! `lfa`/`lfb` differ ONLY in the reclaim-trigger granularity — the intent's
+//! `lfa`/`lfb` differ ONLY in the reclaim-trigger granularity — the trial's
 //! stated `unknown` (per-block vs per-shard-epoch vs per-N-blocks). They share
 //! all read/write code, so a losing one is a single-line discard.
+//!
+//! ## Shipped default & fallbacks (AXVERITY_QHM_SHIP_LOCKFREE_V1)
+//!
+//! The default (env unset) is `lfb` — lock-free reads by default. The trial
+//! (`docs/turn-qhm-fix-trials.md`) measured `mutex ≈ lfa ≈ lfb` in throughput at
+//! the tested concurrency (K=8, 256 shards, sub-µs critical section). That
+//! equivalence is precisely WHY the default is non-blocking: with no measured
+//! throughput cost to lock-freedom, there is no load-bearing reason to make the
+//! default read path take a lock. `lfb` over `lfa` because watermark-batched
+//! reclaim does fewer floor scans for the same memory (within noise today, but
+//! the strictly-cheaper reclaim policy).
+//!
+//! `off`/`mutex`/`lfa` are kept in-tree and remain explicitly selectable
+//! (supersede-don't-delete). Reach for them only as escape hatches:
+//!   * `off`   — revert to exact pre-qhm read behavior (disk-tier-only) if the
+//!               hot index ever needs to be taken out of the path for triage.
+//!   * `mutex` — a blocking RAM-first control; useful only to A/B whether a
+//!               future regression is lock-free-engine-specific vs the reorder.
+//!               NOT recommended as a running default: it is strictly a
+//!               comparison/fallback artifact, equal-or-slower with no upside.
+//!   * `lfa`   — per-seal reclaim, if a future workload ever shows `lfb`'s
+//!               batched reclaim retaining too much transient memory.
+//!
+//! ## Cap sizing — REQUIRED operator input, not a silent default (see below)
+//!
+//! The whole win is conditional on the resident cap covering the query working
+//! set. Trial finding: with `AXVERITY_QHM_CAP=512` against a ~4000-row working
+//! set (≈8× over cap), the pull-heavy-aggregate win COLLAPSED from 17–33× to
+//! ~13%, because most matched rows get evicted and fall back to the disk tiers.
+//! Sizing rule of thumb:
+//!
+//!     AXVERITY_QHM_CAP  ≳  peak number of DISTINCT rows touched by a single
+//!                          aggregate/JOIN/SELECT * query (its working set)
+//!
+//! The default (65536) comfortably covers the low-thousands-row regime these
+//! shapes run at today; raise it for larger working sets, and keep headroom (the
+//! cap is a hard resident ceiling — at/over it you are in the ~13% regime, not
+//! the 17–33× one). Full guidance: `docs/turn-qhm-ship-lockfree.md`.
 //!
 //! ## Soundness (the load-bearing bit)
 //!
@@ -56,8 +96,8 @@
 //! `tests/loom_arena.rs`.
 //!
 //! ## Tuning (all env, `OnceLock`-cached, contentidx pattern)
-//!   AXVERITY_QHM_VARIANT   off|mutex|lfa|lfb           (default off)
-//!   AXVERITY_QHM_CAP       total resident entry cap    (default 65536)
+//!   AXVERITY_QHM_VARIANT   off|mutex|lfa|lfb           (default lfb — shipped)
+//!   AXVERITY_QHM_CAP       total resident entry cap    (default 65536; size ≳ working set)
 //!   AXVERITY_QHM_BLOCK     per-shard seal threshold     (default per_shard_cap/4)
 //! A `qhm_flush` primitive seals every shard's pending batch — call it after a
 //! seed and before timed reads so the whole working set is resident (a real
@@ -88,16 +128,26 @@ enum Variant {
 fn variant() -> Variant {
     static V: OnceLock<Variant> = OnceLock::new();
     *V.get_or_init(|| {
+        // SHIPPED DEFAULT (AXVERITY_QHM_SHIP_LOCKFREE_V1): unset/empty/unknown ->
+        // `lfb` (lock-free reads, watermark-batched reclaim). This is the shipped
+        // engine: the 17-33x pull-heavy-aggregate win is live on the standard
+        // path with no env set. `off`/`mutex`/`lfa` remain explicitly selectable
+        // as non-default fallbacks (see module doc "Shipped default & fallbacks").
+        // No blocking primitive is introduced by this flip — the default arm only
+        // reselects an already-present variant; `lfb`'s reads are lock-free and
+        // its sole Mutex (per-shard `Mutex<Writer>`) predates this turn and is
+        // justified in the LOCK-FREE backend header (single-writer contract).
         match std::env::var("AXVERITY_QHM_VARIANT")
             .unwrap_or_default()
             .trim()
             .to_ascii_lowercase()
             .as_str()
         {
+            "off" => Variant::Off,
             "mutex" => Variant::Mutex,
             "lfa" => Variant::LfA,
             "lfb" => Variant::LfB,
-            _ => Variant::Off,
+            _ => Variant::LfB,
         }
     })
 }
