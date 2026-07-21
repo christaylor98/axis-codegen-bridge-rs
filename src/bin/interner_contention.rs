@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::Instant;
 
-use axis_codegen_bridge::runtime::value::{intern_str, intern_tag, get_str, init_runtime, Value};
+use axis_codegen_bridge::runtime::value::{intern_str, intern_tag, intern_tag_mutex, intern_tag_lockfree, get_str, init_runtime, Value};
 
 const TOTAL_OPS: usize = 24_000_000; // fixed total work, split across threads
 const KEYSET: usize = 64;            // distinct keys → mostly dedup-hit (read-under-lock) path
@@ -52,7 +52,9 @@ fn warm() {
     for i in 0..KEYSET {
         let s = format!("key_{:04}", i);
         let _ = intern_str(&s);
-        let _ = intern_tag(&s);
+        let _ = intern_tag(&s);          // default variant
+        let _ = intern_tag_mutex(&s);    // mutex store
+        let _ = intern_tag_lockfree(&s); // lock-free store
     }
 }
 
@@ -91,6 +93,48 @@ fn run_tag(ops_total: usize, p: usize) -> f64 {
             for i in 0..per {
                 let k = format!("key_{:04}", (tid + i) % KEYSET);
                 acc = acc.wrapping_add(intern_tag(&k) as usize); // Mutex interner path
+            }
+            sink.fetch_add(acc, Ordering::Relaxed);
+        })
+    }).collect();
+    for h in handles { h.join().unwrap(); }
+    std::hint::black_box(sink.load(Ordering::Relaxed));
+    t0.elapsed().as_secs_f64()
+}
+
+/// TAG via the explicit MUTEX variant (== `run_tag`, kept for symmetric labeling).
+fn run_tag_mutex(ops_total: usize, p: usize) -> f64 {
+    let per = ops_total / p;
+    let sink = Arc::new(AtomicUsize::new(0));
+    let t0 = Instant::now();
+    let handles: Vec<_> = (0..p).map(|tid| {
+        let sink = Arc::clone(&sink);
+        thread::spawn(move || {
+            let mut acc = 0usize;
+            for i in 0..per {
+                let k = format!("key_{:04}", (tid + i) % KEYSET);
+                acc = acc.wrapping_add(intern_tag_mutex(&k) as usize);
+            }
+            sink.fetch_add(acc, Ordering::Relaxed);
+        })
+    }).collect();
+    for h in handles { h.join().unwrap(); }
+    std::hint::black_box(sink.load(Ordering::Relaxed));
+    t0.elapsed().as_secs_f64()
+}
+
+/// TAG via the LOCK-FREE (RCU) variant — dedup-HIT reads never lock (candidate #3).
+fn run_tag_lockfree(ops_total: usize, p: usize) -> f64 {
+    let per = ops_total / p;
+    let sink = Arc::new(AtomicUsize::new(0));
+    let t0 = Instant::now();
+    let handles: Vec<_> = (0..p).map(|tid| {
+        let sink = Arc::clone(&sink);
+        thread::spawn(move || {
+            let mut acc = 0usize;
+            for i in 0..per {
+                let k = format!("key_{:04}", (tid + i) % KEYSET);
+                acc = acc.wrapping_add(intern_tag_lockfree(&k) as usize);
             }
             sink.fetch_add(acc, Ordering::Relaxed);
         })
@@ -165,6 +209,7 @@ fn main() {
              thread::available_parallelism().map(|n| n.get()).unwrap_or(0), ps);
     clone_throughput();
     report("STR load (migrated: Arc<str>, lock-free)", run_str, &ps);
-    report("TAG load (untouched: Mutex interner = old-str mechanism)", run_tag, &ps);
-    report("MIXED load (half STR, half TAG)", run_mixed, &ps);
+    report("TAG load — MUTEX variant (default, current)", run_tag_mutex, &ps);
+    report("TAG load — LOCKFREE variant (candidate #3, RCU)", run_tag_lockfree, &ps);
+    report("MIXED load (half STR, half TAG-mutex)", run_mixed, &ps);
 }

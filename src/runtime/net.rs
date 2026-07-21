@@ -41,6 +41,7 @@
 //!
 //! Identities are sha256(name_utf8) — same convention as the rest of the bridge.
 
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -55,34 +56,106 @@ enum Sock {
     Stream(TcpStream),
 }
 
-/// Process-global socket table, keyed by integer handle.
+// ── AXVERITY_BRIDGE_LOCKFREE_EXPERIMENT_V1 candidate #1 ──────────────────────
+//
+// The `registry()` Mutex is a SINGLE process-global lock taken on every
+// insert_sock / get_sock / tcp_close — i.e. on every accept, read, write, and
+// close, across all N `--entries` accept-pool workers. Grounding split its
+// contract in two:
+//   * STREAM sockets (tcp_connect / tcp_accept → read/write/close) are created
+//     AND used on ONE thread for their whole lifetime (accept→serve→close in
+//     one pg_accept_one iteration). ⇒ thread-local-safe.
+//   * LISTENER sockets (tcp_listen_shared) are created once at startup by one
+//     worker and then shared by all N workers calling tcp_accept on them. ⇒
+//     must stay shared, but are immutable + touched only at accept.
+//
+// So the `threadlocal` variant (flag `AXVERITY_NET_REGISTRY=threadlocal`, the
+// `shared` Mutex path the default) moves STREAM handles into a thread-local map
+// (no lock on the read/write/close hot path) while LISTENERS stay in the shared
+// registry. Handle-space split so get_sock/close can route with only the i64:
+//   * stream handles  — POSITIVE, from a thread-local counter (per-thread 1,2,…)
+//   * listener handles — NEGATIVE, from the global counter negated
+// Never 0 (the pg loop-state done-sentinel), never colliding across the sign
+// boundary. In `shared` mode BOTH kinds get positive handles in the shared
+// registry — byte-identical to the original behavior.
+fn net_threadlocal() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| matches!(std::env::var("AXVERITY_NET_REGISTRY").as_deref(), Ok("threadlocal")))
+}
+
+thread_local! {
+    /// Thread-owned stream table (threadlocal mode only). Reachable only by the
+    /// worker that accepted/connected the stream — the same thread that serves
+    /// and closes it. No lock, no Arc-registry, nothing shared. (logbuf.rs shape.)
+    static TL_STREAMS: RefCell<HashMap<i64, Arc<Sock>>> = RefCell::new(HashMap::new());
+    /// Per-thread positive handle counter; first stream on a thread is 1.
+    static TL_NEXT: Cell<i64> = const { Cell::new(1) };
+}
+
+/// Process-global socket table, keyed by integer handle. Holds every socket in
+/// `shared` mode; only listeners (negative handles) in `threadlocal` mode.
 fn registry() -> &'static Mutex<HashMap<i64, Arc<Sock>>> {
     static REG: OnceLock<Mutex<HashMap<i64, Arc<Sock>>>> = OnceLock::new();
     REG.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Allocate the next opaque socket handle (never reused within a process run).
+/// Allocate the next global opaque handle (never reused within a process run).
 fn next_handle() -> i64 {
     static COUNTER: AtomicI64 = AtomicI64::new(1);
     COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
-/// Register `sock` and return its fresh handle.
-fn insert_sock(sock: Sock) -> i64 {
-    let h = next_handle();
+/// Register a LISTENER and return its handle. Always shared (cross-thread by
+/// contract). Negative handle in threadlocal mode so get_sock routes it here.
+fn insert_listener(sock: Sock) -> i64 {
+    let h = if net_threadlocal() { -next_handle() } else { next_handle() };
     registry().lock().unwrap().insert(h, Arc::new(sock));
     h
 }
 
-/// Clone the `Arc` for `handle` out of the map, releasing the map lock before
-/// the caller does any (possibly blocking) I/O on it. Panics on unknown handle.
+/// Register a STREAM and return its handle. Thread-local (lock-free) in
+/// threadlocal mode; shared registry (original behavior) in shared mode.
+fn insert_stream(sock: Sock) -> i64 {
+    if net_threadlocal() {
+        TL_NEXT.with(|c| {
+            let h = c.get();
+            c.set(h + 1);
+            TL_STREAMS.with(|m| m.borrow_mut().insert(h, Arc::new(sock)));
+            h
+        })
+    } else {
+        let h = next_handle();
+        registry().lock().unwrap().insert(h, Arc::new(sock));
+        h
+    }
+}
+
+/// Clone the `Arc` for `handle`, releasing any lock before the caller does
+/// (possibly blocking) I/O on it. Routes to the thread-local stream table for a
+/// positive handle in threadlocal mode, else the shared registry. Panics on
+/// unknown handle.
 fn get_sock(handle: i64, who: &str) -> Arc<Sock> {
-    registry()
-        .lock()
-        .unwrap()
-        .get(&handle)
-        .cloned()
-        .unwrap_or_else(|| panic!("{}: unknown socket handle {}", who, handle))
+    if net_threadlocal() && handle > 0 {
+        TL_STREAMS
+            .with(|m| m.borrow().get(&handle).cloned())
+            .unwrap_or_else(|| panic!("{}: unknown socket handle {}", who, handle))
+    } else {
+        registry()
+            .lock()
+            .unwrap()
+            .get(&handle)
+            .cloned()
+            .unwrap_or_else(|| panic!("{}: unknown socket handle {}", who, handle))
+    }
+}
+
+/// Remove (close) `handle` from whichever table owns it.
+fn remove_sock(handle: i64) -> Option<Arc<Sock>> {
+    if net_threadlocal() && handle > 0 {
+        TL_STREAMS.with(|m| m.borrow_mut().remove(&handle))
+    } else {
+        registry().lock().unwrap().remove(&handle)
+    }
 }
 
 /// Extract an `Int` handle from the single-arg calling convention.
@@ -108,7 +181,7 @@ pub fn tcp_listen(v: Value) -> Value {
         .local_addr()
         .unwrap_or_else(|e| panic!("tcp_listen({}): local_addr: {}", port, e))
         .port();
-    let handle = insert_sock(Sock::Listener(listener));
+    let handle = insert_listener(Sock::Listener(listener));
     Value::Tuple(vec![Value::Int(handle), Value::Int(bound as i64)])
 }
 
@@ -159,7 +232,7 @@ pub fn tcp_listen_shared(v: Value) -> Value {
         .local_addr()
         .unwrap_or_else(|e| panic!("tcp_listen_shared({}): local_addr: {}", port, e))
         .port() as i64;
-    let handle = insert_sock(Sock::Listener(listener));
+    let handle = insert_listener(Sock::Listener(listener));
     shared.insert(port, (handle, bound));
     Value::Tuple(vec![Value::Int(handle), Value::Int(bound)])
 }
@@ -186,7 +259,7 @@ pub fn tcp_connect(args: Value) -> Value {
     };
     let stream = TcpStream::connect((host.as_str(), port))
         .unwrap_or_else(|e| panic!("tcp_connect({}:{}): {}", host, port, e));
-    Value::Int(insert_sock(Sock::Stream(stream)))
+    Value::Int(insert_stream(Sock::Stream(stream)))
 }
 
 // ── tcp_accept ───────────────────────────────────────────────────────────────
@@ -202,7 +275,7 @@ pub fn tcp_accept(v: Value) -> Value {
     let (stream, _addr) = listener
         .accept()
         .unwrap_or_else(|e| panic!("tcp_accept({}): {}", handle, e));
-    Value::Int(insert_sock(Sock::Stream(stream)))
+    Value::Int(insert_stream(Sock::Stream(stream)))
 }
 
 // ── tcp_read ─────────────────────────────────────────────────────────────────
@@ -260,7 +333,7 @@ pub fn tcp_write(args: Value) -> Value {
 #[track_caller]
 pub fn tcp_close(v: Value) -> Value {
     let handle = handle_arg(&v, "tcp_close");
-    match registry().lock().unwrap().remove(&handle) {
+    match remove_sock(handle) {
         Some(_) => Value::Unit,
         None => panic!("tcp_close: unknown socket handle {}", handle),
     }

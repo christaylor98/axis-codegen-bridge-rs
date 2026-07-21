@@ -1,4 +1,5 @@
 use std::sync::{OnceLock, Mutex, Arc};
+use std::sync::atomic::{AtomicPtr, Ordering};
 use std::collections::HashMap;
 pub use rust_decimal::Decimal;
 
@@ -139,12 +140,59 @@ pub fn get_str<S: AsRef<str>>(s: S) -> String {
 }
 
 // ── Tag table ────────────────────────────────────────────────────────────────
+//
+// The tag interner maps a Ctor's name (compile-time-ish literal like "Some",
+// "CIf", "ChannelMsg") to a small dense u32 that is embedded IN the Value and
+// crosses thread boundaries (see VALUE_MUST_STAY_SEND_SYNC above + channels.rs's
+// Value queue). So the u32->name mapping MUST be globally consistent across all
+// threads: a thread-local table would resolve a Value received from another
+// thread to the wrong (or no) name. Thread-local is therefore a CONTRACT
+// VIOLATION here, not merely a slower option — the interner must stay SHARED.
+//
+// AXVERITY_BRIDGE_LOCKFREE_EXPERIMENT_V1 candidate #3: two SHARED implementations
+// selected by the `AXVERITY_TAG_INTERNER` env flag, current Mutex path the
+// default fallback. Both stores are process-global and independent; the flag is
+// read once (OnceLock) so a process uses exactly one, never a mix.
+//
+//   * `mutex`    (default) — the original `Mutex<Vec>` + `Mutex<HashMap>` dedup.
+//                Every intern/get takes a lock, INCLUDING the common
+//                already-interned dedup-HIT read path. This is the exact shape
+//                of the pre-migration STRING_TABLE that Spike-4 found collapses
+//                at P>=8 (interner_contention.rs measures it via `run_tag`).
+//   * `lockfree` — RCU: an immutable `TagSnapshot { names, map }` published via
+//                an `AtomicPtr`. Reads (`get_tag_name`, and `intern_tag`'s
+//                dedup-HIT fast path) load the pointer Acquire and never lock.
+//                A genuinely-new tag takes the (uncontended: new tags are rare,
+//                write-once, ~dozens per process) `LF_WRITE` mutex, re-checks,
+//                clones the snapshot + appends, and publishes the new pointer
+//                Release. The prior snapshot is INTENTIONALLY LEAKED (never
+//                freed) so a reader holding a raw `&` can never hit a UAF — the
+//                no-reclaim RCU guarantee. Bounded: leaks are one small snapshot
+//                per DISTINCT tag ever seen (a tiny, write-once set), zero on the
+//                steady-state read path.
 
+// ---- shared flag (read once) ----
+fn tag_interner_lockfree() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| matches!(std::env::var("AXVERITY_TAG_INTERNER").as_deref(), Ok("lockfree")))
+}
+
+#[track_caller]
+pub fn intern_tag(name: &str) -> u32 {
+    if tag_interner_lockfree() { intern_tag_lockfree(name) } else { intern_tag_mutex(name) }
+}
+
+#[track_caller]
+pub fn get_tag_name(tag: u32) -> String {
+    if tag_interner_lockfree() { get_tag_name_lockfree(tag) } else { get_tag_name_mutex(tag) }
+}
+
+// ---- variant `mutex` (default, preserved verbatim) ----
 static TAG_TABLE: OnceLock<Mutex<Vec<String>>>         = OnceLock::new();
 static TAG_MAP:   OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
 
 #[track_caller]
-pub fn intern_tag(name: &str) -> u32 {
+pub fn intern_tag_mutex(name: &str) -> u32 {
     let map = TAG_MAP.get_or_init(|| Mutex::new(HashMap::new()));
     let mut map = map.lock().unwrap();
     if let Some(&t) = map.get(name) { return t; }
@@ -157,10 +205,63 @@ pub fn intern_tag(name: &str) -> u32 {
 }
 
 #[track_caller]
-pub fn get_tag_name(tag: u32) -> String {
+pub fn get_tag_name_mutex(tag: u32) -> String {
     let tbl = TAG_TABLE.get_or_init(|| Mutex::new(Vec::new()));
     let tbl = tbl.lock().unwrap();
     tbl.get(tag as usize).cloned().unwrap_or_else(|| "Unknown".to_string())
+}
+
+// ---- variant `lockfree` (RCU: lock-free reads, publish-on-new-tag) ----
+struct TagSnapshot {
+    names: Vec<String>,
+    map:   HashMap<String, u32>,
+}
+
+/// The published head. Always non-null after first access (an empty snapshot is
+/// installed on init). Swapped Release on each new-tag publish; loaded Acquire
+/// on every read. Snapshots are leaked, never freed (RCU no-reclaim).
+fn lf_head() -> &'static AtomicPtr<TagSnapshot> {
+    static H: OnceLock<AtomicPtr<TagSnapshot>> = OnceLock::new();
+    H.get_or_init(|| {
+        let empty = Box::new(TagSnapshot { names: Vec::new(), map: HashMap::new() });
+        AtomicPtr::new(Box::into_raw(empty))
+    })
+}
+
+/// Serializes ONLY the new-tag publish (never the read path). Uncontended in
+/// steady state — a genuinely new tag is a rare, ~startup-time event.
+static LF_WRITE: Mutex<()> = Mutex::new(());
+
+#[track_caller]
+pub fn intern_tag_lockfree(name: &str) -> u32 {
+    // Fast path: lock-free dedup-HIT (the common case the bench hammers).
+    // SAFETY: the head pointer is non-null after init and points at a snapshot
+    // that is never mutated in place and never freed, so the deref is sound.
+    let snap = unsafe { &*lf_head().load(Ordering::Acquire) };
+    if let Some(&t) = snap.map.get(name) { return t; }
+
+    // Slow path: a new tag. Serialize the publish and re-check under the lock
+    // (another thread may have installed `name` between the fast-path miss and
+    // acquiring the lock).
+    let _g = LF_WRITE.lock().unwrap_or_else(|p| p.into_inner());
+    let cur = unsafe { &*lf_head().load(Ordering::Acquire) };
+    if let Some(&t) = cur.map.get(name) { return t; }
+    let t = cur.names.len() as u32;
+    let mut names = cur.names.clone();
+    let mut map = cur.map.clone();
+    names.push(name.to_string());
+    map.insert(name.to_string(), t);
+    let raw = Box::into_raw(Box::new(TagSnapshot { names, map }));
+    // Publish the new immutable snapshot; the old one is intentionally leaked.
+    lf_head().store(raw, Ordering::Release);
+    t
+}
+
+#[track_caller]
+pub fn get_tag_name_lockfree(tag: u32) -> String {
+    // SAFETY: as intern_tag_lockfree's fast path — non-null, immutable, never freed.
+    let snap = unsafe { &*lf_head().load(Ordering::Acquire) };
+    snap.names.get(tag as usize).cloned().unwrap_or_else(|| "Unknown".to_string())
 }
 
 // ── Process args (captured once at startup) ──────────────────────────────────
@@ -176,4 +277,96 @@ pub fn init_runtime() {
 #[track_caller]
 pub fn get_process_args() -> &'static Vec<String> {
     PROCESS_ARGS.get_or_init(|| std::env::args().collect())
+}
+
+// ── Tag interner correctness (AXVERITY_BRIDGE_LOCKFREE_EXPERIMENT_V1, cand #3) ──
+//
+// Both variants share a process-global store that persists across tests in one
+// binary, so assertions are RELATIVE (idempotence, injectivity, round-trip),
+// never absolute u32 values, and each test uses a unique name prefix.
+#[cfg(test)]
+mod tag_interner_tests {
+    use super::*;
+    use std::collections::HashMap as Map;
+
+    /// lock-free path: interning is idempotent, injective, and round-trips —
+    /// the exact behavioral contract the mutex path provides.
+    #[test]
+    fn lockfree_idempotent_injective_roundtrip() {
+        let names: Vec<String> = (0..40).map(|i| format!("lf_basic_{:03}", i)).collect();
+        let ids: Vec<u32> = names.iter().map(|n| intern_tag_lockfree(n)).collect();
+        // idempotent: re-intern returns the same id
+        for (n, &id) in names.iter().zip(&ids) {
+            assert_eq!(intern_tag_lockfree(n), id, "re-intern of {n} changed id");
+        }
+        // injective: distinct names -> distinct ids
+        let uniq: std::collections::HashSet<u32> = ids.iter().copied().collect();
+        assert_eq!(uniq.len(), ids.len(), "two names collided on one id");
+        // round-trip: get_tag_name(id) == name
+        for (n, &id) in names.iter().zip(&ids) {
+            assert_eq!(&get_tag_name_lockfree(id), n);
+        }
+        // out-of-range -> "Unknown", matching the mutex path
+        assert_eq!(get_tag_name_lockfree(u32::MAX), "Unknown");
+    }
+
+    /// mutex path: same behavioral contract (parity anchor for the lock-free one).
+    #[test]
+    fn mutex_idempotent_injective_roundtrip() {
+        let names: Vec<String> = (0..40).map(|i| format!("mx_basic_{:03}", i)).collect();
+        let ids: Vec<u32> = names.iter().map(|n| intern_tag_mutex(n)).collect();
+        for (n, &id) in names.iter().zip(&ids) {
+            assert_eq!(intern_tag_mutex(n), id);
+        }
+        let uniq: std::collections::HashSet<u32> = ids.iter().copied().collect();
+        assert_eq!(uniq.len(), ids.len());
+        for (n, &id) in names.iter().zip(&ids) {
+            assert_eq!(&get_tag_name_mutex(id), n);
+        }
+        assert_eq!(get_tag_name_mutex(u32::MAX), "Unknown");
+    }
+
+    /// The candidate's OWN access pattern: N threads concurrently intern an
+    /// overlapping set of NEW tags (racing the slow-path publish) while reading
+    /// back. Global consistency must hold — every observation of a name agrees
+    /// on one id, every id maps back to exactly one name, and get_tag_name
+    /// round-trips. This is the cross-thread contract a thread-local table
+    /// would violate.
+    #[test]
+    fn lockfree_concurrent_interning_globally_consistent() {
+        use std::thread;
+        let names: Vec<String> = (0..50).map(|i| format!("lf_cc_{:03}", i)).collect();
+        let p = 16usize;
+        let handles: Vec<_> = (0..p).map(|_| {
+            let names = names.clone();
+            thread::spawn(move || {
+                let mut got = Vec::with_capacity(names.len() * 200);
+                for _ in 0..200 {
+                    for n in &names {
+                        got.push((n.clone(), intern_tag_lockfree(n)));
+                    }
+                }
+                got
+            })
+        }).collect();
+
+        let mut name_to_id: Map<String, u32> = Map::new();
+        let mut id_to_name: Map<u32, String> = Map::new();
+        for h in handles {
+            for (n, id) in h.join().unwrap() {
+                if let Some(&prev) = name_to_id.get(&n) {
+                    assert_eq!(prev, id, "name {n} observed with two ids ({prev} vs {id})");
+                }
+                name_to_id.insert(n.clone(), id);
+                if let Some(prev) = id_to_name.get(&id) {
+                    assert_eq!(prev, &n, "id {id} maps to two names ({prev} vs {n})");
+                }
+                id_to_name.insert(id, n);
+            }
+        }
+        assert_eq!(name_to_id.len(), 50, "not all distinct tags interned");
+        for (n, &id) in &name_to_id {
+            assert_eq!(&get_tag_name_lockfree(id), n, "round-trip failed for {n}");
+        }
+    }
 }

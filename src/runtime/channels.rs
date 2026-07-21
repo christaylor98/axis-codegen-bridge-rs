@@ -36,10 +36,39 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-/// A single channel's buffer. One `VecDeque` guarded by a mutex; senders push
-/// the back, `wait` drains the front. Shared across contexts via `Arc`.
+use super::mpsc_intrusive;
+
+/// A single channel's buffer. Two backends selected by the process-global
+/// `AXVERITY_CHANNEL_QUEUE` flag (read once):
+///   * `mutex`    (default) — one `VecDeque` guarded by std's `Mutex`; senders
+///                push the back, `wait` drains the front. Rust's stdlib lock.
+///   * `lockfree` — OUR own `mpsc_intrusive::Queue` (the same lock-free MPSC
+///                primitive that already backs `unified_wait`'s inbox): `push`
+///                is a single atomic swap from any number of producers; `wait`
+///                drains via the non-blocking `pop`. The receiver's OS-level
+///                Condvar wait is unchanged (irreducible — a blocking wait can't
+///                be made lock-free; same reason as oneshot's condvar).
+///
+/// AXVERITY_BRIDGE_LOCKFREE_EXPERIMENT_V1: getting our own IPC primitive onto the
+/// live path (not to win a microbenchmark — the send is already non-blocking in
+/// both backends — but so the native lock-free substrate becomes load-bearing
+/// and hardened rather than a shelved museum piece we bypass in favor of std).
+///
+/// CONTRACT NARROWING (flagged, not silent — hard-limit #5): `mpsc_intrusive` is
+/// MPSC, so the `lockfree` backend requires SINGLE-CONSUMER-per-channel (exactly
+/// one context ever `wait`s on a given channel). The current static topology
+/// (index-frame/hotmem-frame/wal-fast-frame each have one consumer) satisfies
+/// this; the `mutex` backend keeps the original multi-consumer-tolerant behavior.
 struct Channel {
-    queue: Mutex<VecDeque<Value>>,
+    queue: Mutex<VecDeque<Value>>,           // `mutex` backend (default)
+    lfq: mpsc_intrusive::Queue<Value>,       // `lockfree` backend (our primitive)
+}
+
+/// Backend selector, read once. Any value other than `lockfree` (incl. unset)
+/// keeps the default `Mutex<VecDeque>` path.
+fn channel_queue_lockfree() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| matches!(std::env::var("AXVERITY_CHANNEL_QUEUE").as_deref(), Ok("lockfree")))
 }
 
 /// Process-global channel registry, keyed by declared channel name.
@@ -58,7 +87,10 @@ fn registry() -> &'static Mutex<HashMap<String, Arc<Channel>>> {
 fn channel_for(name: &str) -> Arc<Channel> {
     let mut reg = registry().lock().unwrap();
     reg.entry(name.to_string())
-        .or_insert_with(|| Arc::new(Channel { queue: Mutex::new(VecDeque::new()) }))
+        .or_insert_with(|| Arc::new(Channel {
+            queue: Mutex::new(VecDeque::new()),
+            lfq: mpsc_intrusive::Queue::new(),
+        }))
         .clone()
 }
 
@@ -118,7 +150,11 @@ pub fn channel_send(args: Value) -> Value {
         other => panic!("channel_send: expected Tuple(Text, Value), got {:?}", other),
     };
     let chan = channel_for(&name);
-    chan.queue.lock().unwrap().push_back(data);
+    if channel_queue_lockfree() {
+        chan.lfq.push(data); // our lock-free MPSC primitive; single atomic swap
+    } else {
+        chan.queue.lock().unwrap().push_back(data);
+    }
     // Wake any thread blocked in wait() — see wake()'s doc comment. Notifying
     // after releasing the queue lock (implicit: the MutexGuard above already
     // dropped at the end of the previous statement) keeps this off the
@@ -173,12 +209,28 @@ pub fn wait(handler: fn(Value) -> Value) -> Value {
         panic!("wait: current context has no subscriptions (call event_subscribe first)");
     }
 
+    let lockfree = channel_queue_lockfree();
     let mut drained: Vec<Value> = Vec::new();
     loop {
         for chan in &chans {
-            let mut q = chan.queue.lock().unwrap();
-            while let Some(v) = q.pop_front() {
-                drained.push(v);
+            if lockfree {
+                // Single-consumer drain (this waiting context is the channel's
+                // sole consumer — see Channel's contract note). `Inconsistent`
+                // (a producer mid-push) is treated like empty for this round;
+                // the 2ms wake re-check below picks the item up next iteration,
+                // exactly as the mutex path's check-then-block safety net does.
+                loop {
+                    match chan.lfq.pop() {
+                        mpsc_intrusive::PopResult::Value(v) => drained.push(v),
+                        mpsc_intrusive::PopResult::Empty
+                        | mpsc_intrusive::PopResult::Inconsistent => break,
+                    }
+                }
+            } else {
+                let mut q = chan.queue.lock().unwrap();
+                while let Some(v) = q.pop_front() {
+                    drained.push(v);
+                }
             }
         }
         if !drained.is_empty() {
@@ -411,4 +463,113 @@ pub fn bchan_drain(args: Value) -> Value {
         other => panic!("bchan_drain: arg 2 (window_ms) expected Int, got {:?}", other),
     };
     Value::List(bounded_drain_batch(&name, max, window_ms))
+}
+
+// ── Unbounded channel_send → event_subscribe → wait unit coverage ────────────
+//
+// AXVERITY_BRIDGE_LOCKFREE_EXPERIMENT_V1: the unbounded IPC primitive shipped
+// with NO direct Rust unit test — only indirect M1 `--entries` coverage. These
+// put the primitive itself under test: (a) `wait` blocks until a producer sends,
+// (b) it drains EVERY pending message across ALL subscribed channels into one
+// List in subscription/FIFO order, and (c) it does NOT busy-spin while blocked
+// (per-thread CPU time ≪ wall time — the design correction in `wake()`'s doc).
+// Distinct channel names per test (the registry is process-global); SUBSCRIPTIONS
+// is thread-local so each test thread starts unsubscribed.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::value::intern_str;
+    use std::cell::RefCell;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    fn nm(s: &str) -> Value { Value::Str(intern_str(s)) }
+    fn send(ch: &str, n: i64) {
+        channel_send(Value::Tuple(vec![nm(ch), Value::Int(n)]));
+    }
+
+    thread_local! {
+        // `wait` runs the handler synchronously ON the waiting thread, so this
+        // thread-local correctly captures that thread's drained batch.
+        static DRAINED: RefCell<Vec<i64>> = RefCell::new(Vec::new());
+    }
+    fn capture(v: Value) -> Value {
+        if let Value::List(items) = v {
+            DRAINED.with(|d| {
+                let mut d = d.borrow_mut();
+                for it in items {
+                    if let Value::Int(n) = it { d.push(n); }
+                }
+            });
+        }
+        Value::Unit
+    }
+    fn take_drained() -> Vec<i64> { DRAINED.with(|d| std::mem::take(&mut *d.borrow_mut())) }
+
+    fn thread_cpu_nanos() -> u128 {
+        let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: valid out-param; CLOCK_THREAD_CPUTIME_ID reads THIS thread's CPU time.
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts); }
+        ts.tv_sec as u128 * 1_000_000_000 + ts.tv_nsec as u128
+    }
+
+    /// (b)+(c): `wait` drains every pending message across ALL subscribed channels
+    /// into ONE List, in subscription order with FIFO within each channel.
+    #[test]
+    fn wait_drains_all_subscribed_channels_in_order() {
+        let (a, b) = ("t_order_a", "t_order_b");
+        event_subscribe(nm(a));
+        event_subscribe(nm(b));
+        // Enqueue everything BEFORE waiting so the first wait() drains it all.
+        send(a, 10); send(a, 11);
+        send(b, 20); send(b, 21);
+        let _ = take_drained();
+        wait(capture);
+        // subscription order [a, b]; FIFO within each.
+        assert_eq!(take_drained(), vec![10, 11, 20, 21], "drain-all / fan-in order wrong");
+    }
+
+    /// (a): `wait` BLOCKS until a producer on another thread sends, then returns
+    /// with exactly that message (never an empty early return).
+    #[test]
+    fn wait_blocks_until_message_arrives() {
+        event_subscribe(nm("t_block"));
+        let _ = take_drained();
+        let producer = thread::spawn(|| {
+            thread::sleep(Duration::from_millis(60));
+            send("t_block", 77);
+        });
+        let t0 = Instant::now();
+        wait(capture); // must block ~60ms until the producer sends
+        let waited = t0.elapsed();
+        producer.join().unwrap();
+        assert_eq!(take_drained(), vec![77], "wait returned without the produced message");
+        assert!(waited >= Duration::from_millis(40),
+            "wait returned in {waited:?} — it did not actually block for the producer");
+    }
+
+    /// (c): while blocked, `wait` must NOT busy-spin — its per-thread CPU time
+    /// over a ~120ms block is a small fraction of wall time. A `yield_now` spin
+    /// (the regression `wake()` documents) would make CPU ≈ wall.
+    #[test]
+    fn wait_does_not_busy_spin() {
+        event_subscribe(nm("t_nospin"));
+        let _ = take_drained();
+        let producer = thread::spawn(|| {
+            thread::sleep(Duration::from_millis(120));
+            send("t_nospin", 5);
+        });
+        let cpu0 = thread_cpu_nanos();
+        let wall0 = Instant::now();
+        wait(capture);
+        let cpu = thread_cpu_nanos() - cpu0;
+        let wall = wall0.elapsed().as_nanos();
+        producer.join().unwrap();
+        assert_eq!(take_drained(), vec![5]);
+        assert!(wall > 80_000_000, "wall {wall}ns too short to be a meaningful block");
+        // Generous 25% ceiling tolerates the 2ms re-check loop + spurious
+        // cross-test condvar wakeups under the parallel test runner.
+        assert!((cpu as f64) < 0.25 * (wall as f64),
+            "wait burned {cpu}ns CPU over {wall}ns wall — looks like a busy-spin");
+    }
 }
