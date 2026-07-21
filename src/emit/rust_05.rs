@@ -187,6 +187,10 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("debug_trace",   "axis_codegen_bridge::runtime::io::debug_trace");
     m.insert("fs_read_last_line", "axis_codegen_bridge::runtime::io::fs_read_last_line");
 
+    // Read-only SQLite row access (AXSEM_W2_STORAGE_RETROFIT_V1 — sqlite_ro.rs).
+    // ONE dump-producer fn; the module hosts no write/exec/DDL/DML surface.
+    m.insert("sqlite_ro_tsv", "axis_codegen_bridge::runtime::sqlite_ro::sqlite_ro_tsv");
+
     // Process
     m.insert("proc_args",  "axis_codegen_bridge::runtime::process::proc_args");
     m.insert("proc_exit",  "axis_codegen_bridge::runtime::process::proc_exit");
@@ -399,6 +403,14 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("cursor_len",           "axis_codegen_bridge::runtime::cursor::cursor_len");
     m.insert("cursor_close",         "axis_codegen_bridge::runtime::cursor::cursor_close");
     m.insert("groupby_cursor_enabled", "axis_codegen_bridge::runtime::cursor::groupby_cursor_enabled");
+    // ── Input-consuming cursor + native sort + finer mode selector
+    //    (cursor.rs — AXVERITY_READPATH_CLOSEOUT_V1 Part 1): retire the O(M²)
+    //    input re-threading (cursor_load/cursor_line) and the O(M³) selection
+    //    sort (cursor_sort), measured incrementally via groupby_cursor_mode. ────
+    m.insert("cursor_load",          "axis_codegen_bridge::runtime::cursor::cursor_load");
+    m.insert("cursor_line",          "axis_codegen_bridge::runtime::cursor::cursor_line");
+    m.insert("cursor_sort",          "axis_codegen_bridge::runtime::cursor::cursor_sort");
+    m.insert("groupby_cursor_mode",  "axis_codegen_bridge::runtime::cursor::groupby_cursor_mode");
 
     // ── Name-binding volatile head pointer: double-buffered toggle cell
     //    (nameptr.rs — BRIDGE_NAMEPTR_V1, AXVERITY_INSERT_PATH_FASTPATH Landing 2,
