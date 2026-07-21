@@ -84,6 +84,32 @@ pub fn loop_while(
     acc
 }
 
+/// `fold(xs, init, step) -> Value` — left fold. Threads ONLY the accumulator
+/// through `step`; the list is iterated natively here. `step` receives a
+/// `Tuple(acc, elem)` and returns the new acc.
+///
+/// This is the O(n) counterpart to accumulating with `loop_while`: `loop_while`
+/// re-clones its ENTIRE threaded state every iteration (`cond(acc.clone())`), so
+/// when the unconsumed input rides in that state the cost is O(n^2). `fold` keeps
+/// the input out of the threaded value — only the (small) accumulator is
+/// re-materialized per element. AXSEM_W2_ACCUM_PERF_V1.
+///
+/// Native multi-arg Rust signature — `step` is a bare fn path resolved at emit
+/// time from a `Fn`-typed pool entry (arg kinds `[Data, Data, FnRef]`).
+#[track_caller]
+pub fn fold(list: Value, init: Value, step: fn(Value) -> Value) -> Value {
+    match list {
+        Value::List(items) => {
+            let mut acc = init;
+            for item in items {
+                acc = step(Value::Tuple(vec![acc, item]));
+            }
+            acc
+        }
+        other => panic!("fold: expected List, got {:?}", other),
+    }
+}
+
 // ── Phase 2: P1 vocabulary — HOFs ───────────────────────────────────────────
 
 /// `flat_map(xs, callee) -> ValueList` — apply `callee` to each element,
