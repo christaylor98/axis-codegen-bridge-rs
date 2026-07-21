@@ -34,6 +34,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::OnceLock;
 
 use sha2::{Digest, Sha256};
 
@@ -382,6 +383,64 @@ where
     (fr_seg, fr_off, scanned)
 }
 
+/// On-disk byte length of the framed WAL segment `<prefix><seq>.log`, or `None`
+/// if it does not exist. Used by `do_replay`'s cheap stat-guard to decide whether
+/// a frontier segment has grown at all before paying a whole-file read. Mirrors
+/// `fieldidx::segment_len`.
+fn segment_len(prefix: &str, seq: i64) -> Option<u64> {
+    std::fs::metadata(format!("{}{}.log", prefix, seq)).ok().map(|m| m.len())
+}
+
+/// Full (re)build of shard `sh`: load the disposable snapshot (if valid), then
+/// forward-replay the framed WAL from the SNAPSHOT watermark via the ONE shared
+/// scanner `walk_frames`, keying each frame by its payload digest. This is the
+/// cold-start / fresh-handle cost, factored out of `walidx_rebuild` so the
+/// resident path can share it. Content-hash index visitor: key = payload digest,
+/// value = (seg, payload offset, payload len); the envelope is ignored here (the
+/// pk-index consumes it via the same walk in pkindex.rs). Returns frames scanned.
+fn do_rebuild(sh: &mut IdxShard, prefix: &str, snap_path: &str) -> i64 {
+    let (wm_seg, wm_off) = load_snapshot(&mut sh.map, snap_path);
+    bump_frontier(sh, wm_seg, wm_off);
+    let map = &mut sh.map;
+    let (fr_seg, fr_off, scanned) =
+        walk_frames(prefix, wm_seg, wm_off, |seg, off, len, _env, _payload, hexh| {
+            map.insert(hexh.to_string(), (seg, off, len));
+        });
+    bump_frontier(sh, fr_seg, fr_off); // torn/exhausted → frontier
+    scanned
+}
+
+/// GENUINELY-INCREMENTAL replay of shard `sh`: forward-replay the framed WAL from
+/// the HANDLE'S OWN frontier (`sh.fseg/sh.foff`), NOT the snapshot watermark. This
+/// is the whole point of AXVERITY_PULLOBJECT_RESIDENCY_BUILD_V1 — `walidx_rebuild`
+/// always re-walks from the snapshot, ignoring the caller's position (the same
+/// finding the field-index residency build made for `fieldidx_rebuild`). Returns
+/// frames scanned SINCE the frontier — a coherent refresh costs O(delta), not
+/// O(whole store).
+///
+/// Cheap stat-guard: if the frontier segment has not grown past our offset AND no
+/// later segment exists, there is nothing to replay — skip the whole-file read
+/// (`read_segment` reads the ENTIRE segment). This is what makes the M within-query
+/// replays of a large aggregate O(1) each (one/two `stat`s) in the common
+/// zero-delta case, instead of O(M × segment-size) I/O that would erase the win —
+/// byte-for-byte the same guard `fieldidx::do_replay` uses.
+fn do_replay(sh: &mut IdxShard, prefix: &str) -> i64 {
+    let (from_seg, from_off) = (sh.fseg, sh.foff);
+    let has_next = segment_len(prefix, from_seg + 1).is_some();
+    match segment_len(prefix, from_seg) {
+        Some(len) if (len as i64) <= from_off && !has_next => return 0, // no delta
+        None if !has_next => return 0, // frontier segment gone, no successor
+        _ => {}
+    }
+    let map = &mut sh.map;
+    let (fr_seg, fr_off, scanned) =
+        walk_frames(prefix, from_seg, from_off, |seg, off, len, _env, _payload, hexh| {
+            map.insert(hexh.to_string(), (seg, off, len));
+        });
+    bump_frontier(sh, fr_seg, fr_off);
+    scanned
+}
+
 /// `walidx_rebuild(h: Int, seg_prefix: Text, snap_path: Text) -> Int`
 ///
 /// Reconstruct the shard `h`: load the disposable snapshot at `snap_path` (if
@@ -414,18 +473,342 @@ pub fn walidx_rebuild(args: Value) -> Value {
         let sh = idx
             .get_mut(&h)
             .unwrap_or_else(|| panic!("walidx_rebuild: unknown handle {}", h));
-
-        let (wm_seg, wm_off) = load_snapshot(&mut sh.map, &snap_path);
-        bump_frontier(sh, wm_seg, wm_off);
-        // Content-hash index visitor: key = payload digest, value = (seg, payload
-        // offset, payload len). The envelope is ignored here (the pk-index consumes
-        // it via the same walk in pkindex.rs). One scanner, two projections.
-        let map = &mut sh.map;
-        let (fr_seg, fr_off, scanned) = walk_frames(&prefix, wm_seg, wm_off, |seg, off, len, _env, _payload, hexh| {
-            map.insert(hexh.to_string(), (seg, off, len));
-        });
-        bump_frontier(sh, fr_seg, fr_off); // torn/exhausted → frontier
-        scanned
+        do_rebuild(sh, &prefix, &snap_path)
     });
     Value::Int(scanned)
+}
+
+/// `walidx_replay(h: Int, seg_prefix: Text) -> Int`
+///
+/// AXVERITY_PULLOBJECT_RESIDENCY_BUILD_V1 — the genuinely-incremental primitive,
+/// the exact analogue of `fieldidx_replay`. Replay the framed WAL into shard `h`
+/// starting from the HANDLE'S OWN frontier (`sh.fseg/sh.foff`), returning the
+/// number of frames walked (the delta since the last rebuild/replay of THIS
+/// handle). Unlike `walidx_rebuild`, it does NOT reload the snapshot and does NOT
+/// restart from the snapshot watermark. The returned count is the direct
+/// incrementality instrument (hard-limit VERIFY_GENUINE_INCREMENTALITY): after
+/// appending K frames it returns K, not base+K; with no new frames it returns 0.
+#[track_caller]
+pub fn walidx_replay(args: Value) -> Value {
+    let es = match args {
+        Value::Tuple(es) if es.len() == 2 => es,
+        other => panic!("walidx_replay: expected Tuple(Int, Text), got {:?}", other),
+    };
+    let h = arg_int(&es[0], "walidx_replay", 0);
+    let prefix = arg_str(&es[1], "walidx_replay", 1);
+    let scanned = IDX.with(|idx| {
+        let mut idx = idx.borrow_mut();
+        let sh = idx
+            .get_mut(&h)
+            .unwrap_or_else(|| panic!("walidx_replay: unknown handle {}", h));
+        do_replay(sh, &prefix)
+    });
+    Value::Int(scanned)
+}
+
+// ── Per-worker RESIDENT WAL-index handles (AXVERITY_PULLOBJECT_RESIDENCY_BUILD_V1)
+//
+// This is the direct analogue of `fieldidx.rs`'s resident field-index handles,
+// applied to the CONTENT-HASH index that pull_object's WAL tier consumes
+// (wal_has/wal_read via wal_find_shard_step). The bug it closes:
+// `walidx_open` never closes, and pull_object opens ~3 fresh full-store shards
+// per row (wal_has → wal_find_shard_step, then wal_read → wal_find_shard AGAIN +
+// its own rebuild). During a large-M aggregate (pred_run pulls M rows) that is
+// ~O(M) leaked full-store index shards — the unbounded VmHWM climb
+// (gap:axverity-oom-pullobject-rescan-via-predrun-OPEN, ~7.76 GB at M=3000).
+//
+// A thread-local map `shard -> resident handle` lets a long-lived pg_server worker
+// reuse ONE content-index shard across every pull_object instead of the fresh-open
+// (leaked) + full-rebuild-per-call fallback. Thread-LOCAL only — same
+// nothing-shared/nothing-locked model as `walindex`/`fieldidx`/`logbuf`/`cursor`.
+// The resident shard's memory is O(distinct objects in the WAL) — ONE (seg,off,len)
+// entry per object regardless of how many times each is pulled — so it is BOUNDED
+// by construction: pulling the same or different objects during a large aggregate
+// is a HashMap lookup, never a new allocation. (This is the central unknown the
+// memory-bound test verifies rather than assumes.)
+//
+// Coherency is by REPLAY-BEFORE-READ: `walidx_res_get` replays each resident handle
+// from its own frontier before every lookup, so it is always current at read time
+// regardless of scope. The scopes (query / conn / server) differ ONLY in WHEN the
+// handle is dropped (amortization of the one cold rebuild), never in correctness —
+// the scope-boundary reset is `walidx_res_scope`.
+
+thread_local! {
+    static RESIDENT: RefCell<HashMap<String, i64>> = RefCell::new(HashMap::new());
+}
+
+/// The residency scope, read once per process from `AXVERITY_WALIDX_RESIDENCY`:
+///   unset / `off` / `0` / `false` → `"off"`    (fresh-handle-per-call fallback,
+///                                                byte-identical to pre-build)
+///   `query`                        → `"query"`  (resident within one query)
+///   `conn` / `connection`          → `"conn"`   (resident within one connection)
+///   `server` / `1` / `on` / `true` → `"server"` (resident for the worker's life)
+/// Default OFF — per AXVERITY_PULLOBJECT_RESIDENCY_BUILD_V1's FLAG_WITH_FALLBACK
+/// hard-limit the flag ships default-off with the fresh-rebuild path preserved;
+/// Chris decides any flip after reviewing the measured results. This is a SEPARATE
+/// flag from AXVERITY_FIELDIDX_RESIDENCY (the two indexes are independently gated).
+fn residency_mode() -> &'static str {
+    static MODE: OnceLock<&'static str> = OnceLock::new();
+    MODE.get_or_init(|| {
+        match std::env::var("AXVERITY_WALIDX_RESIDENCY")
+            .ok()
+            .as_deref()
+            .map(|s| s.to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("query") => "query",
+            Some("conn") | Some("connection") => "conn",
+            Some("server") | Some("1") | Some("on") | Some("true") => "server",
+            _ => "off",
+        }
+    })
+}
+
+/// `walidx_residency_mode(_: Unit) -> Text` — the flag, for M1 dispatch in
+/// `wal_read` / `wal_find_shard_step`. `off` selects the preserved
+/// fresh-handle-per-call path (byte-identical to pre-build).
+#[track_caller]
+pub fn walidx_residency_mode(_arg: Value) -> Value {
+    Value::Str(intern_str(residency_mode()))
+}
+
+/// `walidx_res_get(shard: Text, seg_prefix: Text, snap_path: Text, key: Text) -> Text`
+///
+/// The resident content-index lookup used by pull_object's WAL tier
+/// (wal_read / wal_find_shard_step) when residency is enabled. Get-or-create the
+/// resident handle for `shard`; bring it current (first touch → full `do_rebuild`;
+/// thereafter → incremental `do_replay` from its own frontier); return
+/// `"<seg>\t<off>\t<len>"` for `key`, or `""` if absent — byte-identical to what
+/// `walidx_get` returns on a freshly-rebuilt handle. The empty-string return
+/// doubles as the membership answer (wal_find_shard_step tests non-empty), so one
+/// resident primitive serves both the has-fan-out and the read.
+#[track_caller]
+pub fn walidx_res_get(args: Value) -> Value {
+    let es = match args {
+        Value::Tuple(es) if es.len() == 4 => es,
+        other => panic!(
+            "walidx_res_get: expected Tuple(shard, prefix, snap, key), got {:?}",
+            other
+        ),
+    };
+    let shard = arg_str(&es[0], "walidx_res_get", 0);
+    let prefix = arg_str(&es[1], "walidx_res_get", 1);
+    let snap = arg_str(&es[2], "walidx_res_get", 2);
+    let key = arg_str(&es[3], "walidx_res_get", 3);
+
+    let existing = RESIDENT.with(|r| r.borrow().get(&shard).copied());
+    let h = match existing {
+        Some(h) => h,
+        None => {
+            let h = next_handle();
+            IDX.with(|idx| {
+                idx.borrow_mut().insert(
+                    h,
+                    IdxShard { shard: shard.clone(), map: HashMap::new(), fseg: 0, foff: 0 },
+                );
+            });
+            RESIDENT.with(|r| {
+                r.borrow_mut().insert(shard.clone(), h);
+            });
+            h
+        }
+    };
+
+    IDX.with(|idx| {
+        let mut idx = idx.borrow_mut();
+        let sh = idx
+            .get_mut(&h)
+            .unwrap_or_else(|| panic!("walidx_res_get: resident handle {} vanished", h));
+        if existing.is_none() {
+            do_rebuild(sh, &prefix, &snap);
+        } else {
+            do_replay(sh, &prefix);
+        }
+        let out = match sh.map.get(&key) {
+            Some((seg, off, len)) => format!("{}\t{}\t{}", seg, off, len),
+            None => String::new(),
+        };
+        Value::Str(intern_str(&out))
+    })
+}
+
+/// `walidx_res_scope(which: Text) -> Unit`
+///
+/// Scope-boundary reset: drop ALL resident handles (and free the underlying IDX
+/// shards, so a long-lived worker does not leak) IFF the active residency mode
+/// equals `which`. Called by the server loop with `"query"` at each query start
+/// and `"conn"` at each connection start. Under `server` mode neither boundary
+/// matches, so handles persist for the worker's life; under `off` nothing is
+/// resident so it is always a no-op. Byte-for-byte the same discipline as
+/// `fieldidx_res_scope`.
+#[track_caller]
+pub fn walidx_res_scope(arg: Value) -> Value {
+    let which = match arg {
+        Value::Str(h) => get_str(h),
+        other => panic!("walidx_res_scope: expected Text, got {:?}", other),
+    };
+    if residency_mode() == which {
+        RESIDENT.with(|r| {
+            let mut r = r.borrow_mut();
+            IDX.with(|idx| {
+                let mut idx = idx.borrow_mut();
+                for h in r.values() {
+                    idx.remove(h);
+                }
+            });
+            r.clear();
+        });
+    }
+    Value::Unit
+}
+
+#[cfg(test)]
+mod residency_tests {
+    //! AXVERITY_PULLOBJECT_RESIDENCY_BUILD_V1 — direct incrementality instrument
+    //! (hard-limit VERIFY_GENUINE_INCREMENTALITY). Builds real 84-byte framed WAL
+    //! segments (`H|P|V|env|payload`, the ONE layout `walk_frames` parses) and
+    //! asserts `do_replay` walks only the DELTA (K frames), never the whole store
+    //! (base+K), and that the resulting (seg,off,len) map is correct. Mirrors
+    //! `fieldidx::residency_tests`.
+    use super::*;
+    use sha2::{Digest, Sha256};
+    use std::io::Write as _;
+
+    fn frame(payload: &str) -> Vec<u8> {
+        let hexh: String = Sha256::digest(payload.as_bytes()).iter().map(|b| format!("{:02x}", b)).collect();
+        let env = "";
+        let mut out = Vec::with_capacity(84 + payload.len());
+        out.extend_from_slice(hexh.as_bytes()); // 64 H
+        out.extend_from_slice(format!("{:010}", payload.len()).as_bytes()); // 10 P
+        out.extend_from_slice(format!("{:010}", env.len()).as_bytes()); // 10 V
+        out.extend_from_slice(env.as_bytes());
+        out.extend_from_slice(payload.as_bytes());
+        out
+    }
+
+    // A distinct object payload per i (its own content hash → its own key).
+    fn obj_frame(i: usize) -> Vec<u8> {
+        frame(&format!("RECORD\tgrp=g\tprice={:05}\tcolor=c{}", i % 100000, i))
+    }
+    // The hex key an object frame indexes under (payload digest, walk_frames' hexh).
+    fn obj_key(i: usize) -> String {
+        Sha256::digest(format!("RECORD\tgrp=g\tprice={:05}\tcolor=c{}", i % 100000, i).as_bytes())
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect()
+    }
+
+    fn append_frames(path: &str, range: std::ops::Range<usize>) {
+        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path).unwrap();
+        for i in range {
+            f.write_all(&obj_frame(i)).unwrap();
+        }
+        f.sync_all().unwrap();
+    }
+
+    #[test]
+    fn replay_walks_only_the_delta_not_the_whole_store() {
+        let dir = std::env::temp_dir().join(format!("walidx_res_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let prefix = format!("{}/seg-", dir.to_str().unwrap());
+        let seg0 = format!("{}0.log", prefix);
+
+        let b = 500usize;
+        append_frames(&seg0, 0..b);
+        let mut sh = IdxShard { shard: "0".into(), map: HashMap::new(), fseg: 0, foff: 0 };
+        let scanned_full = do_rebuild(&mut sh, &prefix, "/nonexistent.snap");
+        assert_eq!(scanned_full, b as i64, "cold build must walk the whole store");
+        assert_eq!(sh.map.len(), b, "cold build indexed all base objects");
+
+        let k = 37usize;
+        append_frames(&seg0, b..(b + k));
+        let scanned_delta = do_replay(&mut sh, &prefix);
+        assert_eq!(
+            scanned_delta, k as i64,
+            "replay walked {} frames; genuine incremental replay must walk exactly the {}-frame delta, not base+K={}",
+            scanned_delta, k, b + k
+        );
+        assert_eq!(sh.map.len(), b + k, "delta objects merged in");
+        assert!(sh.map.contains_key(&obj_key(b + k - 1)), "the new object must resolve");
+
+        let scanned_none = do_replay(&mut sh, &prefix);
+        assert_eq!(scanned_none, 0, "zero-delta replay must scan 0 frames (stat-guard)");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn replay_crosses_a_segment_rotation() {
+        let dir = std::env::temp_dir().join(format!("walidx_res_rot_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let prefix = format!("{}/seg-", dir.to_str().unwrap());
+
+        append_frames(&format!("{}0.log", prefix), 0..10);
+        let mut sh = IdxShard { shard: "0".into(), map: HashMap::new(), fseg: 0, foff: 0 };
+        assert_eq!(do_rebuild(&mut sh, &prefix, "/nonexistent.snap"), 10);
+
+        append_frames(&format!("{}1.log", prefix), 10..25);
+        assert_eq!(do_replay(&mut sh, &prefix), 15, "replay must cross into segment 1");
+        assert_eq!(sh.map.len(), 25);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn res_get_matches_a_fresh_rebuild_and_is_bounded() {
+        // The resident handle must return byte-identical meta to a fresh rebuild,
+        // and its map size must stay == distinct objects no matter how many times
+        // we look up (bounded by construction, not by number of lookups).
+        let dir = std::env::temp_dir().join(format!("walidx_res_get_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let prefix = format!("{}/seg-", dir.to_str().unwrap());
+        let n = 200usize;
+        append_frames(&format!("{}0.log", prefix), 0..n);
+
+        // fresh rebuild reference
+        let mut ref_sh = IdxShard { shard: "s".into(), map: HashMap::new(), fseg: 0, foff: 0 };
+        do_rebuild(&mut ref_sh, &prefix, "/nope.snap");
+
+        // resident handle, keyed by shard "s"
+        let shard = "s".to_string();
+        let get = |i: usize| -> String {
+            match walidx_res_get(Value::Tuple(vec![
+                Value::Str(intern_str(&shard)),
+                Value::Str(intern_str(&prefix)),
+                Value::Str(intern_str("/nope.snap")),
+                Value::Str(intern_str(&obj_key(i))),
+            ])) {
+                Value::Str(h) => get_str(&h),
+                _ => panic!("res_get non-Text"),
+            }
+        };
+        // 10× the object count of lookups (many repeats) — map must not grow.
+        for _round in 0..10 {
+            for i in 0..n {
+                let (seg, off, len) = ref_sh.map.get(&obj_key(i)).cloned().unwrap();
+                assert_eq!(get(i), format!("{}\t{}\t{}", seg, off, len), "resident meta must match fresh rebuild");
+            }
+        }
+        let h = RESIDENT.with(|r| *r.borrow().get(&shard).unwrap());
+        let sz = IDX.with(|idx| idx.borrow().get(&h).unwrap().map.len());
+        assert_eq!(sz, n, "resident map size == distinct objects, not lookups");
+        // absent key → ""
+        assert_eq!(get_absent(&shard, &prefix), "", "absent key returns empty");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn get_absent(shard: &str, prefix: &str) -> String {
+        match walidx_res_get(Value::Tuple(vec![
+            Value::Str(intern_str(shard)),
+            Value::Str(intern_str(prefix)),
+            Value::Str(intern_str("/nope.snap")),
+            Value::Str(intern_str(&"f".repeat(64))),
+        ])) {
+            Value::Str(h) => get_str(&h),
+            _ => panic!("res_get non-Text"),
+        }
+    }
 }

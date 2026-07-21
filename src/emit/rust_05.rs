@@ -354,6 +354,13 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("walidx_get",           "axis_codegen_bridge::runtime::walindex::walidx_get");
     m.insert("walidx_snapshot",      "axis_codegen_bridge::runtime::walindex::walidx_snapshot");
     m.insert("walidx_rebuild",       "axis_codegen_bridge::runtime::walindex::walidx_rebuild");
+    // ── WAL content-index RESIDENCY (AXVERITY_PULLOBJECT_RESIDENCY_BUILD_V1):
+    //    genuinely-incremental replay-from-frontier + per-worker resident handles
+    //    behind AXVERITY_WALIDX_RESIDENCY (default off = fresh-handle fallback).
+    m.insert("walidx_replay",          "axis_codegen_bridge::runtime::walindex::walidx_replay");
+    m.insert("walidx_res_get",         "axis_codegen_bridge::runtime::walindex::walidx_res_get");
+    m.insert("walidx_residency_mode",  "axis_codegen_bridge::runtime::walindex::walidx_residency_mode");
+    m.insert("walidx_res_scope",       "axis_codegen_bridge::runtime::walindex::walidx_res_scope");
     // ── pk-index: rebuildable (table,pk)->current-hash projection over the same
     //    shared frame-walk (pkindex.rs — BRIDGE_PKINDEX_V1,
     //    AXVERITY_UNIFIED_DURABLE_STREAMS_V1 phase 2). Replay-only, never fsynced.
