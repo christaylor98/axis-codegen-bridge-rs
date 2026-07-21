@@ -147,6 +147,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("find_index",  "axis_codegen_bridge::runtime::iter::find_index");
     m.insert("count",       "axis_codegen_bridge::runtime::iter::count");
     m.insert("loop_while",  "axis_codegen_bridge::runtime::iter::loop_while");
+    m.insert("fold",        "axis_codegen_bridge::runtime::iter::fold");
     m.insert("range_step",  "axis_codegen_bridge::runtime::iter::range_step");
     m.insert("repeat",      "axis_codegen_bridge::runtime::iter::repeat");
     m.insert("enumerate",   "axis_codegen_bridge::runtime::iter::enumerate");
@@ -393,6 +394,13 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("fieldidx_get",         "axis_codegen_bridge::runtime::fieldidx::fieldidx_get");
     m.insert("fieldidx_snapshot",    "axis_codegen_bridge::runtime::fieldidx::fieldidx_snapshot");
     m.insert("fieldidx_rebuild",     "axis_codegen_bridge::runtime::fieldidx::fieldidx_rebuild");
+    // ── Field-index RESIDENCY (AXVERITY_FIELDINDEX_RESIDENCY_BUILD_V1):
+    //    genuinely-incremental replay-from-frontier + per-worker resident handles
+    //    behind AXVERITY_FIELDIDX_RESIDENCY (default off = fresh-handle fallback).
+    m.insert("fieldidx_replay",         "axis_codegen_bridge::runtime::fieldidx::fieldidx_replay");
+    m.insert("fieldidx_res_get",        "axis_codegen_bridge::runtime::fieldidx::fieldidx_res_get");
+    m.insert("fieldidx_residency_mode", "axis_codegen_bridge::runtime::fieldidx::fieldidx_residency_mode");
+    m.insert("fieldidx_res_scope",      "axis_codegen_bridge::runtime::fieldidx::fieldidx_res_scope");
 
     // ── Mutable append cursor: per-thread growable buffer to move a loop's
     //    growing OUTPUT accumulator off the M1 capture-free loop state
@@ -634,6 +642,7 @@ fn fn_arg_kinds() -> HashMap<&'static str, Vec<ArgKind>> {
     m.insert("count",      vec![Data, FnRef]);
     m.insert("loop_count", vec![Data, Data, FnRef]);
     m.insert("loop_while", vec![Data, FnRef, FnRef, Data]);
+    m.insert("fold",       vec![Data, Data, FnRef]);
     // Value-coercion dispatchers — runtime tag dispatch over three FnRef arms
     // in positional Int/Dec/Float order (BRIDGE_VALUE_COERCION_V1).
     m.insert("bridge_to_dec",   vec![Data, FnRef, FnRef, FnRef]);

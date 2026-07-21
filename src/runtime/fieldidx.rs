@@ -43,6 +43,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use super::value::{get_str, intern_str, Value};
 
@@ -284,6 +285,63 @@ fn index_payload(map: &mut HashMap<String, Vec<String>>, text: &str, own_hash: &
     }
 }
 
+/// On-disk byte length of the framed WAL segment `<prefix><seq>.log`, or `None`
+/// if it does not exist. Used by `do_replay`'s cheap stat-guard to decide whether
+/// a frontier segment has grown at all before paying a whole-file read.
+fn segment_len(prefix: &str, seq: i64) -> Option<u64> {
+    std::fs::metadata(format!("{}{}.log", prefix, seq))
+        .ok()
+        .map(|m| m.len())
+}
+
+/// Full (re)build of shard `sh`: load the disposable snapshot (if valid), then
+/// forward-replay the framed WAL from the SNAPSHOT watermark via the ONE shared
+/// scanner `walindex::walk_frames`. This is the cold-start / fresh-handle cost.
+fn do_rebuild(sh: &mut FieldShard, prefix: &str, snap_path: &str) -> i64 {
+    let (wm_seg, wm_off) = load_snapshot(&mut sh.map, snap_path);
+    bump_frontier(sh, wm_seg, wm_off);
+    let map = &mut sh.map;
+    let (fr_seg, fr_off, scanned) =
+        super::walindex::walk_frames(prefix, wm_seg, wm_off, |_seg, _off, _len, _env, payload, hexh| {
+            if let Ok(text) = std::str::from_utf8(payload) {
+                index_payload(map, text, hexh);
+            }
+        });
+    bump_frontier(sh, fr_seg, fr_off);
+    scanned
+}
+
+/// GENUINELY-INCREMENTAL replay of shard `sh`: forward-replay the framed WAL from
+/// the HANDLE'S OWN frontier (`sh.fseg/sh.foff`), NOT the snapshot watermark. This
+/// is the whole point of the residency build (design:axverity-field-index-
+/// residency-spike-results found `fieldidx_rebuild` always re-walks from the
+/// snapshot, ignoring the caller's position). Returns frames scanned SINCE the
+/// frontier — a coherent refresh costs O(delta), not O(whole store).
+///
+/// Cheap stat-guard: if the frontier segment has not grown past our offset AND no
+/// later segment exists, there is nothing to replay — skip the whole-file read
+/// entirely (`read_segment` reads the ENTIRE segment). This is what makes the M
+/// within-query replays of a JOIN O(1) each (one/two `stat`s) in the common
+/// zero-delta case, instead of O(M × segment-size) I/O that would erase the win.
+fn do_replay(sh: &mut FieldShard, prefix: &str) -> i64 {
+    let (from_seg, from_off) = (sh.fseg, sh.foff);
+    let has_next = segment_len(prefix, from_seg + 1).is_some();
+    match segment_len(prefix, from_seg) {
+        Some(len) if (len as i64) <= from_off && !has_next => return 0, // no delta
+        None if !has_next => return 0, // frontier segment gone, no successor
+        _ => {}
+    }
+    let map = &mut sh.map;
+    let (fr_seg, fr_off, scanned) =
+        super::walindex::walk_frames(prefix, from_seg, from_off, |_seg, _off, _len, _env, payload, hexh| {
+            if let Ok(text) = std::str::from_utf8(payload) {
+                index_payload(map, text, hexh);
+            }
+        });
+    bump_frontier(sh, fr_seg, fr_off);
+    scanned
+}
+
 /// `fieldidx_rebuild(h: Int, seg_prefix: Text, snap_path: Text) -> Int`
 /// Load the disposable snapshot, then forward-replay the framed WAL via the ONE
 /// shared scanner `walindex::walk_frames` (AXVERITY_UNIFIED_DURABLE_STREAMS_V1
@@ -307,18 +365,273 @@ pub fn fieldidx_rebuild(args: Value) -> Value {
         let sh = idx
             .get_mut(&h)
             .unwrap_or_else(|| panic!("fieldidx_rebuild: unknown handle {}", h));
-
-        let (wm_seg, wm_off) = load_snapshot(&mut sh.map, &snap_path);
-        bump_frontier(sh, wm_seg, wm_off);
-        let map = &mut sh.map;
-        let (fr_seg, fr_off, scanned) =
-            super::walindex::walk_frames(&prefix, wm_seg, wm_off, |_seg, _off, _len, _env, payload, hexh| {
-                if let Ok(text) = std::str::from_utf8(payload) {
-                    index_payload(map, text, hexh);
-                }
-            });
-        bump_frontier(sh, fr_seg, fr_off);
-        scanned
+        do_rebuild(sh, &prefix, &snap_path)
     });
     Value::Int(scanned)
+}
+
+/// `fieldidx_replay(h: Int, seg_prefix: Text) -> Int`
+///
+/// AXVERITY_FIELDINDEX_RESIDENCY_BUILD_V1 — the genuinely-incremental primitive.
+/// Replay the framed WAL into shard `h` starting from the HANDLE'S OWN frontier
+/// (`sh.fseg/sh.foff`), returning the number of frames walked (the delta since the
+/// last rebuild/replay of THIS handle). Unlike `fieldidx_rebuild`, it does NOT
+/// reload the snapshot and does NOT restart from the snapshot watermark. The
+/// returned count is the direct incrementality instrument (hard-limit
+/// VERIFY_GENUINE_INCREMENTALITY): after appending K frames it returns K, not
+/// base+K; with no new frames it returns 0.
+#[track_caller]
+pub fn fieldidx_replay(args: Value) -> Value {
+    let es = match args {
+        Value::Tuple(es) if es.len() == 2 => es,
+        other => panic!("fieldidx_replay: expected Tuple(Int, Text), got {:?}", other),
+    };
+    let h = arg_int(&es[0], "fieldidx_replay", 0);
+    let prefix = arg_str(&es[1], "fieldidx_replay", 1);
+    let scanned = FIDX.with(|idx| {
+        let mut idx = idx.borrow_mut();
+        let sh = idx
+            .get_mut(&h)
+            .unwrap_or_else(|| panic!("fieldidx_replay: unknown handle {}", h));
+        do_replay(sh, &prefix)
+    });
+    Value::Int(scanned)
+}
+
+// ── Per-worker RESIDENT field-index handles (AXVERITY_FIELDINDEX_RESIDENCY_BUILD_V1)
+//
+// A thread-local map `shard -> resident handle` so a long-lived pg_server worker
+// reuses ONE field-index shard across many `field_lookup` calls instead of the
+// fresh-open+full-rebuild-per-call fallback. Thread-LOCAL only — same
+// nothing-shared/nothing-locked model as `walindex`/`logbuf`/`cursor`; a
+// server-lifetime handle is necessarily PER-WORKER (a shared one would need a
+// lock, reintroducing the contention the design avoids — spike finding 3).
+//
+// Coherency is by REPLAY-BEFORE-READ: `fieldidx_res_get` replays each resident
+// handle from its own frontier before every lookup, so the handle is always
+// current at read time regardless of scope. The three scopes (per-query /
+// per-connection / server-lifetime) therefore differ ONLY in WHEN the handle is
+// dropped (amortization of the one cold rebuild), never in correctness — the
+// scope-boundary reset is `fieldidx_res_scope`.
+
+thread_local! {
+    static RESIDENT: RefCell<HashMap<String, i64>> = RefCell::new(HashMap::new());
+}
+
+/// The residency scope, read once per process from `AXVERITY_FIELDIDX_RESIDENCY`:
+///   unset / `off` / `0` / `false` → `"off"`    (fresh-handle-per-call fallback,
+///                                                byte-identical to pre-build)
+///   `query`                        → `"query"`  (resident within one query;
+///                                                dropped at each query boundary)
+///   `conn` / `connection`          → `"conn"`   (resident within one connection)
+///   `server` / `1` / `on` / `true` → `"server"` (resident for the worker's life)
+/// Default OFF — the flag is only flipped to default-on after Chris reviews the
+/// measured results (the qhm / GROUP-BY-cursor ship discipline).
+fn residency_mode() -> &'static str {
+    static MODE: OnceLock<&'static str> = OnceLock::new();
+    MODE.get_or_init(|| {
+        match std::env::var("AXVERITY_FIELDIDX_RESIDENCY")
+            .ok()
+            .as_deref()
+            .map(|s| s.to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("query") => "query",
+            Some("conn") | Some("connection") => "conn",
+            Some("server") | Some("1") | Some("on") | Some("true") => "server",
+            _ => "off",
+        }
+    })
+}
+
+/// `fieldidx_residency_mode(_: Unit) -> Text` — the flag, for M1 dispatch in
+/// `fieldidx_lookup_step`. `off` selects the preserved fresh-handle-per-call path.
+#[track_caller]
+pub fn fieldidx_residency_mode(_arg: Value) -> Value {
+    Value::Str(intern_str(residency_mode()))
+}
+
+/// `fieldidx_res_get(shard: Text, seg_prefix: Text, snap_path: Text, field: Text,
+///                   value: Text) -> Text`
+///
+/// The resident lookup used by `field_lookup`'s per-shard fan-out when residency
+/// is enabled. Get-or-create the resident handle for `shard`; bring it current
+/// (first touch → full `do_rebuild`; thereafter → incremental `do_replay` from its
+/// own frontier); return the (field,value) posting list LF-JOINED — byte-identical
+/// to what `fieldidx_get` returns on a freshly-rebuilt handle (`"" if absent`).
+#[track_caller]
+pub fn fieldidx_res_get(args: Value) -> Value {
+    let es = match args {
+        Value::Tuple(es) if es.len() == 5 => es,
+        other => panic!(
+            "fieldidx_res_get: expected Tuple(shard, prefix, snap, field, value), got {:?}",
+            other
+        ),
+    };
+    let shard = arg_str(&es[0], "fieldidx_res_get", 0);
+    let prefix = arg_str(&es[1], "fieldidx_res_get", 1);
+    let snap = arg_str(&es[2], "fieldidx_res_get", 2);
+    let field = arg_str(&es[3], "fieldidx_res_get", 3);
+    let value = arg_str(&es[4], "fieldidx_res_get", 4);
+
+    let existing = RESIDENT.with(|r| r.borrow().get(&shard).copied());
+    let h = match existing {
+        Some(h) => h,
+        None => {
+            let h = next_handle();
+            FIDX.with(|idx| {
+                idx.borrow_mut()
+                    .insert(h, FieldShard { map: HashMap::new(), fseg: 0, foff: 0 });
+            });
+            RESIDENT.with(|r| {
+                r.borrow_mut().insert(shard.clone(), h);
+            });
+            h
+        }
+    };
+
+    FIDX.with(|idx| {
+        let mut idx = idx.borrow_mut();
+        let sh = idx
+            .get_mut(&h)
+            .unwrap_or_else(|| panic!("fieldidx_res_get: resident handle {} vanished", h));
+        if existing.is_none() {
+            do_rebuild(sh, &prefix, &snap);
+        } else {
+            do_replay(sh, &prefix);
+        }
+        let key = format!("{}\t{}", field, value);
+        let out = match sh.map.get(&key) {
+            Some(list) => list.join("\n"),
+            None => String::new(),
+        };
+        Value::Str(intern_str(&out))
+    })
+}
+
+/// `fieldidx_res_scope(which: Text) -> Unit`
+///
+/// Scope-boundary reset: drop ALL resident handles (and free the underlying FIDX
+/// shards, so a long-lived worker does not leak) IFF the active residency mode
+/// equals `which`. Called by the server loop with `"query"` at each query start
+/// and `"conn"` at each connection start. Under `server` mode neither boundary
+/// matches, so handles persist for the worker's life; under `off` nothing is
+/// resident so it is always a no-op.
+#[track_caller]
+pub fn fieldidx_res_scope(arg: Value) -> Value {
+    let which = match arg {
+        Value::Str(h) => get_str(h),
+        other => panic!("fieldidx_res_scope: expected Text, got {:?}", other),
+    };
+    if residency_mode() == which {
+        RESIDENT.with(|r| {
+            let mut r = r.borrow_mut();
+            FIDX.with(|idx| {
+                let mut idx = idx.borrow_mut();
+                for h in r.values() {
+                    idx.remove(h);
+                }
+            });
+            r.clear();
+        });
+    }
+    Value::Unit
+}
+
+#[cfg(test)]
+mod residency_tests {
+    //! AXVERITY_FIELDINDEX_RESIDENCY_BUILD_V1 — direct incrementality instrument
+    //! (hard-limit VERIFY_GENUINE_INCREMENTALITY). Builds real 84-byte framed WAL
+    //! segments (`H|P|V|env|payload`, the ONE layout `walindex::walk_frames`
+    //! parses) and asserts `do_replay` walks only the DELTA (K frames), never the
+    //! whole store (base+K), and that the resulting postings are correct.
+    use super::*;
+    use sha2::{Digest, Sha256};
+    use std::io::Write as _;
+
+    fn frame(payload: &str) -> Vec<u8> {
+        let hexh: String = Sha256::digest(payload.as_bytes())
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
+        let env = ""; // empty envelope (field index ignores it)
+        let mut out = Vec::with_capacity(84 + payload.len());
+        out.extend_from_slice(hexh.as_bytes()); //  64  H
+        out.extend_from_slice(format!("{:010}", payload.len()).as_bytes()); // 10  P
+        out.extend_from_slice(format!("{:010}", env.len()).as_bytes()); // 10  V
+        out.extend_from_slice(env.as_bytes());
+        out.extend_from_slice(payload.as_bytes());
+        out
+    }
+
+    // FIELDIDX declaration frame for a distinct (k, v{i}) -> sha256:{i}.
+    fn fidx_frame(i: usize) -> Vec<u8> {
+        frame(&format!("FIELDIDX\tk\tv{}\tsha256:{:064}", i, i))
+    }
+
+    fn append_frames(path: &str, range: std::ops::Range<usize>) {
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .unwrap();
+        for i in range {
+            f.write_all(&fidx_frame(i)).unwrap();
+        }
+        f.sync_all().unwrap();
+    }
+
+    #[test]
+    fn replay_walks_only_the_delta_not_the_whole_store() {
+        let dir = std::env::temp_dir().join(format!("fidx_res_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let prefix = format!("{}/seg-", dir.to_str().unwrap());
+        let seg0 = format!("{}0.log", prefix);
+
+        // Seed B base frames, then a cold build over the whole store.
+        let b = 500usize;
+        append_frames(&seg0, 0..b);
+        let mut sh = FieldShard { map: HashMap::new(), fseg: 0, foff: 0 };
+        let scanned_full = do_rebuild(&mut sh, &prefix, "/nonexistent.snap");
+        assert_eq!(scanned_full, b as i64, "cold build must walk the whole store");
+        assert_eq!(sh.map.len(), b, "cold build indexed all base postings");
+
+        // Append K, replay: MUST walk ONLY K (incrementality), not b+K.
+        let k = 37usize;
+        append_frames(&seg0, b..(b + k));
+        let scanned_delta = do_replay(&mut sh, &prefix);
+        assert_eq!(
+            scanned_delta, k as i64,
+            "replay walked {} frames; genuine incremental replay must walk exactly the {}-frame delta, not base+K={}",
+            scanned_delta, k, b + k
+        );
+        assert_eq!(sh.map.len(), b + k, "delta postings merged in");
+        // The new key must resolve.
+        assert!(sh.map.contains_key(&format!("k\tv{}", b + k - 1)));
+
+        // No new frames → replay walks 0 (stat-guard fast path).
+        let scanned_none = do_replay(&mut sh, &prefix);
+        assert_eq!(scanned_none, 0, "zero-delta replay must scan 0 frames");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn replay_crosses_a_segment_rotation() {
+        let dir = std::env::temp_dir().join(format!("fidx_res_rot_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let prefix = format!("{}/seg-", dir.to_str().unwrap());
+
+        append_frames(&format!("{}0.log", prefix), 0..10);
+        let mut sh = FieldShard { map: HashMap::new(), fseg: 0, foff: 0 };
+        assert_eq!(do_rebuild(&mut sh, &prefix, "/nonexistent.snap"), 10);
+
+        // A later segment appears (a rotation). Replay must pick up its frames.
+        append_frames(&format!("{}1.log", prefix), 10..25);
+        assert_eq!(do_replay(&mut sh, &prefix), 15, "replay must cross into segment 1");
+        assert_eq!(sh.map.len(), 25);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
