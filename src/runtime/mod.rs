@@ -54,5 +54,6 @@ pub mod interner_mutex_feed;
 pub mod interner_lockfree_feed;
 pub mod unified_wait;
 pub mod cursor;
+pub mod sqlite_ro;
 
 pub use value::Value;
