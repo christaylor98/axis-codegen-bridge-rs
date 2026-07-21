@@ -40,14 +40,15 @@ use super::mpsc_intrusive;
 
 /// A single channel's buffer. Two backends selected by the process-global
 /// `AXVERITY_CHANNEL_QUEUE` flag (read once):
-///   * `mutex`    (default) — one `VecDeque` guarded by std's `Mutex`; senders
-///                push the back, `wait` drains the front. Rust's stdlib lock.
-///   * `lockfree` — OUR own `mpsc_intrusive::Queue` (the same lock-free MPSC
+///   * `lockfree` (DEFAULT, load-bearing) — OUR own `mpsc_intrusive::Queue`
+///                (the same lock-free MPSC
 ///                primitive that already backs `unified_wait`'s inbox): `push`
 ///                is a single atomic swap from any number of producers; `wait`
 ///                drains via the non-blocking `pop`. The receiver's OS-level
 ///                Condvar wait is unchanged (irreducible — a blocking wait can't
 ///                be made lock-free; same reason as oneshot's condvar).
+///   * `mutex`    (escape hatch, `AXVERITY_CHANNEL_QUEUE=mutex`) — one `VecDeque`
+///                guarded by std's `Mutex`. The original path; kept as a revert.
 ///
 /// AXVERITY_BRIDGE_LOCKFREE_EXPERIMENT_V1: getting our own IPC primitive onto the
 /// live path (not to win a microbenchmark — the send is already non-blocking in
@@ -60,15 +61,19 @@ use super::mpsc_intrusive;
 /// (index-frame/hotmem-frame/wal-fast-frame each have one consumer) satisfies
 /// this; the `mutex` backend keeps the original multi-consumer-tolerant behavior.
 struct Channel {
-    queue: Mutex<VecDeque<Value>>,           // `mutex` backend (default)
+    queue: Mutex<VecDeque<Value>>,           // `mutex` backend (escape hatch)
     lfq: mpsc_intrusive::Queue<Value>,       // `lockfree` backend (our primitive)
 }
 
-/// Backend selector, read once. Any value other than `lockfree` (incl. unset)
-/// keeps the default `Mutex<VecDeque>` path.
+/// Backend selector, read once. DEFAULT is now our lock-free `mpsc_intrusive`
+/// queue — the load-bearing flip (AXVERITY_BRIDGE_LOCKFREE_EXPERIMENT_V1
+/// follow-up), gated by the single-consumer audit of all 6 unbounded channels
+/// (each is MPSC: N producers → 1 janitor/indexer consumer) and a 3.37B-message
+/// / 30-min soak (zero loss/dup/reorder, no leak, no deadlock). Set
+/// `AXVERITY_CHANNEL_QUEUE=mutex` to revert to the std `Mutex<VecDeque>` path.
 fn channel_queue_lockfree() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| matches!(std::env::var("AXVERITY_CHANNEL_QUEUE").as_deref(), Ok("lockfree")))
+    *ON.get_or_init(|| !matches!(std::env::var("AXVERITY_CHANNEL_QUEUE").as_deref(), Ok("mutex")))
 }
 
 /// Process-global channel registry, keyed by declared channel name.
