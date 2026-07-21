@@ -390,6 +390,16 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("fieldidx_snapshot",    "axis_codegen_bridge::runtime::fieldidx::fieldidx_snapshot");
     m.insert("fieldidx_rebuild",     "axis_codegen_bridge::runtime::fieldidx::fieldidx_rebuild");
 
+    // ── Mutable append cursor: per-thread growable buffer to move a loop's
+    //    growing OUTPUT accumulator off the M1 capture-free loop state
+    //    (cursor.rs — BRIDGE_CURSOR_V1, AXVERITY_LOOPSTATE_CURSOR_BUILD_V1) ─────
+    m.insert("cursor_open",          "axis_codegen_bridge::runtime::cursor::cursor_open");
+    m.insert("cursor_append",        "axis_codegen_bridge::runtime::cursor::cursor_append");
+    m.insert("cursor_get",           "axis_codegen_bridge::runtime::cursor::cursor_get");
+    m.insert("cursor_len",           "axis_codegen_bridge::runtime::cursor::cursor_len");
+    m.insert("cursor_close",         "axis_codegen_bridge::runtime::cursor::cursor_close");
+    m.insert("groupby_cursor_enabled", "axis_codegen_bridge::runtime::cursor::groupby_cursor_enabled");
+
     // ── Name-binding volatile head pointer: double-buffered toggle cell
     //    (nameptr.rs — BRIDGE_NAMEPTR_V1, AXVERITY_INSERT_PATH_FASTPATH Landing 2,
     //    intent:axverity-req-immutable-pointer / req-name-gitref) ──────────────

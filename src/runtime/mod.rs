@@ -53,5 +53,6 @@ pub mod mpsc_intrusive;
 pub mod interner_mutex_feed;
 pub mod interner_lockfree_feed;
 pub mod unified_wait;
+pub mod cursor;
 
 pub use value::Value;
