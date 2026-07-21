@@ -58,6 +58,30 @@ pub fn groupby_cursor_enabled(_arg: Value) -> Value {
     Value::Bool(on)
 }
 
+/// `agg_cursor_enabled(_: Unit) -> Bool`
+///
+/// The AXVERITY_READPATH_FINAL_CLOSEOUT_V1 Item 1 flag: the plain-aggregate driver
+/// (`agg_eval`) dispatches to the input-consuming cursor fold (`agg_eval_cur`,
+/// O(M)) when this is true, and to the preserved string-state fold (`agg_eval_str`,
+/// O(M^2) — the large-match-set aggregate OOM root cause) otherwise. A SEPARATE flag
+/// from `AXVERITY_GROUPBY_CURSOR` on purpose: the agg migration ships flag-off on
+/// day one (concurrency not yet validated), and must stay off even after the GROUP
+/// BY / residency defaults are flipped in the same turn. Env `AXVERITY_AGG_CURSOR` ∈
+/// {`1`,`on`,`true`} turns it on; anything else (incl. unset) is off. `OnceLock`-cached.
+/// **Default OFF** — flipped to default-on only after Chris reviews the measured
+/// results AND a dedicated concurrency probe (the qhm / GROUP-BY-cursor ship discipline).
+#[track_caller]
+pub fn agg_cursor_enabled(_arg: Value) -> Value {
+    static ON: OnceLock<bool> = OnceLock::new();
+    let on = *ON.get_or_init(|| {
+        matches!(
+            std::env::var("AXVERITY_AGG_CURSOR").ok().as_deref(),
+            Some("1") | Some("on") | Some("true") | Some("ON") | Some("TRUE")
+        )
+    });
+    Value::Bool(on)
+}
+
 thread_local! {
     /// Per-thread cursor table, keyed by integer handle. THREAD-LOCAL, never
     /// shared — the append/get/len path touches only the calling thread's own
@@ -224,7 +248,13 @@ pub fn groupby_cursor_mode(_arg: Value) -> Value {
             Some("in") => "in",
             Some("sort") => "sort",
             Some("full") => "full",
-            _ => "off",
+            // AXVERITY_READPATH_FINAL_CLOSEOUT_V1 Item 2 — default FLIPPED to "full"
+            // (built, single-client-measured, correctness-verified, AND concurrency-
+            // confirmed: gap:axverity-loop-state-quadratic-string-rebuild-CLOSED-
+            // concurrency-confirmed). Explicit off/0/false remain reachable so the
+            // byte-identical string fallback can still be selected for A/B.
+            Some("off") | Some("0") | Some("false") => "off",
+            _ => "full",
         }
     });
     Value::Str(intern_str(m))

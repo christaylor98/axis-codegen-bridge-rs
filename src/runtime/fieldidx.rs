@@ -439,7 +439,14 @@ fn residency_mode() -> &'static str {
             Some("query") => "query",
             Some("conn") | Some("connection") => "conn",
             Some("server") | Some("1") | Some("on") | Some("true") => "server",
-            _ => "off",
+            // AXVERITY_READPATH_FINAL_CLOSEOUT_V1 Item 3 — default FLIPPED to "query"
+            // (built, single-client-measured, correctness-verified, AND concurrency-
+            // confirmed: fix:axverity-fieldindex-residency-concurrency-confirmed; the
+            // data showed query≈server for the JOIN win with perfect coherency and
+            // bounded memory, so per-query scope is the recommended setting). Explicit
+            // off/0/false remain reachable for the byte-identical fresh-handle fallback.
+            Some("off") | Some("0") | Some("false") => "off",
+            _ => "query",
         }
     })
 }
