@@ -166,6 +166,214 @@ fn handle_arg(v: &Value, who: &str) -> i64 {
     }
 }
 
+// ── AXVERITY_SLAB_TO_WIRE_BUILD_V1 — paired response batching + slab-to-wire ──
+//
+// One flag, `AXVERITY_SLAB_TO_WIRE` (off by default), gates BOTH halves of the
+// paired build so they can never be enabled independently (the discovery turn
+// proved the slab-to-wire half ALONE reproduces a near-null 1.02x, because the
+// per-row socket write dominates; batching is what surfaces the win):
+//
+//   * RESPONSE BATCHING (this section): backend messages are coalesced into a
+//     per-connection thread-local buffer instead of one `write_all` per message.
+//     Flush policy = PostgreSQL's own model (pqcomm.c `pq_flush` before every
+//     socket wait): FLUSH BEFORE EVERY `tcp_read`. A server never blocks on a
+//     read with unsent output, so this is correct for the SSL reply (a bare 'N'
+//     then a read), the extended-protocol Flush/Sync, and simple-protocol
+//     request/response alike — with NO added latency for a POINT query (the
+//     buffer is drained at the top of the next accept-loop read, microseconds
+//     after the response is written) and NO M1 change. A hard byte cap
+//     (`BATCH_CAP`) bounds memory for a huge result set (TCP is a stream, so a
+//     mid-response flush is transparent to the client), and `tcp_close` drains
+//     any tail. Since axVerity materialises the full posting list before it
+//     emits, the row count is known up-front — there is never a "waiting for
+//     rows that never arrive" partial batch, so no timeout policy is needed.
+//
+//   * SLAB-TO-WIRE (see `pg_emit_datarow1` below + future shape primitives):
+//     the DataRow bytes are formatted in Rust straight from the value bytes and
+//     appended to the SAME per-conn buffer, with NO intermediate `Value`
+//     materialisation of the frame (the M1 path builds ~8 `Value::Bytes` per row
+//     via pg_data_row_1∘pg_frame; this builds one Vec and appends it).
+//
+// When the flag is off, `tcp_write`/`tcp_read`/`tcp_close` are byte-for-byte the
+// original per-message-flush path (the preserved fallback).
+
+fn slab_to_wire_on() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| {
+        matches!(
+            std::env::var("AXVERITY_SLAB_TO_WIRE")
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_lowercase()
+                .as_str(),
+            "1" | "on" | "true"
+        )
+    })
+}
+
+/// Flush the per-conn coalescing buffer once it reaches this many bytes, so a
+/// large result set does not grow the buffer without bound. A mid-response flush
+/// is transparent to the client (TCP is a byte stream; frame boundaries are
+/// self-describing via the length prefix).
+const BATCH_CAP: usize = 256 * 1024;
+
+thread_local! {
+    /// Per-connection coalescing buffer, keyed by socket handle. A worker serves
+    /// one connection at a time but many connections over its lifetime, so the
+    /// buffer is keyed by handle and removed on flush-to-empty / close.
+    static BATCH: RefCell<HashMap<i64, Vec<u8>>> = RefCell::new(HashMap::new());
+}
+
+/// The actual socket write (the original `tcp_write` body). Writes ALL of `data`
+/// and flushes the OS socket. Panics on I/O error / wrong handle kind.
+fn raw_write(handle: i64, data: &[u8]) {
+    let sock = get_sock(handle, "tcp_write");
+    let mut stream: &TcpStream = match &*sock {
+        Sock::Stream(s) => s,
+        Sock::Listener(_) => panic!("tcp_write: handle {} is a listener, not a stream", handle),
+    };
+    stream
+        .write_all(data)
+        .unwrap_or_else(|e| panic!("tcp_write({}): {}", handle, e));
+    stream
+        .flush()
+        .unwrap_or_else(|e| panic!("tcp_write({}): flush: {}", handle, e));
+}
+
+/// Append `data` to the conn's coalescing buffer; flush if it reaches the cap.
+fn buffered_append(handle: i64, data: &[u8]) {
+    let over_cap = BATCH.with(|b| {
+        let mut m = b.borrow_mut();
+        let buf = m.entry(handle).or_default();
+        buf.extend_from_slice(data);
+        buf.len() >= BATCH_CAP
+    });
+    if over_cap {
+        flush_conn(handle);
+    }
+}
+
+/// Drain the conn's buffer to the socket (no-op if empty / absent). Takes the
+/// bytes out from under the borrow BEFORE the (possibly blocking) socket write.
+fn flush_conn(handle: i64) {
+    let bytes = BATCH.with(|b| {
+        let mut m = b.borrow_mut();
+        match m.get_mut(&handle) {
+            Some(buf) if !buf.is_empty() => Some(std::mem::take(buf)),
+            _ => None,
+        }
+    });
+    if let Some(bytes) = bytes {
+        raw_write(handle, &bytes);
+    }
+}
+
+/// `pg_emit_datarow1(conn: Int, val: Text) -> Unit` — the slab-to-wire emitter
+/// for a single-text-column DataRow (POINT / filtered SELECT / the hash-emitting
+/// plain-SELECT path). Formats the 'D' frame in Rust straight from `val`'s bytes
+/// and appends it to the conn's coalescing buffer — NO `Value::Bytes` frame is
+/// built (contrast the M1 pg_data_row_1∘pg_frame chain's ~8 allocations/row).
+/// Byte-identical to what pg_data_row_1(val) produces. Falls back to an immediate
+/// raw write when the flag is off, so a stray caller is always well-behaved.
+#[track_caller]
+pub fn pg_emit_datarow1(args: Value) -> Value {
+    let (conn, val) = match args {
+        Value::Tuple(es) if es.len() == 2 => {
+            let mut it = es.into_iter();
+            (it.next().unwrap(), it.next().unwrap())
+        }
+        other => panic!("pg_emit_datarow1: expected Tuple(Int, Text), got {:?}", other),
+    };
+    let conn = match conn {
+        Value::Int(n) => n,
+        other => panic!("pg_emit_datarow1: arg 0 expected Int conn, got {:?}", other),
+    };
+    let vb: &[u8] = match &val {
+        Value::Str(s) => s.as_bytes(),
+        other => panic!("pg_emit_datarow1: arg 1 expected Text, got {:?}", other),
+    };
+    // 'D' | int32(2+4+len+4) | int16(1) | int32(len) | val
+    let total = (2 + 4 + vb.len() + 4) as u32;
+    let mut frame = Vec::with_capacity(11 + vb.len());
+    frame.push(b'D');
+    frame.extend_from_slice(&total.to_be_bytes());
+    frame.extend_from_slice(&1u16.to_be_bytes());
+    frame.extend_from_slice(&(vb.len() as u32).to_be_bytes());
+    frame.extend_from_slice(vb);
+    if slab_to_wire_on() {
+        buffered_append(conn, &frame);
+    } else {
+        raw_write(conn, &frame);
+    }
+    Value::Unit
+}
+
+/// `pg_stream_rows(conn: Int, posting: Text) -> Int` — the SELECT-streaming
+/// EXECUTOR: run the entire per-row emit loop in Rust, returning the row count.
+///
+/// This replaces the M1 `loop_while(state, pg_row_more, pg_row_step, ..)` streaming
+/// loop (pg_emit_result), whose loop-state is a Text `"<conn>\t<count>\t<remaining
+/// LF-hashes>"` re-parsed AND rebuilt every iteration — `str_after(posting, LF)`
+/// copies the whole remaining hash list each step, so the M1 loop is O(M²) in the
+/// row count. Here `posting` is split ONCE (O(M) total) and each LF-separated,
+/// non-empty hash is framed as a 1-column DataRow straight into the per-conn
+/// coalescing buffer — no per-row M1 interpreter dispatch, no O(M²) re-threading.
+///
+/// Byte-identical to the M1 loop's output: field_lookup yields an LF-TERMINATED
+/// posting, so the last split token is "" (skipped) exactly as pg_row_more stops
+/// when the remaining field becomes "". An empty/blank posting emits zero rows,
+/// returning 0 (the "SELECT 0" case). The M1 caller writes RowDescription before
+/// and CommandComplete+ReadyForQuery after (from this returned count).
+#[track_caller]
+pub fn pg_stream_rows(args: Value) -> Value {
+    let (conn, posting) = match args {
+        Value::Tuple(es) if es.len() == 2 => {
+            let mut it = es.into_iter();
+            (it.next().unwrap(), it.next().unwrap())
+        }
+        other => panic!("pg_stream_rows: expected Tuple(Int, Text), got {:?}", other),
+    };
+    let conn = match conn {
+        Value::Int(n) => n,
+        other => panic!("pg_stream_rows: arg 0 expected Int conn, got {:?}", other),
+    };
+    let s: &str = match &posting {
+        Value::Str(p) => p.as_ref(),
+        other => panic!("pg_stream_rows: arg 1 expected Text posting, got {:?}", other),
+    };
+    let on = slab_to_wire_on();
+    let mut count: i64 = 0;
+    let mut frame: Vec<u8> = Vec::with_capacity(96);
+    for line in s.split('\n') {
+        if line.is_empty() {
+            continue;
+        }
+        let vb = line.as_bytes();
+        frame.clear();
+        let total = (2 + 4 + vb.len() + 4) as u32;
+        frame.push(b'D');
+        frame.extend_from_slice(&total.to_be_bytes());
+        frame.extend_from_slice(&1u16.to_be_bytes());
+        frame.extend_from_slice(&(vb.len() as u32).to_be_bytes());
+        frame.extend_from_slice(vb);
+        if on {
+            buffered_append(conn, &frame);
+        } else {
+            raw_write(conn, &frame);
+        }
+        count += 1;
+    }
+    Value::Int(count)
+}
+
+/// `slab_to_wire_enabled(_: Unit) -> Bool` — lets an M1 emit path route to the
+/// Rust slab-to-wire emitters when the flag is on, else keep its exact current
+/// Value-materialising body (the preserved fallback).
+#[track_caller]
+pub fn slab_to_wire_enabled(_arg: Value) -> Value {
+    Value::Bool(slab_to_wire_on())
+}
+
 // ── tcp_listen ───────────────────────────────────────────────────────────────
 
 #[track_caller]
@@ -296,6 +504,13 @@ pub fn tcp_accept(v: Value) -> Value {
 #[track_caller]
 pub fn tcp_read(v: Value) -> Value {
     let handle = handle_arg(&v, "tcp_read");
+    // AXVERITY_SLAB_TO_WIRE_BUILD_V1: never block on a read with unsent buffered
+    // output (PostgreSQL's pq_flush-before-wait). Drains this conn's coalescing
+    // buffer so the peer has the full prior response before we wait for its next
+    // message. No-op when the flag is off (buffer is always empty).
+    if slab_to_wire_on() {
+        flush_conn(handle);
+    }
     let sock = get_sock(handle, "tcp_read");
     let mut stream: &TcpStream = match &*sock {
         Sock::Stream(s) => s,
@@ -327,17 +542,14 @@ pub fn tcp_write(args: Value) -> Value {
         Value::Bytes(b) => b,
         other => panic!("tcp_write: arg 1 expected Bytes, got {:?}", other),
     };
-    let sock = get_sock(handle, "tcp_write");
-    let mut stream: &TcpStream = match &*sock {
-        Sock::Stream(s) => s,
-        Sock::Listener(_) => panic!("tcp_write: handle {} is a listener, not a stream", handle),
-    };
-    stream
-        .write_all(&data)
-        .unwrap_or_else(|e| panic!("tcp_write({}): {}", handle, e));
-    stream
-        .flush()
-        .unwrap_or_else(|e| panic!("tcp_write({}): flush: {}", handle, e));
+    // AXVERITY_SLAB_TO_WIRE_BUILD_V1: coalesce into the per-conn buffer when the
+    // flag is on (drained before the next tcp_read / on close / at the cap).
+    // Off => the original immediate write+flush (preserved fallback).
+    if slab_to_wire_on() {
+        buffered_append(handle, &data);
+    } else {
+        raw_write(handle, &data);
+    }
     Value::Unit
 }
 
@@ -346,6 +558,12 @@ pub fn tcp_write(args: Value) -> Value {
 #[track_caller]
 pub fn tcp_close(v: Value) -> Value {
     let handle = handle_arg(&v, "tcp_close");
+    // AXVERITY_SLAB_TO_WIRE_BUILD_V1: drain any tail before closing so a response
+    // that did not end at a read boundary is never lost. Then drop the buffer.
+    if slab_to_wire_on() {
+        flush_conn(handle);
+        BATCH.with(|b| { b.borrow_mut().remove(&handle); });
+    }
     match remove_sock(handle) {
         Some(_) => Value::Unit,
         None => panic!("tcp_close: unknown socket handle {}", handle),
@@ -515,5 +733,66 @@ mod tests {
         for (h, _) in &results {
             tcp_close(Value::Int(*h));
         }
+    }
+
+    // AXVERITY_SLAB_TO_WIRE_BUILD_V1 — coalescing produces byte-identical output.
+    // Exercises buffered_append + flush_conn directly (the flag is env-global, so
+    // the helpers are tested rather than the flag dispatch). Two appends then one
+    // flush must deliver exactly the concatenation, in order.
+    #[test]
+    fn batch_coalesces_byte_identical() {
+        let bound = tcp_listen(Value::Int(0));
+        let (listener, port) = match bound {
+            Value::Tuple(es) => (as_int(es[0].clone(), "h"), as_int(es[1].clone(), "p")),
+            _ => unreachable!(),
+        };
+        let server = std::thread::spawn(move || {
+            let conn = as_int(tcp_accept(Value::Int(listener)), "conn");
+            // nothing on the wire yet after two buffered appends
+            buffered_append(conn, b"RowDescription...");
+            buffered_append(conn, b"DataRow...");
+            flush_conn(conn); // now the peer gets exactly the concatenation
+            // a second flush is a no-op (buffer emptied)
+            flush_conn(conn);
+            tcp_close(Value::Int(conn));
+        });
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", port as u16)).unwrap();
+        let mut got = Vec::new();
+        client.read_to_end(&mut got).unwrap();
+        server.join().unwrap();
+        assert_eq!(got, b"RowDescription...DataRow...");
+        tcp_close(Value::Int(listener));
+    }
+
+    // pg_emit_datarow1 frames a 1-column DataRow byte-identically to
+    // pg_data_row_1(val)∘pg_frame. Flag is off in tests => it raw-writes, so we
+    // read the exact frame off the wire and check the layout + value bytes,
+    // including a multi-byte UTF-8 value (TAB-free boundaries).
+    #[test]
+    fn pg_emit_datarow1_frames_correctly() {
+        let bound = tcp_listen(Value::Int(0));
+        let (listener, port) = match bound {
+            Value::Tuple(es) => (as_int(es[0].clone(), "h"), as_int(es[1].clone(), "p")),
+            _ => unreachable!(),
+        };
+        let server = std::thread::spawn(move || {
+            let conn = as_int(tcp_accept(Value::Int(listener)), "conn");
+            pg_emit_datarow1(Value::Tuple(vec![Value::Int(conn), Value::Str(intern_str("café"))]));
+            tcp_close(Value::Int(conn));
+        });
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", port as u16)).unwrap();
+        let mut got = Vec::new();
+        client.read_to_end(&mut got).unwrap();
+        server.join().unwrap();
+        // 'café' = 5 bytes (é is 2). Frame: 'D' | int32(2+4+5+4=15) | int16(1) | int32(5) | café
+        let vb = "café".as_bytes();
+        let mut expect = Vec::new();
+        expect.push(b'D');
+        expect.extend_from_slice(&((2 + 4 + vb.len() + 4) as u32).to_be_bytes());
+        expect.extend_from_slice(&1u16.to_be_bytes());
+        expect.extend_from_slice(&(vb.len() as u32).to_be_bytes());
+        expect.extend_from_slice(vb);
+        assert_eq!(got, expect);
+        tcp_close(Value::Int(listener));
     }
 }

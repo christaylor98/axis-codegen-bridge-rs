@@ -464,6 +464,10 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("tcp_read",             "axis_codegen_bridge::runtime::net::tcp_read");
     m.insert("tcp_write",            "axis_codegen_bridge::runtime::net::tcp_write");
     m.insert("tcp_close",            "axis_codegen_bridge::runtime::net::tcp_close");
+    // ── AXVERITY_SLAB_TO_WIRE_BUILD_V1 — paired slab-to-wire emit + batching ──
+    m.insert("pg_emit_datarow1",     "axis_codegen_bridge::runtime::net::pg_emit_datarow1");
+    m.insert("pg_stream_rows",       "axis_codegen_bridge::runtime::net::pg_stream_rows");
+    m.insert("slab_to_wire_enabled", "axis_codegen_bridge::runtime::net::slab_to_wire_enabled");
 
     // ── Raw memory / atomic-cell primitives (rawmem.rs — AXVERITY_MEM_FOREIGN_FNS_V1)
     //    Unchecked, self-describing-handle. See registry/axis-mem-raw.axreg. ───
