@@ -190,6 +190,138 @@ fn shard_of(key: &str) -> usize {
 }
 
 // ===========================================================================
+// AXVERITY_ZEROCOPY_READPATH_BUILD_V1 — RETURN-PATH variants (sites 1/2/3 of
+// design:axverity-readpath-gap-is-representation-not-guarantee). All are
+// return/materialization-path only: the hash-keyed lookup, sharding, and
+// seal-then-reclaim discipline are UNTOUCHED. Two independent env flags,
+// OnceLock-cached, so `off`/`clone` (both unset) is byte-identical to the
+// pre-turn path and remains the always-available fallback.
+//
+//   AXVERITY_QHM_RETURN  off (default) | revalidate | arc
+//     off        — pull_object uses the Bytes path (`bytes_to_text(qhm_get)`);
+//                  segments store `Stored::Bytes`. The exact baseline.
+//     revalidate — pull_object uses `qhm_get_text`; segments still store
+//                  `Stored::Bytes`; the read validates the Arc-wrapped bytes
+//                  IN PLACE and builds one Arc<str>. REDUCED-COPY: removes the
+//                  segment->Vec deep copy (qhm.rs:396) and the intermediate
+//                  M1 `Value::Bytes`, but still validates per read. Always safe
+//                  (no stored-content change).
+//     arc        — pull_object uses `qhm_get_text`; segments store
+//                  `Stored::Text(Arc<str>)`, VALIDATED ONCE at put. The read is
+//                  `Arc::clone` — a genuine zero-copy SHARED borrow handed to
+//                  M1 across worker threads (Arc<str> is Send+Sync + immutable).
+//                  Folds in site 3 (validate-once): safe because the ONLY qhm
+//                  write path is pg_exec_insert -> text_to_bytes(record), always
+//                  valid UTF-8 (site-3 audit). A non-UTF-8 put (never on the
+//                  audited path) falls back to Stored::Bytes defensively, so a
+//                  read can never observe a wrong/torn value.
+//
+//   AXVERITY_QHM_KEY     clone (default) | borrow            (site 2 / get_str)
+//     clone  — the baseline `get_str(&h)`: one owned String allocation of the
+//              ~71-char address per get.
+//     borrow — pass the Value::Str's Arc<str> as a borrowed &str straight to the
+//              shard lookup: zero allocation on the key. get_str's OWN signature
+//              can't cheaply change (~200 callers want an owned String), so this
+//              is the reachable shape at the hot site (reported, not assumed).
+// ===========================================================================
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ReturnMode {
+    Off,
+    Revalidate,
+    Shared, // "arc": stored Arc<str>, returned by cheap clone
+}
+
+fn return_mode() -> ReturnMode {
+    static R: OnceLock<ReturnMode> = OnceLock::new();
+    *R.get_or_init(|| {
+        match std::env::var("AXVERITY_QHM_RETURN")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "revalidate" => ReturnMode::Revalidate,
+            "arc" | "shared" => ReturnMode::Shared,
+            _ => ReturnMode::Off,
+        }
+    })
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum KeyMode {
+    Clone,
+    Borrow,
+}
+
+fn key_mode() -> KeyMode {
+    static K: OnceLock<KeyMode> = OnceLock::new();
+    *K.get_or_init(|| {
+        match std::env::var("AXVERITY_QHM_KEY")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "borrow" => KeyMode::Borrow,
+            _ => KeyMode::Clone,
+        }
+    })
+}
+
+/// An immutable stored record value in the lock-free backend. The
+/// representation is chosen ONCE at put time by `return_mode()`:
+///   * `Bytes(Arc<[u8]>)` — off/revalidate: an Arc-wrapped copy of the record
+///     bytes. `to_bytes()` is `(*arc).to_vec()`, byte-identical and same-cost as
+///     the historical `Vec<u8>` clone the reader used to do.
+///   * `Text(Arc<str>)`   — arc: the record validated once as UTF-8 and shared.
+///     `to_text()` is `Arc::clone` — zero-copy.
+/// This is a container/representation choice for the RETURN path; the record
+/// CONTENT (bytes), content-addressing, and hash-keying are unchanged.
+#[derive(Clone)]
+enum Stored {
+    Bytes(Arc<[u8]>),
+    Text(Arc<str>),
+}
+
+impl Stored {
+    /// Build the stored form for `bytes` under the active return mode. In `arc`
+    /// mode validate-once here (site 3); any non-UTF-8 input (never on the
+    /// audited put path) falls back to Bytes so reads still serve it.
+    fn build(bytes: Vec<u8>) -> Stored {
+        if return_mode() == ReturnMode::Shared {
+            match String::from_utf8(bytes) {
+                Ok(s) => Stored::Text(Arc::from(s)),
+                Err(e) => Stored::Bytes(Arc::from(e.into_bytes().into_boxed_slice())),
+            }
+        } else {
+            Stored::Bytes(Arc::from(bytes.into_boxed_slice()))
+        }
+    }
+
+    /// The record bytes as an owned Vec (the `qhm_get` / Bytes-return path). One
+    /// copy — byte-identical to the historical behavior regardless of storage.
+    fn to_bytes(&self) -> Vec<u8> {
+        match self {
+            Stored::Bytes(b) => b.to_vec(),
+            Stored::Text(s) => s.as_bytes().to_vec(),
+        }
+    }
+
+    /// A shared `Arc<str>` view of the record (the `qhm_get_text` path).
+    ///   * `Text` => `Arc::clone` (zero-copy shared borrow).
+    ///   * `Bytes` => validate UTF-8 + build one Arc<str> (reduced-copy). `None`
+    ///     on invalid UTF-8 so the caller falls through to the disk tier (never
+    ///     a panic, never a wrong answer).
+    fn to_text(&self) -> Option<Arc<str>> {
+        match self {
+            Stored::Text(s) => Some(Arc::clone(s)),
+            Stored::Bytes(b) => std::str::from_utf8(b).ok().map(super::value::intern_str),
+        }
+    }
+}
+
+// ===========================================================================
 // MUTEX backend — RAM-first control. A private copy of contentidx's shape
 // (sharded Mutex<HashMap> + FIFO). Deliberately NOT sharing contentidx's
 // statics: this must be independently capped and consulted-first, and the
@@ -243,8 +375,8 @@ fn m_get(hash: &str) -> Vec<u8> {
 // Arc clone-out); writes serialise through a brief per-shard Mutex<Writer>.
 // ===========================================================================
 
-/// An immutable sealed batch of `hash -> bytes`. Never mutated after seal.
-type Segment = HashMap<String, Vec<u8>>;
+/// An immutable sealed batch of `hash -> Stored`. Never mutated after seal.
+type Segment = HashMap<String, Stored>;
 
 /// The single head value published in a shard's `BridgedCell`. Immutable; a
 /// reader clones this whole `Arc` out under the head pin, then walks `segs`
@@ -256,7 +388,7 @@ struct SegSet {
 
 struct LfWriter {
     writer: Writer<Arc<SegSet>>,
-    pending: HashMap<String, Vec<u8>>, // writer-private, unsealed
+    pending: HashMap<String, Stored>, // writer-private, unsealed
 }
 
 struct LfShard {
@@ -366,13 +498,19 @@ fn lf_put(hash: String, bytes: Vec<u8>, v: Variant) {
     if w.pending.contains_key(&hash) {
         return;
     }
-    w.pending.insert(hash, bytes);
+    w.pending.insert(hash, Stored::build(bytes));
     if w.pending.len() >= block_size() {
         lf_seal(&mut w, v);
     }
 }
 
-fn lf_get(hash: &str, _v: Variant) -> Vec<u8> {
+/// Pin the head, clone the `Arc<SegSet>` out UNDER the pin, then unpin, and walk
+/// the (now Arc-owned) segments newest-first applying `f` to the found `Stored`.
+/// The pin/clone/unpin shape is IDENTICAL to the proven baseline — only what we
+/// extract from the `Stored` differs (bytes vs shared text). Returns `f`'s
+/// result, or `miss` when the key is absent / the cell is uninitialised.
+#[inline]
+fn lf_lookup<T>(hash: &str, miss: T, f: impl FnOnce(&Stored) -> T) -> T {
     let s = shard_of(hash);
     let sh = &lfidx().shards[s];
     QHM_READER.with(|r| {
@@ -383,22 +521,28 @@ fn lf_get(hash: &str, _v: Variant) -> Vec<u8> {
         }
         let borrowed = r.borrow();
         let handle = borrowed.as_ref().expect("qhm reader handle just acquired");
-        // Pin the head, clone the Arc<SegSet> out UNDER the pin, then unpin by
-        // dropping the ReadRef at the end of this block. Single-block deref —
-        // the only sound shape (see module doc).
+        // Single-block deref — the only sound shape (see module doc).
         let set: Arc<SegSet> = match sh.cell.read_ref(handle, 0) {
-            None => return Vec::new(),
+            None => return miss,
             Some(read_ref) => (*read_ref).clone(),
         };
-        // Walk segments newest-first via ordinary Arc lifetime — no chain walk,
-        // no pin held here.
         for seg in &set.segs {
-            if let Some(b) = seg.get(hash) {
-                return b.clone();
+            if let Some(st) = seg.get(hash) {
+                return f(st);
             }
         }
-        Vec::new()
+        miss
     })
+}
+
+fn lf_get(hash: &str, _v: Variant) -> Vec<u8> {
+    lf_lookup(hash, Vec::new(), Stored::to_bytes)
+}
+
+/// Shared-text read (`qhm_get_text`). `Text` storage => `Arc::clone` (zero-copy);
+/// `Bytes` storage => validate + one Arc<str>. `None` on miss OR invalid UTF-8.
+fn lf_get_text(hash: &str) -> Option<Arc<str>> {
+    lf_lookup(hash, None, Stored::to_text)
 }
 
 fn lf_flush(v: Variant) {
@@ -444,24 +588,72 @@ pub fn qhm_put(args: Value) -> Value {
     Value::Unit
 }
 
+/// Dispatch a bytes-returning lookup by variant.
+#[inline]
+fn get_bytes_by(hash: &str, v: Variant) -> Vec<u8> {
+    match v {
+        Variant::Off => Vec::new(),
+        Variant::Mutex => m_get(hash),
+        Variant::LfA | Variant::LfB => lf_get(hash, v),
+    }
+}
+
 /// `qhm_get(hash: Text) -> Bytes` — the record's bytes, or empty Bytes on a miss
 /// (caller falls through to the existing durable tiers). `off` always misses.
+/// The key (address) is read per `AXVERITY_QHM_KEY`: `clone` (baseline
+/// `get_str`, one owned String) or `borrow` (the Arc<str>'s &str, zero alloc).
 #[track_caller]
 pub fn qhm_get(arg: Value) -> Value {
     let v = variant();
     if v == Variant::Off {
         return Value::Bytes(Vec::new());
     }
-    let hash = match arg {
-        Value::Str(h) => get_str(&h),
+    let bytes = match arg {
+        Value::Str(h) => match key_mode() {
+            KeyMode::Borrow => get_bytes_by(h.as_ref(), v),
+            KeyMode::Clone => get_bytes_by(&get_str(&h), v),
+        },
         other => panic!("qhm_get: expected Text hash, got {:?}", other),
     };
-    let bytes = match v {
-        Variant::Off => Vec::new(),
-        Variant::Mutex => m_get(&hash),
-        Variant::LfA | Variant::LfB => lf_get(&hash, v),
-    };
     Value::Bytes(bytes)
+}
+
+/// `qhm_get_text(hash: Text) -> Text` — the record's bytes AS TEXT (a shared
+/// Arc<str>), or "" on a miss / invalid-UTF-8 (caller routes to the disk tiers).
+/// This is the RETURN-PATH variant entry (AXVERITY_ZEROCOPY_READPATH_BUILD_V1):
+/// it fuses the old `bytes_to_text(qhm_get(..))` two-hop into one, and under
+/// `AXVERITY_QHM_RETURN=arc` returns a zero-copy `Arc::clone` of the once-
+/// validated stored text. `off` never routes here (pull_object uses the Bytes
+/// path); it is defined for all variants so a direct caller is well-behaved.
+#[track_caller]
+pub fn qhm_get_text(arg: Value) -> Value {
+    let v = variant();
+    let text: Option<Arc<str>> = match arg {
+        Value::Str(h) => {
+            let get = |k: &str| -> Option<Arc<str>> {
+                match v {
+                    Variant::Off => None,
+                    Variant::Mutex => {
+                        let b = m_get(k);
+                        if b.is_empty() {
+                            None
+                        } else {
+                            std::str::from_utf8(&b).ok().map(super::value::intern_str)
+                        }
+                    }
+                    Variant::LfA | Variant::LfB => lf_get_text(k),
+                }
+            };
+            match key_mode() {
+                KeyMode::Borrow => get(h.as_ref()),
+                KeyMode::Clone => get(&get_str(&h)),
+            }
+        }
+        other => panic!("qhm_get_text: expected Text hash, got {:?}", other),
+    };
+    // "" is the established miss sentinel (records are never empty; pull_object
+    // routes an empty result to the durable tiers).
+    Value::Str(text.unwrap_or_else(|| super::value::intern_str("")))
 }
 
 /// `qhm_flush(_: Unit) -> Unit` — seal every shard's pending batch so the whole
@@ -473,6 +665,19 @@ pub fn qhm_flush(_arg: Value) -> Value {
         lf_flush(v);
     }
     Value::Unit
+}
+
+/// `qhm_return_mode(_: Unit) -> Text` — "off" | "revalidate" | "arc". Lets
+/// `pull_object` choose the Bytes path (off, exact baseline) vs the fused
+/// `qhm_get_text` path (revalidate/arc). AXVERITY_QHM_RETURN, read once.
+#[track_caller]
+pub fn qhm_return_mode(_arg: Value) -> Value {
+    let s = match return_mode() {
+        ReturnMode::Off => "off",
+        ReturnMode::Revalidate => "revalidate",
+        ReturnMode::Shared => "arc",
+    };
+    Value::Str(super::value::intern_str(s))
 }
 
 /// `qhm_stats(_: Unit) -> Text` — diagnostic snapshot for the reclaim-pressure
@@ -513,6 +718,16 @@ pub fn qhm_stats(_arg: Value) -> Value {
     Value::Str(super::value::intern_str(&s))
 }
 
+// Tests share the process-global `static` lf arena, and `cargo test` runs test
+// fns in parallel. Exact-presence assertions (the deterministic seal test, the
+// stored_* round-trips) can be spuriously evicted by a concurrent probe churning
+// cap-eviction on the same shard — a pre-existing shared-static hazard (the arena
+// is a static), worsened by this turn's added arc probes. This lock serialises
+// only the ARENA-SENSITIVE tests against each other; it changes no assertion and
+// preserves each probe's OWN internal reader/writer thread concurrency.
+#[cfg(test)]
+static ARENA_TEST_SERIAL: Mutex<()> = Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -539,6 +754,7 @@ mod tests {
 
     #[test]
     fn lf_put_flush_get_and_miss() {
+        let _serial = ARENA_TEST_SERIAL.lock().unwrap_or_else(|p| p.into_inner());
         assert_eq!(lf_get("qhm_lftest:absent", Variant::LfA), Vec::<u8>::new());
         lf_put("sha256:lf_aaa".into(), b"RECORD\tk=v".to_vec(), Variant::LfA);
         // Not yet sealed (pending < block_size) — still findable via flush.
@@ -550,6 +766,7 @@ mod tests {
     fn lf_seals_at_block_threshold_without_flush() {
         // Drive one shard past block_size so it auto-seals, then confirm the
         // sealed entries are readable without an explicit flush.
+        let _serial = ARENA_TEST_SERIAL.lock().unwrap_or_else(|p| p.into_inner());
         let target = shard_of("seedkey");
         let bs = block_size();
         let mut keys = Vec::new();
@@ -573,6 +790,42 @@ mod tests {
                 k
             );
         }
+    }
+
+    #[test]
+    fn stored_text_roundtrip_bytes_and_text() {
+        let _serial = ARENA_TEST_SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+        // Force Text storage (the arc-mode representation), independent of the
+        // ambient AXVERITY_QHM_RETURN env: a Text-stored entry reads back
+        // zero-copy via lf_get_text AND byte-identically via lf_get.
+        let k = "sha256:qhm_text_rt";
+        {
+            let shard = shard_of(k);
+            let sh = &lfidx().shards[shard];
+            let mut w = sh.wr.lock().unwrap_or_else(|p| p.into_inner());
+            w.pending.insert(k.to_string(), Stored::Text(Arc::from("RECORD\tk=v")));
+            lf_seal(&mut w, Variant::LfB);
+        }
+        assert_eq!(lf_get_text(k).as_deref(), Some("RECORD\tk=v"));
+        assert_eq!(lf_get(k, Variant::LfB), b"RECORD\tk=v".to_vec());
+    }
+
+    #[test]
+    fn stored_bytes_revalidate_to_text_and_bad_utf8() {
+        let _serial = ARENA_TEST_SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+        // Default build() => Bytes storage (ambient env off); lf_get_text must
+        // validate + return text (the revalidate variant).
+        let k = "sha256:qhm_bytes_reval";
+        lf_put(k.to_string(), b"RECORD\tc=1".to_vec(), Variant::LfB);
+        lf_flush(Variant::LfB);
+        assert_eq!(lf_get_text(k).as_deref(), Some("RECORD\tc=1"));
+        // Invalid UTF-8 stored as Bytes => text read is a clean None (caller
+        // routes to the disk tier), while the bytes read still serves it.
+        let kb = "sha256:qhm_bad_utf8";
+        lf_put(kb.to_string(), vec![0xff, 0xfe, 0x00], Variant::LfB);
+        lf_flush(Variant::LfB);
+        assert_eq!(lf_get_text(kb), None);
+        assert_eq!(lf_get(kb, Variant::LfB), vec![0xff, 0xfe, 0x00]);
     }
 
     #[test]
@@ -604,6 +857,7 @@ mod soundness_probe {
     // concurrently. Any freed-under-a-live-read block would surface as a
     // corrupted (wrong-shape or absent-when-present) read.
     fn concurrent_probe(v: Variant) {
+        let _serial = super::ARENA_TEST_SERIAL.lock().unwrap_or_else(|p| p.into_inner());
         const WRITES: u64 = if cfg!(miri) { 60 } else { 40_000 };
         const NKEYS: u64 = 64; // small keyspace so reads frequently hit live entries
         let done = StdArc::new(AtomicBool::new(false));
@@ -665,6 +919,84 @@ mod soundness_probe {
             "corrupted/aliased reads observed for {:?}",
             v
         );
+    }
+
+    // The genuinely SHARED (not thread-local) zero-copy pattern this turn adds:
+    // the writer seals `Stored::Text` entries; readers clone the `Arc<str>` out
+    // ACROSS threads under concurrent seal/reclaim. A freed-under-live-read block
+    // or a torn Arc would surface as wrong-content text. This is the per-variant
+    // concurrency gate the intent requires for the shared-borrow (arc) variant —
+    // it is NOT assumed sound by analogy to the bytes probe.
+    fn arc_text_probe(v: Variant) {
+        let _serial = super::ARENA_TEST_SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+        const WRITES: u64 = if cfg!(miri) { 60 } else { 40_000 };
+        const NKEYS: u64 = 64;
+        let done = StdArc::new(AtomicBool::new(false));
+        let bad = StdArc::new(AtomicUsize::new(0));
+
+        let w_done = done.clone();
+        let writer = thread::spawn(move || {
+            for i in 0..WRITES {
+                let k = format!("arcprobe:{}:{}", v as u8, i % NKEYS);
+                let val = format!("V-{}-END", k);
+                let shard = shard_of(&k);
+                {
+                    let sh = &lfidx().shards[shard];
+                    let mut w = sh.wr.lock().unwrap_or_else(|p| p.into_inner());
+                    if !w.pending.contains_key(&k) {
+                        w.pending.insert(k.clone(), Stored::Text(Arc::from(val.as_str())));
+                    }
+                    if w.pending.len() >= block_size() {
+                        lf_seal(&mut w, v);
+                    }
+                }
+                if i % 8 == 0 {
+                    lf_flush(v);
+                }
+            }
+            lf_flush(v);
+            w_done.store(true, AtoOrd::Release);
+        });
+
+        let mut readers = Vec::new();
+        for _ in 0..3 {
+            let r_done = done.clone();
+            let r_bad = bad.clone();
+            readers.push(thread::spawn(move || loop {
+                for kk in 0..NKEYS {
+                    let k = format!("arcprobe:{}:{}", v as u8, kk);
+                    if let Some(s) = lf_get_text(&k) {
+                        if &*s != format!("V-{}-END", k) {
+                            r_bad.fetch_add(1, AtoOrd::Relaxed);
+                        }
+                    }
+                }
+                if r_done.load(AtoOrd::Acquire) {
+                    break;
+                }
+            }));
+        }
+
+        writer.join().unwrap();
+        for r in readers {
+            r.join().unwrap();
+        }
+        assert_eq!(
+            bad.load(AtoOrd::Relaxed),
+            0,
+            "corrupted/aliased shared-text reads observed for {:?}",
+            v
+        );
+    }
+
+    #[test]
+    fn lfb_arc_shared_text_never_corrupts() {
+        arc_text_probe(Variant::LfB);
+    }
+
+    #[test]
+    fn lfa_arc_shared_text_never_corrupts() {
+        arc_text_probe(Variant::LfA);
     }
 
     #[test]
