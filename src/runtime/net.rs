@@ -259,6 +259,10 @@ pub fn tcp_connect(args: Value) -> Value {
     };
     let stream = TcpStream::connect((host.as_str(), port))
         .unwrap_or_else(|e| panic!("tcp_connect({}:{}): {}", host, port, e));
+    // fix:axverity-pointread-floor — disable Nagle on the client socket too, so
+    // the bridge's own request/response spikes don't incur the same ~40ms
+    // delayed-ACK stall (parity with the accepted-stream fix above).
+    let _ = stream.set_nodelay(true);
     Value::Int(insert_stream(Sock::Stream(stream)))
 }
 
@@ -275,6 +279,15 @@ pub fn tcp_accept(v: Value) -> Value {
     let (stream, _addr) = listener
         .accept()
         .unwrap_or_else(|e| panic!("tcp_accept({}): {}", handle, e));
+    // fix:axverity-pointread-floor — disable Nagle on the accepted server
+    // socket. Without TCP_NODELAY, a multi-write response (each pg protocol
+    // message is a separate write_all) leaves a small trailing segment that
+    // Nagle holds pending ACK; the client's delayed-ACK timer then stalls the
+    // exchange ~40ms per request/response round-trip. This was ~97% of the
+    // measured POINT-read floor (AXVERITY_POINTREAD_FLOOR_DECOMPOSITION_V1).
+    // PostgreSQL sets the same option (pqcomm.c). Best-effort: a platform that
+    // cannot set it still serves correctly, just with Nagle.
+    let _ = stream.set_nodelay(true);
     Value::Int(insert_stream(Sock::Stream(stream)))
 }
 
