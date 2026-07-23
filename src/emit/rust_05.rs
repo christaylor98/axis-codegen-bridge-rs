@@ -426,7 +426,6 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("cursor_load",          "axis_codegen_bridge::runtime::cursor::cursor_load");
     m.insert("cursor_line",          "axis_codegen_bridge::runtime::cursor::cursor_line");
     m.insert("cursor_sort",          "axis_codegen_bridge::runtime::cursor::cursor_sort");
-    m.insert("groupby_cursor_mode",  "axis_codegen_bridge::runtime::cursor::groupby_cursor_mode");
     // ── Plain-aggregate cursor flag (AXVERITY_READPATH_FINAL_CLOSEOUT_V1 Item 1):
     //    agg_eval dispatches to the input-consuming cursor fold when on. ────────────
 

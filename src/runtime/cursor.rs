@@ -189,45 +189,6 @@ pub fn cursor_close(arg: Value) -> Value {
     Value::Unit
 }
 
-/// `groupby_cursor_mode(_: Unit) -> Text`
-///
-/// The finer-grained selector added by AXVERITY_READPATH_CLOSEOUT_V1 (Part 1),
-/// superseding the boolean `groupby_cursor_enabled` for the GROUP BY row builder
-/// so the two independent loop-state levers — the input-consuming cursor and the
-/// native `cursor_sort` — can be enabled SEPARATELY and measured incrementally
-/// against the real query path (the direct lesson of the first cursor attempt,
-/// which shipped a zero-win output-only accumulator). Env `AXVERITY_GROUPBY_CURSOR`:
-///   - unset / `0` / `off` / `false`        → `"off"`  (string-state + selection
-///                                                       sort — the shipped default,
-///                                                       byte-identical fallback)
-///   - `1` / `on` / `true`                  → `"out"`  (the §26 append-only OUTPUT
-///                                                       cursor — kept for continuity;
-///                                                       measured no-win)
-///   - `in`                                 → `"in"`   (input-consuming cursor for
-///                                                       keyed + fold; selection sort
-///                                                       still — lever 1 alone)
-///   - `sort`                               → `"sort"` (cursor_sort replaces the
-///                                                       selection sort; string keyed
-///                                                       + fold — lever 2 alone)
-///   - `full`                               → `"full"` (both levers)
-///   - anything else                        → `"off"`  (safe default)
-///
-/// `OnceLock`-cached: a query pays the env read at most once per process (each
-/// measurement launches a fresh server with the env pinned, so per-process
-/// caching is exactly right). **Default OFF** — the flag is only flipped to
-/// default-on after Chris reviews the measured results (the qhm ship discipline).
-#[track_caller]
-pub fn groupby_cursor_mode(_arg: Value) -> Value {
-    static MODE: OnceLock<&'static str> = OnceLock::new();
-    // AXVERITY_WAY_BACK_CONSOLIDATION_V1: the GROUPBY_CURSOR switch is removed. "full" won
-    // decisively (§28/§30: cursor_sort is the GROUP BY lever, 25–122×; input-cursor + sort
-    // combined) and is byte-identical to the string path; off/out/in/sort had no advantage over
-    // full. Always "full". AXVERITY_GROUPBY_CURSOR is no longer read. (The now-unreachable
-    // internal off/out entry points are deleted; the deeper pg_gb_rows_fast in/sort dead-branch
-    // collapse is staged.)
-    let m = *MODE.get_or_init(|| "full");
-    Value::Str(intern_str(m))
-}
 
 /// `cursor_load(text: Text) -> Int`
 ///
