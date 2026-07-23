@@ -325,14 +325,39 @@ where
     let (mut cur_seg, mut off) = (wm_seg, wm_off);
     let mut scanned: i64 = 0;
     let (mut fr_seg, mut fr_off) = (wm_seg, wm_off);
+    // AXVERITY_COLDREAD_DEEP_DIVE_V1 Part A: gated per-stage timing. Splits the
+    // whole-segment disk read (`read_segment` = read_to_end) from the per-frame
+    // parse+sha256 CPU loop, capturing wall AND thread-CPU for each so the
+    // harness can compute disk-wait (wall-cpu) vs CPU (cpu). Zero cost when off.
+    let probe = super::coldprobe::enabled();
+    let mut seg_read_wall = 0u64;
+    let mut seg_read_cpu = 0u64;
+    let mut parse_wall = 0u64;
+    let mut parse_cpu = 0u64;
+    let mut seg_bytes = 0u64;
     loop {
+        let (rw0, rc0) = if probe {
+            (super::coldprobe::wall_ns(), super::coldprobe::cpu_ns())
+        } else {
+            (0, 0)
+        };
         let data = match read_segment(prefix, cur_seg) {
             Some(d) => d,
             None => break, // watermark segment no longer exists — stop
         };
+        if probe {
+            seg_read_wall += super::coldprobe::wall_ns().saturating_sub(rw0);
+            seg_read_cpu += super::coldprobe::cpu_ns().saturating_sub(rc0);
+            seg_bytes += data.len() as u64;
+        }
         let dlen = data.len();
         let mut off_us = if off < 0 { 0usize } else { off as usize };
         let mut torn = false;
+        let (pw0, pc0) = if probe {
+            (super::coldprobe::wall_ns(), super::coldprobe::cpu_ns())
+        } else {
+            (0, 0)
+        };
         // Need the full 84-byte fixed header (H|P|V) before we can read V.
         while off_us + 84 <= dlen {
             let hexh = match std::str::from_utf8(&data[off_us..off_us + 64]) {
@@ -370,6 +395,10 @@ where
             off_us += 84 + vlen + plen;
             scanned += 1;
         }
+        if probe {
+            parse_wall += super::coldprobe::wall_ns().saturating_sub(pw0);
+            parse_cpu += super::coldprobe::cpu_ns().saturating_sub(pc0);
+        }
         let clean_end = !torn && off_us == dlen;
         if clean_end && read_segment(prefix, cur_seg + 1).is_some() {
             cur_seg += 1;
@@ -379,6 +408,22 @@ where
         fr_seg = cur_seg;
         fr_off = off_us as i64;
         break; // torn frontier, or last segment exhausted
+    }
+    if probe {
+        // `seg_read_*` = whole-segment disk read (read_to_end); `parse_*` =
+        // per-frame utf8 parse + sha256 verify CPU. A short segment basename
+        // tags whether this scan is a field-index anchor scan or a content pull.
+        let tag = Path::new(prefix)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(prefix);
+        super::coldprobe::emit(
+            "walk_frames",
+            &format!(
+                "prefix={}\tframes={}\tseg_bytes={}\tseg_read_wall_ns={}\tseg_read_cpu_ns={}\tparse_hash_wall_ns={}\tparse_hash_cpu_ns={}",
+                tag, scanned, seg_bytes, seg_read_wall, seg_read_cpu, parse_wall, parse_cpu
+            ),
+        );
     }
     (fr_seg, fr_off, scanned)
 }

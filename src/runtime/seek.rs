@@ -57,6 +57,17 @@ pub fn fs_read_range(args: Value) -> Value {
         panic!("fs_read_range: negative offset={} or len={}", offset, len);
     }
 
+    // AXVERITY_COLDREAD_DEEP_DIVE_V1 Part A: gated timing of the payload
+    // byte-range read (open + seek + bounded read). This is the ONLY disk
+    // touch on the object's own payload bytes; on a cold read it is a positioned
+    // read into a fresh buffer, the closest structural analog to PG's/SQLite's
+    // single-block pread. Zero cost when the probe is off.
+    let probe = super::coldprobe::enabled();
+    let (w0, c0) = if probe {
+        (super::coldprobe::wall_ns(), super::coldprobe::cpu_ns())
+    } else {
+        (0, 0)
+    };
     let mut f = match File::open(&path) {
         Ok(f) => f,
         Err(e) => panic!("fs_read_range({}): open: {}", path, e),
@@ -69,6 +80,14 @@ pub fn fs_read_range(args: Value) -> Value {
     let mut buf = Vec::new();
     if let Err(e) = f.take(len as u64).read_to_end(&mut buf) {
         panic!("fs_read_range({}): read len={} at offset={}: {}", path, len, offset, e);
+    }
+    if probe {
+        let wall = super::coldprobe::wall_ns().saturating_sub(w0);
+        let cpu = super::coldprobe::cpu_ns().saturating_sub(c0);
+        super::coldprobe::emit(
+            "fs_read_range",
+            &format!("bytes={}\twall_ns={}\tcpu_ns={}", buf.len(), wall, cpu),
+        );
     }
     Value::Bytes(buf)
 }
