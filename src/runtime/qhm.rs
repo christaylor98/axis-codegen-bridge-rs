@@ -107,7 +107,7 @@
 //! never a wrong answer, only a slower (disk) pull.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -117,38 +117,11 @@ use super::value::{get_str, Value};
 const NSHARDS: usize = 256; // power of two; keyed by fnv1a(hash), same as contentidx
 const CAP_DEFAULT: usize = 65536;
 
-// AXVERITY_WAY_BACK_CONSOLIDATION_V1: variant() is hardcoded LfB (QHM_VARIANT switch removed);
-// Off/Mutex/LfA are retained only by the match arms + mutex backend staged for deletion.
-#[allow(dead_code)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Variant {
-    Off,
-    Mutex,
-    LfA,
-    LfB,
-}
-
-fn variant() -> Variant {
-    static V: OnceLock<Variant> = OnceLock::new();
-    *V.get_or_init(|| {
-        // SHIPPED DEFAULT (AXVERITY_QHM_SHIP_LOCKFREE_V1): unset/empty/unknown ->
-        // `lfb` (lock-free reads, watermark-batched reclaim). This is the shipped
-        // engine: the 17-33x pull-heavy-aggregate win is live on the standard
-        // path with no env set. `off`/`mutex`/`lfa` remain explicitly selectable
-        // as non-default fallbacks (see module doc "Shipped default & fallbacks").
-        // No blocking primitive is introduced by this flip — the default arm only
-        // reselects an already-present variant; `lfb`'s reads are lock-free and
-        // its sole Mutex (per-shard `Mutex<Writer>`) predates this turn and is
-        // justified in the LOCK-FREE backend header (single-writer contract).
-        // AXVERITY_WAY_BACK_CONSOLIDATION_V1: the QHM_VARIANT switch is removed. The measured win
-        // was RAM-first (qhm enabled), NOT the backend (mutex≈lfa≈lfb); lfb is the shipped
-        // engine, so off/mutex/lfa have no advantage. Always LfB. AXVERITY_QHM_VARIANT is no
-        // longer read. (Deleting the now-unreachable off short-circuits + mutex/lfa backends and
-        // their ~27 match-arm sites is a self-contained follow-up, staged — this switch removal
-        // does not refactor the lfb winner's hot path.)
-        Variant::LfB
-    })
-}
+// AXVERITY_WAY_BACK_CONSOLIDATION_V1: the QHM_VARIANT switch and the Variant enum are DELETED.
+// The measured win was RAM-first (qhm enabled), NOT the backend (mutex≈lfa≈lfb); lfb is the
+// shipped engine and off/mutex/lfa had no advantage, so qhm is now unconditionally the lock-free
+// (lfb, watermark-batched reclaim) backend. The mutex backend, the off short-circuits, and the
+// lfa fine-grained-reclaim arm are all removed below. AXVERITY_QHM_VARIANT is no longer read.
 
 fn total_cap() -> usize {
     static C: OnceLock<usize> = OnceLock::new();
@@ -223,41 +196,11 @@ fn shard_of(key: &str) -> usize {
 //              is the reachable shape at the hot site (reported, not assumed).
 // ===========================================================================
 
-// AXVERITY_WAY_BACK_CONSOLIDATION_V1: return_mode() is hardcoded Off (QHM_RETURN switch removed);
-// Revalidate/Shared are retained only by the staged-for-deletion Text-representation code.
-#[allow(dead_code)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum ReturnMode {
-    Off,
-    Revalidate,
-    Shared, // "arc": stored Arc<str>, returned by cheap clone
-}
-
-// AXVERITY_WAY_BACK_CONSOLIDATION_V1: the QHM_RETURN switch is removed — §32 measured the
-// zero-copy return variants (arc/revalidate) within noise of the baseline (the record copy is
-// ~0.3% of per-row cost). Always Off (baseline Bytes storage). AXVERITY_QHM_RETURN is no longer
-// read. (The residual Text-representation code + its tests + the orphaned qhm_get_text/
-// qhm_return_mode entry points are staged for a follow-up cleanup pass, kept intact here so this
-// switch removal does not refactor the qhm=lfb winner's storage/tests.)
-fn return_mode() -> ReturnMode {
-    ReturnMode::Off
-}
-
-// AXVERITY_WAY_BACK_CONSOLIDATION_V1: key_mode() is hardcoded Clone (QHM_KEY switch removed);
-// Borrow is retained only by the match arms staged for deletion with the Text-representation code.
-#[allow(dead_code)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum KeyMode {
-    Clone,
-    Borrow,
-}
-
-// AXVERITY_WAY_BACK_CONSOLIDATION_V1: the QHM_KEY switch is removed — §32 measured the borrow
-// (zero-alloc key) variant within noise. Always Clone (baseline get_str). AXVERITY_QHM_KEY is no
-// longer read.
-fn key_mode() -> KeyMode {
-    KeyMode::Clone
-}
+// AXVERITY_WAY_BACK_CONSOLIDATION_V1: the QHM_RETURN + QHM_KEY switches and their entire
+// Text/Borrow zero-copy machinery (ReturnMode/KeyMode enums, return_mode()/key_mode(), the
+// Stored::Text representation, to_text/lf_get_text, qhm_get_text/qhm_return_mode) were DELETED —
+// §32 measured all of it within noise of the baseline. qhm now stores Bytes and keys by Clone,
+// unconditionally.
 
 /// An immutable stored record value in the lock-free backend. The
 /// representation is chosen ONCE at put time by `return_mode()`:
@@ -271,7 +214,6 @@ fn key_mode() -> KeyMode {
 #[derive(Clone)]
 enum Stored {
     Bytes(Arc<[u8]>),
-    Text(Arc<str>),
 }
 
 impl Stored {
@@ -279,85 +221,15 @@ impl Stored {
     /// mode validate-once here (site 3); any non-UTF-8 input (never on the
     /// audited put path) falls back to Bytes so reads still serve it.
     fn build(bytes: Vec<u8>) -> Stored {
-        if return_mode() == ReturnMode::Shared {
-            match String::from_utf8(bytes) {
-                Ok(s) => Stored::Text(Arc::from(s)),
-                Err(e) => Stored::Bytes(Arc::from(e.into_bytes().into_boxed_slice())),
-            }
-        } else {
-            Stored::Bytes(Arc::from(bytes.into_boxed_slice()))
-        }
+        Stored::Bytes(Arc::from(bytes.into_boxed_slice()))
     }
 
-    /// The record bytes as an owned Vec (the `qhm_get` / Bytes-return path). One
-    /// copy — byte-identical to the historical behavior regardless of storage.
+    /// The record bytes as an owned Vec (the `qhm_get` path). One copy.
     fn to_bytes(&self) -> Vec<u8> {
         match self {
             Stored::Bytes(b) => b.to_vec(),
-            Stored::Text(s) => s.as_bytes().to_vec(),
         }
     }
-
-    /// A shared `Arc<str>` view of the record (the `qhm_get_text` path).
-    ///   * `Text` => `Arc::clone` (zero-copy shared borrow).
-    ///   * `Bytes` => validate UTF-8 + build one Arc<str> (reduced-copy). `None`
-    ///     on invalid UTF-8 so the caller falls through to the disk tier (never
-    ///     a panic, never a wrong answer).
-    fn to_text(&self) -> Option<Arc<str>> {
-        match self {
-            Stored::Text(s) => Some(Arc::clone(s)),
-            Stored::Bytes(b) => std::str::from_utf8(b).ok().map(super::value::intern_str),
-        }
-    }
-}
-
-// ===========================================================================
-// MUTEX backend — RAM-first control. A private copy of contentidx's shape
-// (sharded Mutex<HashMap> + FIFO). Deliberately NOT sharing contentidx's
-// statics: this must be independently capped and consulted-first, and the
-// intent forbids touching contentidx.rs.
-// ===========================================================================
-struct MShard {
-    map: HashMap<String, Vec<u8>>,
-    fifo: VecDeque<String>,
-}
-struct MIdx {
-    shards: Vec<Mutex<MShard>>,
-}
-fn midx() -> &'static MIdx {
-    static I: OnceLock<MIdx> = OnceLock::new();
-    I.get_or_init(|| MIdx {
-        shards: (0..NSHARDS)
-            .map(|_| {
-                Mutex::new(MShard {
-                    map: HashMap::new(),
-                    fifo: VecDeque::new(),
-                })
-            })
-            .collect(),
-    })
-}
-fn m_put(hash: String, bytes: Vec<u8>) {
-    let cap = per_shard_cap();
-    let s = shard_of(&hash);
-    let mut g = midx().shards[s].lock().unwrap_or_else(|p| p.into_inner());
-    if g.map.contains_key(&hash) {
-        return; // insert-if-absent: content is immutable
-    }
-    while g.fifo.len() >= cap {
-        if let Some(old) = g.fifo.pop_front() {
-            g.map.remove(&old);
-        } else {
-            break;
-        }
-    }
-    g.fifo.push_back(hash.clone());
-    g.map.insert(hash, bytes);
-}
-fn m_get(hash: &str) -> Vec<u8> {
-    let s = shard_of(hash);
-    let g = midx().shards[s].lock().unwrap_or_else(|p| p.into_inner());
-    g.map.get(hash).cloned().unwrap_or_default()
 }
 
 // ===========================================================================
@@ -425,7 +297,7 @@ thread_local! {
 /// `SegSet` head, evict oldest segments past the cap, and reclaim per the
 /// selected granularity. Caller MUST hold `w` (the shard write lock) — that is
 /// what upholds the engine's single-writer contract.
-fn lf_seal(w: &mut LfWriter, v: Variant) {
+fn lf_seal(w: &mut LfWriter) {
     if w.pending.is_empty() {
         return;
     }
@@ -462,22 +334,12 @@ fn lf_seal(w: &mut LfWriter, v: Variant) {
     unsafe {
         w.writer.write_with_epoch(new_set, epoch);
     }
-    match v {
-        Variant::LfA => {
-            // Fine-grained: attempt to free the just-retired container block
-            // immediately on every seal.
-            w.writer.reclaim(&lfidx().reg);
-        }
-        Variant::LfB => {
-            // Coarse: let retired blocks accumulate to the engine's watermark,
-            // then sweep in a batch with exponential back-off on starved floors.
-            w.writer.reclaim_if_watermark(&lfidx().reg);
-        }
-        _ => {}
-    }
+    // Coarse (lfb) reclaim: let retired blocks accumulate to the engine's watermark,
+    // then sweep in a batch with exponential back-off on starved floors.
+    w.writer.reclaim_if_watermark(&lfidx().reg);
 }
 
-fn lf_put(hash: String, bytes: Vec<u8>, v: Variant) {
+fn lf_put(hash: String, bytes: Vec<u8>) {
     let s = shard_of(&hash);
     let sh = &lfidx().shards[s];
     let mut w = sh.wr.lock().unwrap_or_else(|p| p.into_inner());
@@ -490,7 +352,7 @@ fn lf_put(hash: String, bytes: Vec<u8>, v: Variant) {
     }
     w.pending.insert(hash, Stored::build(bytes));
     if w.pending.len() >= block_size() {
-        lf_seal(&mut w, v);
+        lf_seal(&mut w);
     }
 }
 
@@ -525,20 +387,14 @@ fn lf_lookup<T>(hash: &str, miss: T, f: impl FnOnce(&Stored) -> T) -> T {
     })
 }
 
-fn lf_get(hash: &str, _v: Variant) -> Vec<u8> {
+fn lf_get(hash: &str) -> Vec<u8> {
     lf_lookup(hash, Vec::new(), Stored::to_bytes)
 }
 
-/// Shared-text read (`qhm_get_text`). `Text` storage => `Arc::clone` (zero-copy);
-/// `Bytes` storage => validate + one Arc<str>. `None` on miss OR invalid UTF-8.
-fn lf_get_text(hash: &str) -> Option<Arc<str>> {
-    lf_lookup(hash, None, Stored::to_text)
-}
-
-fn lf_flush(v: Variant) {
+fn lf_flush() {
     for sh in &lfidx().shards {
         let mut w = sh.wr.lock().unwrap_or_else(|p| p.into_inner());
-        lf_seal(&mut w, v);
+        lf_seal(&mut w);
     }
 }
 
@@ -551,10 +407,6 @@ fn lf_flush(v: Variant) {
 /// immutable). No fsync, no disk I/O. `off` no-ops.
 #[track_caller]
 pub fn qhm_put(args: Value) -> Value {
-    let v = variant();
-    if v == Variant::Off {
-        return Value::Unit;
-    }
     let (hash, bytes) = match args {
         Value::Tuple(es) if es.len() == 2 => {
             let mut it = es.into_iter();
@@ -570,104 +422,27 @@ pub fn qhm_put(args: Value) -> Value {
         Value::Bytes(b) => b,
         other => panic!("qhm_put: arg 1 expected Bytes, got {:?}", other),
     };
-    match v {
-        Variant::Off => {}
-        Variant::Mutex => m_put(hash, bytes),
-        Variant::LfA | Variant::LfB => lf_put(hash, bytes, v),
-    }
+    lf_put(hash, bytes);
     Value::Unit
 }
 
-/// Dispatch a bytes-returning lookup by variant.
-#[inline]
-fn get_bytes_by(hash: &str, v: Variant) -> Vec<u8> {
-    match v {
-        Variant::Off => Vec::new(),
-        Variant::Mutex => m_get(hash),
-        Variant::LfA | Variant::LfB => lf_get(hash, v),
-    }
-}
-
 /// `qhm_get(hash: Text) -> Bytes` — the record's bytes, or empty Bytes on a miss
-/// (caller falls through to the existing durable tiers). `off` always misses.
-/// The key (address) is read per `AXVERITY_QHM_KEY`: `clone` (baseline
-/// `get_str`, one owned String) or `borrow` (the Arc<str>'s &str, zero alloc).
+/// (caller falls through to the existing durable tiers).
 #[track_caller]
 pub fn qhm_get(arg: Value) -> Value {
-    let v = variant();
-    if v == Variant::Off {
-        return Value::Bytes(Vec::new());
-    }
     let bytes = match arg {
-        Value::Str(h) => match key_mode() {
-            KeyMode::Borrow => get_bytes_by(h.as_ref(), v),
-            KeyMode::Clone => get_bytes_by(&get_str(&h), v),
-        },
+        Value::Str(h) => lf_get(&get_str(&h)),
         other => panic!("qhm_get: expected Text hash, got {:?}", other),
     };
     Value::Bytes(bytes)
 }
 
-/// `qhm_get_text(hash: Text) -> Text` — the record's bytes AS TEXT (a shared
-/// Arc<str>), or "" on a miss / invalid-UTF-8 (caller routes to the disk tiers).
-/// This is the RETURN-PATH variant entry (AXVERITY_ZEROCOPY_READPATH_BUILD_V1):
-/// it fuses the old `bytes_to_text(qhm_get(..))` two-hop into one, and under
-/// `AXVERITY_QHM_RETURN=arc` returns a zero-copy `Arc::clone` of the once-
-/// validated stored text. `off` never routes here (pull_object uses the Bytes
-/// path); it is defined for all variants so a direct caller is well-behaved.
-#[track_caller]
-pub fn qhm_get_text(arg: Value) -> Value {
-    let v = variant();
-    let text: Option<Arc<str>> = match arg {
-        Value::Str(h) => {
-            let get = |k: &str| -> Option<Arc<str>> {
-                match v {
-                    Variant::Off => None,
-                    Variant::Mutex => {
-                        let b = m_get(k);
-                        if b.is_empty() {
-                            None
-                        } else {
-                            std::str::from_utf8(&b).ok().map(super::value::intern_str)
-                        }
-                    }
-                    Variant::LfA | Variant::LfB => lf_get_text(k),
-                }
-            };
-            match key_mode() {
-                KeyMode::Borrow => get(h.as_ref()),
-                KeyMode::Clone => get(&get_str(&h)),
-            }
-        }
-        other => panic!("qhm_get_text: expected Text hash, got {:?}", other),
-    };
-    // "" is the established miss sentinel (records are never empty; pull_object
-    // routes an empty result to the durable tiers).
-    Value::Str(text.unwrap_or_else(|| super::value::intern_str("")))
-}
-
 /// `qhm_flush(_: Unit) -> Unit` — seal every shard's pending batch so the whole
-/// written working set is resident before timed reads. No-op for off/mutex.
+/// written working set is resident before timed reads.
 #[track_caller]
 pub fn qhm_flush(_arg: Value) -> Value {
-    let v = variant();
-    if let Variant::LfA | Variant::LfB = v {
-        lf_flush(v);
-    }
+    lf_flush();
     Value::Unit
-}
-
-/// `qhm_return_mode(_: Unit) -> Text` — "off" | "revalidate" | "arc". Lets
-/// `pull_object` choose the Bytes path (off, exact baseline) vs the fused
-/// `qhm_get_text` path (revalidate/arc). AXVERITY_QHM_RETURN, read once.
-#[track_caller]
-pub fn qhm_return_mode(_arg: Value) -> Value {
-    let s = match return_mode() {
-        ReturnMode::Off => "off",
-        ReturnMode::Revalidate => "revalidate",
-        ReturnMode::Shared => "arc",
-    };
-    Value::Str(super::value::intern_str(s))
 }
 
 /// `qhm_stats(_: Unit) -> Text` — diagnostic snapshot for the reclaim-pressure
@@ -676,35 +451,17 @@ pub fn qhm_return_mode(_arg: Value) -> Value {
 /// (the memory the reclaim policy has not yet returned).
 #[track_caller]
 pub fn qhm_stats(_arg: Value) -> Value {
-    let v = variant();
-    let s = match v {
-        Variant::Off => "variant=off".to_string(),
-        Variant::Mutex => {
-            let mut entries = 0usize;
-            for sh in &midx().shards {
-                let g = sh.lock().unwrap_or_else(|p| p.into_inner());
-                entries += g.map.len();
-            }
-            format!("variant=mutex retired=0 segs=0 entries={}", entries)
+    let (mut retired, mut segs, mut entries) = (0usize, 0usize, 0usize);
+    for sh in &lfidx().shards {
+        let w = sh.wr.lock().unwrap_or_else(|p| p.into_inner());
+        retired += w.writer.retired_len();
+        entries += w.pending.len();
+        if let Some(cur) = w.writer.cell().read(0).value() {
+            segs += cur.segs.len();
+            entries += cur.total;
         }
-        Variant::LfA | Variant::LfB => {
-            let name = if v == Variant::LfA { "lfa" } else { "lfb" };
-            let (mut retired, mut segs, mut entries) = (0usize, 0usize, 0usize);
-            for sh in &lfidx().shards {
-                let w = sh.wr.lock().unwrap_or_else(|p| p.into_inner());
-                retired += w.writer.retired_len();
-                entries += w.pending.len();
-                if let Some(cur) = w.writer.cell().read(0).value() {
-                    segs += cur.segs.len();
-                    entries += cur.total;
-                }
-            }
-            format!(
-                "variant={} retired={} segs={} entries={}",
-                name, retired, segs, entries
-            )
-        }
-    };
+    }
+    let s = format!("variant=lfb retired={} segs={} entries={}", retired, segs, entries);
     Value::Str(super::value::intern_str(&s))
 }
 
@@ -729,27 +486,13 @@ mod tests {
     // AXVERITY_QHM_VARIANT and runnable in one `cargo test` process.
 
     #[test]
-    fn mutex_put_get_and_miss() {
-        assert_eq!(m_get("qhm_mtest:absent"), Vec::<u8>::new());
-        m_put("sha256:m_aaa".into(), b"RECORD\tk=v".to_vec());
-        assert_eq!(m_get("sha256:m_aaa"), b"RECORD\tk=v".to_vec());
-    }
-
-    #[test]
-    fn mutex_insert_if_absent() {
-        m_put("sha256:m_immut".into(), b"first".to_vec());
-        m_put("sha256:m_immut".into(), b"second".to_vec());
-        assert_eq!(m_get("sha256:m_immut"), b"first".to_vec());
-    }
-
-    #[test]
     fn lf_put_flush_get_and_miss() {
         let _serial = ARENA_TEST_SERIAL.lock().unwrap_or_else(|p| p.into_inner());
-        assert_eq!(lf_get("qhm_lftest:absent", Variant::LfA), Vec::<u8>::new());
-        lf_put("sha256:lf_aaa".into(), b"RECORD\tk=v".to_vec(), Variant::LfA);
+        assert_eq!(lf_get("qhm_lftest:absent"), Vec::<u8>::new());
+        lf_put("sha256:lf_aaa".into(), b"RECORD\tk=v".to_vec());
         // Not yet sealed (pending < block_size) — still findable via flush.
-        lf_flush(Variant::LfA);
-        assert_eq!(lf_get("sha256:lf_aaa", Variant::LfA), b"RECORD\tk=v".to_vec());
+        lf_flush();
+        assert_eq!(lf_get("sha256:lf_aaa"), b"RECORD\tk=v".to_vec());
     }
 
     #[test]
@@ -769,53 +512,17 @@ mod tests {
             i += 1;
         }
         for (n, k) in keys.iter().enumerate() {
-            lf_put(k.clone(), format!("v{}", n).into_bytes(), Variant::LfB);
+            lf_put(k.clone(), format!("v{}", n).into_bytes());
         }
         // The bs-th insert triggers a seal; all bs entries must be readable.
         for (n, k) in keys.iter().enumerate() {
             assert_eq!(
-                lf_get(k, Variant::LfB),
+                lf_get(k),
                 format!("v{}", n).into_bytes(),
                 "sealed key {} should be readable",
                 k
             );
         }
-    }
-
-    #[test]
-    fn stored_text_roundtrip_bytes_and_text() {
-        let _serial = ARENA_TEST_SERIAL.lock().unwrap_or_else(|p| p.into_inner());
-        // Force Text storage (the arc-mode representation), independent of the
-        // ambient AXVERITY_QHM_RETURN env: a Text-stored entry reads back
-        // zero-copy via lf_get_text AND byte-identically via lf_get.
-        let k = "sha256:qhm_text_rt";
-        {
-            let shard = shard_of(k);
-            let sh = &lfidx().shards[shard];
-            let mut w = sh.wr.lock().unwrap_or_else(|p| p.into_inner());
-            w.pending.insert(k.to_string(), Stored::Text(Arc::from("RECORD\tk=v")));
-            lf_seal(&mut w, Variant::LfB);
-        }
-        assert_eq!(lf_get_text(k).as_deref(), Some("RECORD\tk=v"));
-        assert_eq!(lf_get(k, Variant::LfB), b"RECORD\tk=v".to_vec());
-    }
-
-    #[test]
-    fn stored_bytes_revalidate_to_text_and_bad_utf8() {
-        let _serial = ARENA_TEST_SERIAL.lock().unwrap_or_else(|p| p.into_inner());
-        // Default build() => Bytes storage (ambient env off); lf_get_text must
-        // validate + return text (the revalidate variant).
-        let k = "sha256:qhm_bytes_reval";
-        lf_put(k.to_string(), b"RECORD\tc=1".to_vec(), Variant::LfB);
-        lf_flush(Variant::LfB);
-        assert_eq!(lf_get_text(k).as_deref(), Some("RECORD\tc=1"));
-        // Invalid UTF-8 stored as Bytes => text read is a clean None (caller
-        // routes to the disk tier), while the bytes read still serves it.
-        let kb = "sha256:qhm_bad_utf8";
-        lf_put(kb.to_string(), vec![0xff, 0xfe, 0x00], Variant::LfB);
-        lf_flush(Variant::LfB);
-        assert_eq!(lf_get_text(kb), None);
-        assert_eq!(lf_get(kb, Variant::LfB), vec![0xff, 0xfe, 0x00]);
     }
 
     #[test]
@@ -846,7 +553,7 @@ mod soundness_probe {
     // writer thread seals repeatedly; several reader threads pin/clone/walk
     // concurrently. Any freed-under-a-live-read block would surface as a
     // corrupted (wrong-shape or absent-when-present) read.
-    fn concurrent_probe(v: Variant) {
+    fn concurrent_probe() {
         let _serial = super::ARENA_TEST_SERIAL.lock().unwrap_or_else(|p| p.into_inner());
         const WRITES: u64 = if cfg!(miri) { 60 } else { 40_000 };
         const NKEYS: u64 = 64; // small keyspace so reads frequently hit live entries
@@ -856,21 +563,18 @@ mod soundness_probe {
         let w_done = done.clone();
         let writer = thread::spawn(move || {
             for i in 0..WRITES {
-                let k = format!("probe:{}:{}", v as u8, i % NKEYS);
+                let k = format!("probe:{}", i % NKEYS);
                 // value uniquely encodes the key so a torn/aliased read is
                 // detectable: "V-<key>-END".
                 let val = format!("V-{}-END", k).into_bytes();
-                match v {
-                    Variant::LfA | Variant::LfB => lf_put(k, val, v),
-                    _ => unreachable!(),
-                }
+                lf_put(k, val);
                 if i % 8 == 0 {
                     // periodic flush so readers see fresh entries and seals
                     // interleave with reads.
-                    lf_flush(v);
+                    lf_flush();
                 }
             }
-            lf_flush(v);
+            lf_flush();
             w_done.store(true, AtoOrd::Release);
         });
 
@@ -880,8 +584,8 @@ mod soundness_probe {
             let r_bad = bad.clone();
             readers.push(thread::spawn(move || loop {
                 for kk in 0..NKEYS {
-                    let k = format!("probe:{}:{}", v as u8, kk);
-                    let b = lf_get(&k, v);
+                    let k = format!("probe:{}", kk);
+                    let b = lf_get(&k);
                     if !b.is_empty() {
                         // must be exactly "V-<k>-END" for THIS key
                         let ok = match String::from_utf8(b) {
@@ -906,96 +610,12 @@ mod soundness_probe {
         assert_eq!(
             bad.load(AtoOrd::Relaxed),
             0,
-            "corrupted/aliased reads observed for {:?}",
-            v
-        );
-    }
-
-    // The genuinely SHARED (not thread-local) zero-copy pattern this turn adds:
-    // the writer seals `Stored::Text` entries; readers clone the `Arc<str>` out
-    // ACROSS threads under concurrent seal/reclaim. A freed-under-live-read block
-    // or a torn Arc would surface as wrong-content text. This is the per-variant
-    // concurrency gate the intent requires for the shared-borrow (arc) variant —
-    // it is NOT assumed sound by analogy to the bytes probe.
-    fn arc_text_probe(v: Variant) {
-        let _serial = super::ARENA_TEST_SERIAL.lock().unwrap_or_else(|p| p.into_inner());
-        const WRITES: u64 = if cfg!(miri) { 60 } else { 40_000 };
-        const NKEYS: u64 = 64;
-        let done = StdArc::new(AtomicBool::new(false));
-        let bad = StdArc::new(AtomicUsize::new(0));
-
-        let w_done = done.clone();
-        let writer = thread::spawn(move || {
-            for i in 0..WRITES {
-                let k = format!("arcprobe:{}:{}", v as u8, i % NKEYS);
-                let val = format!("V-{}-END", k);
-                let shard = shard_of(&k);
-                {
-                    let sh = &lfidx().shards[shard];
-                    let mut w = sh.wr.lock().unwrap_or_else(|p| p.into_inner());
-                    if !w.pending.contains_key(&k) {
-                        w.pending.insert(k.clone(), Stored::Text(Arc::from(val.as_str())));
-                    }
-                    if w.pending.len() >= block_size() {
-                        lf_seal(&mut w, v);
-                    }
-                }
-                if i % 8 == 0 {
-                    lf_flush(v);
-                }
-            }
-            lf_flush(v);
-            w_done.store(true, AtoOrd::Release);
-        });
-
-        let mut readers = Vec::new();
-        for _ in 0..3 {
-            let r_done = done.clone();
-            let r_bad = bad.clone();
-            readers.push(thread::spawn(move || loop {
-                for kk in 0..NKEYS {
-                    let k = format!("arcprobe:{}:{}", v as u8, kk);
-                    if let Some(s) = lf_get_text(&k) {
-                        if &*s != format!("V-{}-END", k) {
-                            r_bad.fetch_add(1, AtoOrd::Relaxed);
-                        }
-                    }
-                }
-                if r_done.load(AtoOrd::Acquire) {
-                    break;
-                }
-            }));
-        }
-
-        writer.join().unwrap();
-        for r in readers {
-            r.join().unwrap();
-        }
-        assert_eq!(
-            bad.load(AtoOrd::Relaxed),
-            0,
-            "corrupted/aliased shared-text reads observed for {:?}",
-            v
+            "corrupted/aliased reads observed",
         );
     }
 
     #[test]
-    fn lfb_arc_shared_text_never_corrupts() {
-        arc_text_probe(Variant::LfB);
-    }
-
-    #[test]
-    fn lfa_arc_shared_text_never_corrupts() {
-        arc_text_probe(Variant::LfA);
-    }
-
-    #[test]
-    fn lfa_concurrent_write_read_never_corrupts() {
-        concurrent_probe(Variant::LfA);
-    }
-
-    #[test]
-    fn lfb_concurrent_write_read_never_corrupts() {
-        concurrent_probe(Variant::LfB);
+    fn concurrent_write_read_never_corrupts() {
+        concurrent_probe();
     }
 }
