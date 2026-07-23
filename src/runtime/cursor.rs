@@ -219,26 +219,13 @@ pub fn cursor_close(arg: Value) -> Value {
 #[track_caller]
 pub fn groupby_cursor_mode(_arg: Value) -> Value {
     static MODE: OnceLock<&'static str> = OnceLock::new();
-    let m = *MODE.get_or_init(|| {
-        match std::env::var("AXVERITY_GROUPBY_CURSOR")
-            .ok()
-            .as_deref()
-            .map(|s| s.to_ascii_lowercase())
-            .as_deref()
-        {
-            Some("1") | Some("on") | Some("true") => "out",
-            Some("in") => "in",
-            Some("sort") => "sort",
-            Some("full") => "full",
-            // AXVERITY_READPATH_FINAL_CLOSEOUT_V1 Item 2 — default FLIPPED to "full"
-            // (built, single-client-measured, correctness-verified, AND concurrency-
-            // confirmed: gap:axverity-loop-state-quadratic-string-rebuild-CLOSED-
-            // concurrency-confirmed). Explicit off/0/false remain reachable so the
-            // byte-identical string fallback can still be selected for A/B.
-            Some("off") | Some("0") | Some("false") => "off",
-            _ => "full",
-        }
-    });
+    // AXVERITY_WAY_BACK_CONSOLIDATION_V1: the GROUPBY_CURSOR switch is removed. "full" won
+    // decisively (§28/§30: cursor_sort is the GROUP BY lever, 25–122×; input-cursor + sort
+    // combined) and is byte-identical to the string path; off/out/in/sort had no advantage over
+    // full. Always "full". AXVERITY_GROUPBY_CURSOR is no longer read. (The now-unreachable
+    // internal off/out entry points are deleted; the deeper pg_gb_rows_fast in/sort dead-branch
+    // collapse is staged.)
+    let m = *MODE.get_or_init(|| "full");
     Value::Str(intern_str(m))
 }
 

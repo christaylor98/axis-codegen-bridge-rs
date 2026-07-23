@@ -117,6 +117,9 @@ use super::value::{get_str, Value};
 const NSHARDS: usize = 256; // power of two; keyed by fnv1a(hash), same as contentidx
 const CAP_DEFAULT: usize = 65536;
 
+// AXVERITY_WAY_BACK_CONSOLIDATION_V1: variant() is hardcoded LfB (QHM_VARIANT switch removed);
+// Off/Mutex/LfA are retained only by the match arms + mutex backend staged for deletion.
+#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Variant {
     Off,
@@ -137,18 +140,13 @@ fn variant() -> Variant {
         // reselects an already-present variant; `lfb`'s reads are lock-free and
         // its sole Mutex (per-shard `Mutex<Writer>`) predates this turn and is
         // justified in the LOCK-FREE backend header (single-writer contract).
-        match std::env::var("AXVERITY_QHM_VARIANT")
-            .unwrap_or_default()
-            .trim()
-            .to_ascii_lowercase()
-            .as_str()
-        {
-            "off" => Variant::Off,
-            "mutex" => Variant::Mutex,
-            "lfa" => Variant::LfA,
-            "lfb" => Variant::LfB,
-            _ => Variant::LfB,
-        }
+        // AXVERITY_WAY_BACK_CONSOLIDATION_V1: the QHM_VARIANT switch is removed. The measured win
+        // was RAM-first (qhm enabled), NOT the backend (mutex≈lfa≈lfb); lfb is the shipped
+        // engine, so off/mutex/lfa have no advantage. Always LfB. AXVERITY_QHM_VARIANT is no
+        // longer read. (Deleting the now-unreachable off short-circuits + mutex/lfa backends and
+        // their ~27 match-arm sites is a self-contained follow-up, staged — this switch removal
+        // does not refactor the lfb winner's hot path.)
+        Variant::LfB
     })
 }
 
