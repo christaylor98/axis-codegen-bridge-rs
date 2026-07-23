@@ -583,9 +583,8 @@ thread_local! {
 }
 
 /// The residency scope, read once per process from `AXVERITY_WALIDX_RESIDENCY`:
-///   unset / `off` / `0` / `false` → `"off"`    (fresh-handle-per-call fallback,
-///                                                byte-identical to pre-build)
-///   `query`                        → `"query"`  (resident within one query)
+///   unset / `query`                → `"query"`  (THE DEFAULT — flipped off→query in
+///                                                bridge dbd99ac; resident within one query)
 ///   `conn` / `connection`          → `"conn"`   (resident within one connection)
 ///   `server` / `1` / `on` / `true` → `"server"` (resident for the worker's life)
 ///   explicit `off` / `0` / `false`  → `"off"`    (preserved fresh-handle fallback)

@@ -363,7 +363,8 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("walidx_rebuild",       "axis_codegen_bridge::runtime::walindex::walidx_rebuild");
     // ── WAL content-index RESIDENCY (AXVERITY_PULLOBJECT_RESIDENCY_BUILD_V1):
     //    genuinely-incremental replay-from-frontier + per-worker resident handles
-    //    behind AXVERITY_WALIDX_RESIDENCY (default off = fresh-handle fallback).
+    //    behind AXVERITY_WALIDX_RESIDENCY (default QUERY as of bridge dbd99ac;
+    //    explicit off = the preserved fresh-handle fallback).
     m.insert("walidx_replay",          "axis_codegen_bridge::runtime::walindex::walidx_replay");
     m.insert("walidx_res_get",         "axis_codegen_bridge::runtime::walindex::walidx_res_get");
     m.insert("walidx_residency_mode",  "axis_codegen_bridge::runtime::walindex::walidx_residency_mode");
