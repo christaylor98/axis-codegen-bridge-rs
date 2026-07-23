@@ -413,7 +413,6 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     //    behind AXVERITY_FIELDIDX_RESIDENCY (default off = fresh-handle fallback).
     m.insert("fieldidx_replay",         "axis_codegen_bridge::runtime::fieldidx::fieldidx_replay");
     m.insert("fieldidx_res_get",        "axis_codegen_bridge::runtime::fieldidx::fieldidx_res_get");
-    m.insert("fieldidx_residency_mode", "axis_codegen_bridge::runtime::fieldidx::fieldidx_residency_mode");
     m.insert("fieldidx_res_scope",      "axis_codegen_bridge::runtime::fieldidx::fieldidx_res_scope");
 
     // ── Mutable append cursor: per-thread growable buffer to move a loop's

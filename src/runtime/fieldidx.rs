@@ -429,34 +429,17 @@ thread_local! {
 /// measured results (the qhm / GROUP-BY-cursor ship discipline).
 fn residency_mode() -> &'static str {
     static MODE: OnceLock<&'static str> = OnceLock::new();
-    MODE.get_or_init(|| {
-        match std::env::var("AXVERITY_FIELDIDX_RESIDENCY")
-            .ok()
-            .as_deref()
-            .map(|s| s.to_ascii_lowercase())
-            .as_deref()
-        {
-            Some("query") => "query",
-            Some("conn") | Some("connection") => "conn",
-            Some("server") | Some("1") | Some("on") | Some("true") => "server",
-            // AXVERITY_READPATH_FINAL_CLOSEOUT_V1 Item 3 — default FLIPPED to "query"
-            // (built, single-client-measured, correctness-verified, AND concurrency-
-            // confirmed: fix:axverity-fieldindex-residency-concurrency-confirmed; the
-            // data showed query≈server for the JOIN win with perfect coherency and
-            // bounded memory, so per-query scope is the recommended setting). Explicit
-            // off/0/false remain reachable for the byte-identical fresh-handle fallback.
-            Some("off") | Some("0") | Some("false") => "off",
-            _ => "query",
-        }
-    })
+    // AXVERITY_WAY_BACK_CONSOLIDATION_V1: the residency switch is REMOVED. Query scope won
+    // decisively (cold JOIN ~21× faster than the old off/fresh-handle path, which also LEAKED
+    // the field-index shard per lookup) with a bounded per-query resident map; conn/server add
+    // no measured advantage over query (query≈server for the JOIN win). So there is no
+    // alternative worth keeping — always "query". AXVERITY_FIELDIDX_RESIDENCY is no longer read.
+    MODE.get_or_init(|| "query")
 }
 
-/// `fieldidx_residency_mode(_: Unit) -> Text` — the flag, for M1 dispatch in
-/// `fieldidx_lookup_step`. `off` selects the preserved fresh-handle-per-call path.
-#[track_caller]
-pub fn fieldidx_residency_mode(_arg: Value) -> Value {
-    Value::Str(intern_str(residency_mode()))
-}
+// fieldidx_residency_mode (the M1-facing residency dial) was DELETED in
+// AXVERITY_WAY_BACK_CONSOLIDATION_V1 — residency is always query, so the lookup path no longer
+// branches on it. residency_mode() is kept private for res_scope's boundary check.
 
 /// `fieldidx_res_get(shard: Text, seg_prefix: Text, snap_path: Text, field: Text,
 ///                   value: Text) -> Text`
