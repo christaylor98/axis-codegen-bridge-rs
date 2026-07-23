@@ -367,7 +367,6 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     //    explicit off = the preserved fresh-handle fallback).
     m.insert("walidx_replay",          "axis_codegen_bridge::runtime::walindex::walidx_replay");
     m.insert("walidx_res_get",         "axis_codegen_bridge::runtime::walindex::walidx_res_get");
-    m.insert("walidx_residency_mode",  "axis_codegen_bridge::runtime::walindex::walidx_residency_mode");
     m.insert("walidx_res_scope",       "axis_codegen_bridge::runtime::walindex::walidx_res_scope");
     // ── pk-index: rebuildable (table,pk)->current-hash projection over the same
     //    shared frame-walk (pkindex.rs — BRIDGE_PKINDEX_V1,

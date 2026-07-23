@@ -596,29 +596,19 @@ thread_local! {
 /// AXVERITY_FIELDIDX_RESIDENCY (the two indexes are independently gated).
 fn residency_mode() -> &'static str {
     static MODE: OnceLock<&'static str> = OnceLock::new();
-    MODE.get_or_init(|| {
-        match std::env::var("AXVERITY_WALIDX_RESIDENCY")
-            .ok()
-            .as_deref()
-            .map(|s| s.to_ascii_lowercase())
-            .as_deref()
-        {
-            Some("off") | Some("0") | Some("false") => "off",
-            Some("conn") | Some("connection") => "conn",
-            Some("server") | Some("1") | Some("on") | Some("true") => "server",
-            // unset, "query", or anything unrecognized → the new default
-            _ => "query",
-        }
-    })
+    // AXVERITY_WAY_BACK_CONSOLIDATION_V1: the residency switch is REMOVED. Query scope won
+    // decisively (cold aggregates ~68× faster than the old off/fresh-handle path, which also
+    // LEAKED the index shard per call) with a bounded per-query resident map; conn/server add
+    // no measured advantage over query. So there is no alternative worth keeping — always
+    // "query". res_scope("query") therefore always drops at the query boundary (correct
+    // per-query scope); res_scope("conn") is a permanent no-op. AXVERITY_WALIDX_RESIDENCY is
+    // no longer read.
+    MODE.get_or_init(|| "query")
 }
 
-/// `walidx_residency_mode(_: Unit) -> Text` — the flag, for M1 dispatch in
-/// `wal_read` / `wal_find_shard_step`. `off` selects the preserved
-/// fresh-handle-per-call path (byte-identical to pre-build).
-#[track_caller]
-pub fn walidx_residency_mode(_arg: Value) -> Value {
-    Value::Str(intern_str(residency_mode()))
-}
+// walidx_residency_mode (the M1-facing residency dial) was DELETED in
+// AXVERITY_WAY_BACK_CONSOLIDATION_V1 — residency is always query, so the read path no longer
+// branches on it. residency_mode() is kept private for res_scope's boundary check.
 
 /// `walidx_res_get(shard: Text, seg_prefix: Text, snap_path: Text, key: Text) -> Text`
 ///
