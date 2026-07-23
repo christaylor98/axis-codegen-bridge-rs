@@ -543,10 +543,13 @@ thread_local! {
 ///   `query`                        → `"query"`  (resident within one query)
 ///   `conn` / `connection`          → `"conn"`   (resident within one connection)
 ///   `server` / `1` / `on` / `true` → `"server"` (resident for the worker's life)
-/// Default OFF — per AXVERITY_PULLOBJECT_RESIDENCY_BUILD_V1's FLAG_WITH_FALLBACK
-/// hard-limit the flag ships default-off with the fresh-rebuild path preserved;
-/// Chris decides any flip after reviewing the measured results. This is a SEPARATE
-/// flag from AXVERITY_FIELDIDX_RESIDENCY (the two indexes are independently gated).
+///   explicit `off` / `0` / `false`  → `"off"`    (preserved fresh-handle fallback)
+/// Default QUERY as of AXVERITY_CONCURRENT_AND_COLDSTORE_BENCHMARK_V1 (Chris flipped
+/// off→query after the cold benchmark: query scope collapses cold aggregates ~67-125×
+/// with a bounded resident map (O(distinct objects per query) ⇒ ~11.5MB not 7.76GB,
+/// §31) and byte-identical results verified across modes). The explicit off tokens keep
+/// the pre-build fresh-rebuild path reachable. SEPARATE flag from
+/// AXVERITY_FIELDIDX_RESIDENCY (the two indexes are independently gated).
 fn residency_mode() -> &'static str {
     static MODE: OnceLock<&'static str> = OnceLock::new();
     MODE.get_or_init(|| {
@@ -556,10 +559,11 @@ fn residency_mode() -> &'static str {
             .map(|s| s.to_ascii_lowercase())
             .as_deref()
         {
-            Some("query") => "query",
+            Some("off") | Some("0") | Some("false") => "off",
             Some("conn") | Some("connection") => "conn",
             Some("server") | Some("1") | Some("on") | Some("true") => "server",
-            _ => "off",
+            // unset, "query", or anything unrecognized → the new default
+            _ => "query",
         }
     })
 }
