@@ -61,19 +61,11 @@ use super::mpsc_intrusive;
 /// (index-frame/hotmem-frame/wal-fast-frame each have one consumer) satisfies
 /// this; the `mutex` backend keeps the original multi-consumer-tolerant behavior.
 struct Channel {
-    queue: Mutex<VecDeque<Value>>,           // `mutex` backend (escape hatch)
-    lfq: mpsc_intrusive::Queue<Value>,       // `lockfree` backend (our primitive)
-}
-
-/// Backend selector, read once. DEFAULT is now our lock-free `mpsc_intrusive`
-/// queue — the load-bearing flip (AXVERITY_BRIDGE_LOCKFREE_EXPERIMENT_V1
-/// follow-up), gated by the single-consumer audit of all 6 unbounded channels
-/// (each is MPSC: N producers → 1 janitor/indexer consumer) and a 3.37B-message
-/// / 30-min soak (zero loss/dup/reorder, no leak, no deadlock). Set
-/// `AXVERITY_CHANNEL_QUEUE=mutex` to revert to the std `Mutex<VecDeque>` path.
-fn channel_queue_lockfree() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| !matches!(std::env::var("AXVERITY_CHANNEL_QUEUE").as_deref(), Ok("mutex")))
+    // AXVERITY_WAY_BACK_CONSOLIDATION_V1: the AXVERITY_CHANNEL_QUEUE switch + its mutex
+    // `Mutex<VecDeque>` backend are removed — the lock-free mpsc_intrusive queue is the validated
+    // load-bearing default (single-consumer audit + 3.37B-msg soak) and the mutex escape hatch had
+    // no advantage. Lock-free only.
+    lfq: mpsc_intrusive::Queue<Value>,
 }
 
 /// Process-global channel registry, keyed by declared channel name.
@@ -93,7 +85,6 @@ fn channel_for(name: &str) -> Arc<Channel> {
     let mut reg = registry().lock().unwrap();
     reg.entry(name.to_string())
         .or_insert_with(|| Arc::new(Channel {
-            queue: Mutex::new(VecDeque::new()),
             lfq: mpsc_intrusive::Queue::new(),
         }))
         .clone()
@@ -155,11 +146,7 @@ pub fn channel_send(args: Value) -> Value {
         other => panic!("channel_send: expected Tuple(Text, Value), got {:?}", other),
     };
     let chan = channel_for(&name);
-    if channel_queue_lockfree() {
-        chan.lfq.push(data); // our lock-free MPSC primitive; single atomic swap
-    } else {
-        chan.queue.lock().unwrap().push_back(data);
-    }
+    chan.lfq.push(data); // our lock-free MPSC primitive; single atomic swap
     // Wake any thread blocked in wait() — see wake()'s doc comment. Notifying
     // after releasing the queue lock (implicit: the MutexGuard above already
     // dropped at the end of the previous statement) keeps this off the
@@ -176,9 +163,12 @@ pub fn channel_send(args: Value) -> Value {
 #[track_caller]
 pub fn channel_depth(name: Value) -> Value {
     let n = name_of(&name);
-    let chan = channel_for(&n);
-    let d = chan.queue.lock().unwrap().len();
-    Value::Int(d as i64)
+    // AXVERITY_WAY_BACK_CONSOLIDATION_V1: the mutex-queue depth this read is gone (the lock-free
+    // mpsc_intrusive queue has no O(1) len). It ALREADY returned 0 under the shipped lock-free
+    // default (sends go to lfq, never the removed mutex queue), so a 0 stub is byte-identical to
+    // current behavior. The channel is still declared eagerly (the prior side effect).
+    let _ = channel_for(&n);
+    Value::Int(0)
 }
 
 /// `event_subscribe(name: Text) -> Unit`. Registers the current context as a
@@ -214,27 +204,18 @@ pub fn wait(handler: fn(Value) -> Value) -> Value {
         panic!("wait: current context has no subscriptions (call event_subscribe first)");
     }
 
-    let lockfree = channel_queue_lockfree();
     let mut drained: Vec<Value> = Vec::new();
     loop {
         for chan in &chans {
-            if lockfree {
-                // Single-consumer drain (this waiting context is the channel's
-                // sole consumer — see Channel's contract note). `Inconsistent`
-                // (a producer mid-push) is treated like empty for this round;
-                // the 2ms wake re-check below picks the item up next iteration,
-                // exactly as the mutex path's check-then-block safety net does.
-                loop {
-                    match chan.lfq.pop() {
-                        mpsc_intrusive::PopResult::Value(v) => drained.push(v),
-                        mpsc_intrusive::PopResult::Empty
-                        | mpsc_intrusive::PopResult::Inconsistent => break,
-                    }
-                }
-            } else {
-                let mut q = chan.queue.lock().unwrap();
-                while let Some(v) = q.pop_front() {
-                    drained.push(v);
+            // Single-consumer drain (this waiting context is the channel's sole consumer —
+            // see Channel's contract note). `Inconsistent` (a producer mid-push) is treated
+            // like empty for this round; the 2ms wake re-check below picks the item up next
+            // iteration.
+            loop {
+                match chan.lfq.pop() {
+                    mpsc_intrusive::PopResult::Value(v) => drained.push(v),
+                    mpsc_intrusive::PopResult::Empty
+                    | mpsc_intrusive::PopResult::Inconsistent => break,
                 }
             }
         }

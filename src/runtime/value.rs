@@ -171,23 +171,25 @@ pub fn get_str<S: AsRef<str>>(s: S) -> String {
 //                per DISTINCT tag ever seen (a tiny, write-once set), zero on the
 //                steady-state read path.
 
-// ---- shared flag (read once) ----
-fn tag_interner_lockfree() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| matches!(std::env::var("AXVERITY_TAG_INTERNER").as_deref(), Ok("lockfree")))
-}
-
+// AXVERITY_WAY_BACK_CONSOLIDATION_V1: the AXVERITY_TAG_INTERNER switch is removed — production
+// always uses the lock-free RCU interner. The mutex interner (Spike-4 measured it COLLAPSES at
+// P>=8: 0.28× at P=16 in interner_contention.rs) had no advantage; the RCU variant scales (~11×
+// at P=16, ~45× faster than mutex under contention) and is >= mutex at every P, bounded-leak-safe
+// (write-once snapshots, tags are a tiny set), and concurrency-unit-tested. So the production tag
+// interner on the Value::Ctor hot path is now the lock-free one, unconditionally. The mutex fns
+// below are retained ONLY as the interner_contention bench's comparison arm (bench tooling, not a
+// production path); AXVERITY_TAG_INTERNER is no longer read.
 #[track_caller]
 pub fn intern_tag(name: &str) -> u32 {
-    if tag_interner_lockfree() { intern_tag_lockfree(name) } else { intern_tag_mutex(name) }
+    intern_tag_lockfree(name)
 }
 
 #[track_caller]
 pub fn get_tag_name(tag: u32) -> String {
-    if tag_interner_lockfree() { get_tag_name_lockfree(tag) } else { get_tag_name_mutex(tag) }
+    get_tag_name_lockfree(tag)
 }
 
-// ---- variant `mutex` (default, preserved verbatim) ----
+// ---- variant `mutex` — RETAINED ONLY as interner_contention bench tooling (§ above) ----
 static TAG_TABLE: OnceLock<Mutex<Vec<String>>>         = OnceLock::new();
 static TAG_MAP:   OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
 

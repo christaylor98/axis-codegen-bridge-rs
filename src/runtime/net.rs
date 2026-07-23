@@ -198,17 +198,14 @@ fn handle_arg(v: &Value, who: &str) -> i64 {
 // original per-message-flush path (the preserved fallback).
 
 fn slab_to_wire_on() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| {
-        matches!(
-            std::env::var("AXVERITY_SLAB_TO_WIRE")
-                .unwrap_or_default()
-                .trim()
-                .to_ascii_lowercase()
-                .as_str(),
-            "1" | "on" | "true"
-        )
-    })
+    // AXVERITY_WAY_BACK_CONSOLIDATION_V1: DROPPED. The response-batching / slab-to-wire variant
+    // was measured a NO-WIN — it is slightly SLOWER on the common single-row shapes (point
+    // 25→27ms, count 61→63ms warm A/B) because those return one small response with nothing to
+    // coalesce; the win only exists for large multi-row results, which are not the dominant
+    // shape. So the switch is removed: always the byte-for-byte per-message-flush fallback.
+    // AXVERITY_SLAB_TO_WIRE is no longer read. (Deleting the now-inert batching branches below is
+    // wire-hot-path surgery, staged for its own gated pass; this keeps the drop zero-risk.)
+    false
 }
 
 /// Flush the per-conn coalescing buffer once it reaches this many bytes, so a
