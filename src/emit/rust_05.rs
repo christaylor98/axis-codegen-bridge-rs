@@ -279,15 +279,10 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     //    variant selected at runtime by AXVERITY_QHM_VARIANT (off|mutex|lfa|lfb) --
     m.insert("qhm_put",              "axis_codegen_bridge::runtime::qhm::qhm_put");
     m.insert("qhm_get",              "axis_codegen_bridge::runtime::qhm::qhm_get");
-    m.insert("qhm_get_text",         "axis_codegen_bridge::runtime::qhm::qhm_get_text");
-    m.insert("qhm_return_mode",      "axis_codegen_bridge::runtime::qhm::qhm_return_mode");
     m.insert("qhm_flush",            "axis_codegen_bridge::runtime::qhm::qhm_flush");
     m.insert("qhm_stats",            "axis_codegen_bridge::runtime::qhm::qhm_stats");
     // -- AXVERITY_ZEROCOPY_READPATH_BUILD_V1 site 4: RECORD field extractor
     //    variants (record_field.rs); selected by AXVERITY_QHM_FIELD --
-    m.insert("record_field",         "axis_codegen_bridge::runtime::record_field::record_field");
-    m.insert("record_field_cached",  "axis_codegen_bridge::runtime::record_field::record_field_cached");
-    m.insert("record_field_mode",    "axis_codegen_bridge::runtime::record_field::record_field_mode");
     m.insert("logbuf_open",          "axis_codegen_bridge::runtime::logbuf::logbuf_open");
     m.insert("logbuf_append",        "axis_codegen_bridge::runtime::logbuf::logbuf_append");
     m.insert("logbuf_sync",          "axis_codegen_bridge::runtime::logbuf::logbuf_sync");
@@ -434,7 +429,6 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("groupby_cursor_mode",  "axis_codegen_bridge::runtime::cursor::groupby_cursor_mode");
     // ── Plain-aggregate cursor flag (AXVERITY_READPATH_FINAL_CLOSEOUT_V1 Item 1):
     //    agg_eval dispatches to the input-consuming cursor fold when on. ────────────
-    m.insert("agg_cursor_enabled",   "axis_codegen_bridge::runtime::cursor::agg_cursor_enabled");
 
     // ── Name-binding volatile head pointer: double-buffered toggle cell
     //    (nameptr.rs — BRIDGE_NAMEPTR_V1, AXVERITY_INSERT_PATH_FASTPATH Landing 2,

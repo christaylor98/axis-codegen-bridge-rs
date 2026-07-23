@@ -225,6 +225,9 @@ fn shard_of(key: &str) -> usize {
 //              is the reachable shape at the hot site (reported, not assumed).
 // ===========================================================================
 
+// AXVERITY_WAY_BACK_CONSOLIDATION_V1: return_mode() is hardcoded Off (QHM_RETURN switch removed);
+// Revalidate/Shared are retained only by the staged-for-deletion Text-representation code.
+#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ReturnMode {
     Off,
@@ -232,41 +235,30 @@ enum ReturnMode {
     Shared, // "arc": stored Arc<str>, returned by cheap clone
 }
 
+// AXVERITY_WAY_BACK_CONSOLIDATION_V1: the QHM_RETURN switch is removed — §32 measured the
+// zero-copy return variants (arc/revalidate) within noise of the baseline (the record copy is
+// ~0.3% of per-row cost). Always Off (baseline Bytes storage). AXVERITY_QHM_RETURN is no longer
+// read. (The residual Text-representation code + its tests + the orphaned qhm_get_text/
+// qhm_return_mode entry points are staged for a follow-up cleanup pass, kept intact here so this
+// switch removal does not refactor the qhm=lfb winner's storage/tests.)
 fn return_mode() -> ReturnMode {
-    static R: OnceLock<ReturnMode> = OnceLock::new();
-    *R.get_or_init(|| {
-        match std::env::var("AXVERITY_QHM_RETURN")
-            .unwrap_or_default()
-            .trim()
-            .to_ascii_lowercase()
-            .as_str()
-        {
-            "revalidate" => ReturnMode::Revalidate,
-            "arc" | "shared" => ReturnMode::Shared,
-            _ => ReturnMode::Off,
-        }
-    })
+    ReturnMode::Off
 }
 
+// AXVERITY_WAY_BACK_CONSOLIDATION_V1: key_mode() is hardcoded Clone (QHM_KEY switch removed);
+// Borrow is retained only by the match arms staged for deletion with the Text-representation code.
+#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum KeyMode {
     Clone,
     Borrow,
 }
 
+// AXVERITY_WAY_BACK_CONSOLIDATION_V1: the QHM_KEY switch is removed — §32 measured the borrow
+// (zero-alloc key) variant within noise. Always Clone (baseline get_str). AXVERITY_QHM_KEY is no
+// longer read.
 fn key_mode() -> KeyMode {
-    static K: OnceLock<KeyMode> = OnceLock::new();
-    *K.get_or_init(|| {
-        match std::env::var("AXVERITY_QHM_KEY")
-            .unwrap_or_default()
-            .trim()
-            .to_ascii_lowercase()
-            .as_str()
-        {
-            "borrow" => KeyMode::Borrow,
-            _ => KeyMode::Clone,
-        }
-    })
+    KeyMode::Clone
 }
 
 /// An immutable stored record value in the lock-free backend. The

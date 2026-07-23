@@ -30,7 +30,6 @@ pub mod mmapseg;
 pub mod bindidx;
 pub mod contentidx;
 pub mod qhm;
-pub mod record_field;
 pub mod prealloc;
 pub mod walindex;
 pub mod pkindex;

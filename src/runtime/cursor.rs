@@ -58,29 +58,11 @@ pub fn groupby_cursor_enabled(_arg: Value) -> Value {
     Value::Bool(on)
 }
 
-/// `agg_cursor_enabled(_: Unit) -> Bool`
-///
-/// The AXVERITY_READPATH_FINAL_CLOSEOUT_V1 Item 1 flag: the plain-aggregate driver
-/// (`agg_eval`) dispatches to the input-consuming cursor fold (`agg_eval_cur`,
-/// O(M)) when this is true, and to the preserved string-state fold (`agg_eval_str`,
-/// O(M^2) — the large-match-set aggregate OOM root cause) otherwise. A SEPARATE flag
-/// from `AXVERITY_GROUPBY_CURSOR` on purpose: the agg migration ships flag-off on
-/// day one (concurrency not yet validated), and must stay off even after the GROUP
-/// BY / residency defaults are flipped in the same turn. Env `AXVERITY_AGG_CURSOR` ∈
-/// {`1`,`on`,`true`} turns it on; anything else (incl. unset) is off. `OnceLock`-cached.
-/// **Default OFF** — flipped to default-on only after Chris reviews the measured
-/// results AND a dedicated concurrency probe (the qhm / GROUP-BY-cursor ship discipline).
-#[track_caller]
-pub fn agg_cursor_enabled(_arg: Value) -> Value {
-    static ON: OnceLock<bool> = OnceLock::new();
-    let on = *ON.get_or_init(|| {
-        matches!(
-            std::env::var("AXVERITY_AGG_CURSOR").ok().as_deref(),
-            Some("1") | Some("on") | Some("true") | Some("ON") | Some("TRUE")
-        )
-    });
-    Value::Bool(on)
-}
+// agg_cursor_enabled (the AXVERITY_AGG_CURSOR dial) was DELETED in
+// AXVERITY_WAY_BACK_CONSOLIDATION_V1 — §30 measured the input-consuming aggregate cursor
+// gives no wire-path memory bound and no query-level win, so agg_eval always uses the string
+// path (agg_eval_cur/agg_eval_cur_step deleted too). cursor_load/cursor_line/cursor_sort below
+// stay — GROUP BY (the shipped winner) still uses them.
 
 thread_local! {
     /// Per-thread cursor table, keyed by integer handle. THREAD-LOCAL, never
