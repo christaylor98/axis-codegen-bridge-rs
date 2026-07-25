@@ -396,6 +396,9 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("wal_shard_get",        "axis_codegen_bridge::runtime::walshard::wal_shard_get");
     m.insert("wal_shard_count",      "axis_codegen_bridge::runtime::walshard::wal_shard_count");
 
+    // ── Slice 4 rollout dial (slice4.rs — AXVERITY_SLICE4_BLOCK_DURABILITY_V2) ──
+    m.insert("slice4_mode",          "axis_codegen_bridge::runtime::slice4::slice4_mode");
+
     // ── SQL-facing field index: hot thread-local shard + disposable batched
     //    snapshot (fieldidx.rs — BRIDGE_FIELDIDX_V1, AXVERITY_INSERT_PATH_FASTPATH)
     m.insert("fieldidx_open",        "axis_codegen_bridge::runtime::fieldidx::fieldidx_open");

@@ -57,5 +57,6 @@ pub mod interner_lockfree_feed;
 pub mod unified_wait;
 pub mod cursor;
 pub mod sqlite_ro;
+pub mod slice4;
 
 pub use value::Value;

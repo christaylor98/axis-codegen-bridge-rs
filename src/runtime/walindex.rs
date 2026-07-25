@@ -318,6 +318,63 @@ fn sha256_hex(payload: &[u8]) -> String {
 /// so they can never drift on the frame layout (hard-limit
 /// FRAME_PARSERS_UPDATED_LOCKSTEP). Any layout change lives HERE, once. `visit`
 /// receives `(seg, payload_off, payload_len, env_bytes, payload_bytes, hexh)`.
+/// Hash-checked single-buffer frame parser — the inner loop `walk_frames` runs
+/// per WAL segment, extracted (AXVERITY_SLICE4_BLOCK_DURABILITY_V2) so a caller
+/// holding an already-in-memory buffer with no WAL-segment file-naming
+/// convention (e.g. a hotblk `block-<seq>.bin`'s bytes) reuses the exact same
+/// hash-check/torn-tail logic instead of a second, hand-kept-in-sync parser
+/// (hard-limit FRAME_PARSERS_UPDATED_LOCKSTEP). Calls
+/// `visit(payload_off, payload_len, env_bytes, payload_bytes, hexh)` for each
+/// valid frame; stops at the first torn/invalid frame or clean exhaustion.
+/// Returns `(end_offset, torn)` — `end_offset == data.len()` with `torn == false`
+/// means every byte from `start_off` parsed as a valid frame. Byte-identical
+/// logic to what `walk_frames` ran inline before this extraction — no behavior
+/// change to any existing caller.
+pub(crate) fn parse_frames_from_bytes<F>(data: &[u8], start_off: usize, mut visit: F) -> (usize, bool)
+where
+    F: FnMut(i64, i64, &[u8], &[u8], &str),
+{
+    let dlen = data.len();
+    let mut off_us = start_off;
+    let mut torn = false;
+    while off_us + 84 <= dlen {
+        let hexh = match std::str::from_utf8(&data[off_us..off_us + 64]) {
+            Ok(s) => s,
+            Err(_) => { torn = true; break; }
+        };
+        let plenf = match std::str::from_utf8(&data[off_us + 64..off_us + 74]) {
+            Ok(s) => s,
+            Err(_) => { torn = true; break; }
+        };
+        let vlenf = match std::str::from_utf8(&data[off_us + 74..off_us + 84]) {
+            Ok(s) => s,
+            Err(_) => { torn = true; break; }
+        };
+        let plen: usize = match plenf.trim().parse() {
+            Ok(n) => n,
+            Err(_) => { torn = true; break; }
+        };
+        let vlen: usize = match vlenf.trim().parse() {
+            Ok(n) => n,
+            Err(_) => { torn = true; break; }
+        };
+        let hdr_end = off_us + 84;
+        if hdr_end + vlen + plen > dlen {
+            torn = true; // envelope or payload torn at the tail
+            break;
+        }
+        let env = &data[hdr_end..hdr_end + vlen];
+        let payload = &data[hdr_end + vlen..hdr_end + vlen + plen];
+        if sha256_hex(payload) != hexh {
+            torn = true; // hash mismatch — torn/invalid frame
+            break;
+        }
+        visit((hdr_end + vlen) as i64, plen as i64, env, payload, hexh);
+        off_us += 84 + vlen + plen;
+    }
+    (off_us, torn)
+}
+
 pub(crate) fn walk_frames<F>(prefix: &str, wm_seg: i64, wm_off: i64, mut visit: F) -> (i64, i64, i64)
 where
     F: FnMut(i64, i64, i64, &[u8], &[u8], &str),
@@ -351,50 +408,18 @@ where
             seg_bytes += data.len() as u64;
         }
         let dlen = data.len();
-        let mut off_us = if off < 0 { 0usize } else { off as usize };
-        let mut torn = false;
+        let start_off = if off < 0 { 0usize } else { off as usize };
         let (pw0, pc0) = if probe {
             (super::coldprobe::wall_ns(), super::coldprobe::cpu_ns())
         } else {
             (0, 0)
         };
-        // Need the full 84-byte fixed header (H|P|V) before we can read V.
-        while off_us + 84 <= dlen {
-            let hexh = match std::str::from_utf8(&data[off_us..off_us + 64]) {
-                Ok(s) => s,
-                Err(_) => { torn = true; break; }
-            };
-            let plenf = match std::str::from_utf8(&data[off_us + 64..off_us + 74]) {
-                Ok(s) => s,
-                Err(_) => { torn = true; break; }
-            };
-            let vlenf = match std::str::from_utf8(&data[off_us + 74..off_us + 84]) {
-                Ok(s) => s,
-                Err(_) => { torn = true; break; }
-            };
-            let plen: usize = match plenf.trim().parse() {
-                Ok(n) => n,
-                Err(_) => { torn = true; break; }
-            };
-            let vlen: usize = match vlenf.trim().parse() {
-                Ok(n) => n,
-                Err(_) => { torn = true; break; }
-            };
-            let hdr_end = off_us + 84;
-            if hdr_end + vlen + plen > dlen {
-                torn = true; // envelope or payload torn at the tail
-                break;
-            }
-            let env = &data[hdr_end..hdr_end + vlen];
-            let payload = &data[hdr_end + vlen..hdr_end + vlen + plen];
-            if sha256_hex(payload) != hexh {
-                torn = true; // hash mismatch — torn/invalid frame
-                break;
-            }
-            visit(cur_seg, (hdr_end + vlen) as i64, plen as i64, env, payload, hexh);
-            off_us += 84 + vlen + plen;
-            scanned += 1;
-        }
+        let mut local_scanned: i64 = 0;
+        let (off_us, torn) = parse_frames_from_bytes(&data, start_off, |poff, plen, env, payload, hexh| {
+            visit(cur_seg, poff, plen, env, payload, hexh);
+            local_scanned += 1;
+        });
+        scanned += local_scanned;
         if probe {
             parse_wall += super::coldprobe::wall_ns().saturating_sub(pw0);
             parse_cpu += super::coldprobe::cpu_ns().saturating_sub(pc0);
@@ -850,3 +875,4 @@ mod residency_tests {
         }
     }
 }
+
