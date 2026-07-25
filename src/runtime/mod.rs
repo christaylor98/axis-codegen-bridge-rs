@@ -17,6 +17,7 @@ pub mod frontend;
 pub mod channels;
 pub mod coerce;
 pub mod coldprobe;
+pub mod allocprobe;
 #[allow(dead_code, unused_imports, unused_variables, unused_mut, non_upper_case_globals)]
 pub mod non_blocking_memory;
 pub mod axbi;
