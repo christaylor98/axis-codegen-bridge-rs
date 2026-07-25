@@ -58,5 +58,6 @@ pub mod unified_wait;
 pub mod cursor;
 pub mod sqlite_ro;
 pub mod slice4;
+pub mod hotblk_recover;
 
 pub use value::Value;

@@ -399,6 +399,15 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     // ── Slice 4 rollout dial (slice4.rs — AXVERITY_SLICE4_BLOCK_DURABILITY_V2) ──
     m.insert("slice4_mode",          "axis_codegen_bridge::runtime::slice4::slice4_mode");
 
+    // ── Slice 4 hotblk-block recovery (hotblk_recover.rs, task 4) ───────────────
+    m.insert("hotblk_recover_open",      "axis_codegen_bridge::runtime::hotblk_recover::hotblk_recover_open");
+    m.insert("hotblk_recover_rebuild",   "axis_codegen_bridge::runtime::hotblk_recover::hotblk_recover_rebuild");
+    m.insert("hotblk_recover_pk_get",    "axis_codegen_bridge::runtime::hotblk_recover::hotblk_recover_pk_get");
+    m.insert("hotblk_recover_has_hash",  "axis_codegen_bridge::runtime::hotblk_recover::hotblk_recover_has_hash");
+    m.insert("hotblk_recover_stats",     "axis_codegen_bridge::runtime::hotblk_recover::hotblk_recover_stats");
+    m.insert("hotblk_recover_dump_pk",     "axis_codegen_bridge::runtime::hotblk_recover::hotblk_recover_dump_pk");
+    m.insert("hotblk_recover_dump_hashes", "axis_codegen_bridge::runtime::hotblk_recover::hotblk_recover_dump_hashes");
+
     // ── SQL-facing field index: hot thread-local shard + disposable batched
     //    snapshot (fieldidx.rs — BRIDGE_FIELDIDX_V1, AXVERITY_INSERT_PATH_FASTPATH)
     m.insert("fieldidx_open",        "axis_codegen_bridge::runtime::fieldidx::fieldidx_open");
