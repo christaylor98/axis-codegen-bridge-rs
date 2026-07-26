@@ -383,6 +383,12 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("oneshot_new",          "axis_codegen_bridge::runtime::oneshot::oneshot_new");
     m.insert("oneshot_wait",         "axis_codegen_bridge::runtime::oneshot::oneshot_wait");
     m.insert("oneshot_signal",       "axis_codegen_bridge::runtime::oneshot::oneshot_signal");
+    m.insert("oneshot_wait_timeout", "axis_codegen_bridge::runtime::oneshot::oneshot_wait_timeout");
+
+    // ── Slice 4 ack-after-fsync dispatch (ack_registry.rs, slice4.rs item 5) ────
+    m.insert("slice4_ack_timeout_ms", "axis_codegen_bridge::runtime::slice4::slice4_ack_timeout_ms");
+    m.insert("ack_register",          "axis_codegen_bridge::runtime::ack_registry::ack_register");
+    m.insert("ack_signal_block",      "axis_codegen_bridge::runtime::ack_registry::ack_signal_block");
     //    channels.rs — bounded, block-on-full channel (distinct from the
     //    existing unbounded Channel; existing one untouched).
     m.insert("bchan_send",           "axis_codegen_bridge::runtime::channels::bchan_send");

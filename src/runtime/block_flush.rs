@@ -193,6 +193,12 @@ pub fn block_flush_write(arg: Value) -> Value {
     for item in items {
         let job = parse_job(item);
         write_bin_durable(&job.flush_dir, job.block_seq, job.byte_len, &job.bytes);
+        // AXVERITY_SLICE4_BLOCK_DURABILITY_V2, item 5 — signal every INSERT
+        // ack waiting on THIS block, immediately after its fsync (inside
+        // write_bin_durable) returns, never before. A block with zero
+        // registered waiters (slice4 off, or nobody called ack_register for
+        // it) is a harmless no-op.
+        super::ack_registry::signal_block(&job.flush_dir, job.block_seq);
         // Seal->indexer notify, AFTER the .bin is durable. Descriptor shape is
         // exactly what index_build_batch's unpack_descriptor accepts (4 fields).
         let descriptor = Value::Tuple(vec![

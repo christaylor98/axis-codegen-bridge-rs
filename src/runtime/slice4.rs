@@ -39,6 +39,33 @@ pub fn slice4_mode(_: Value) -> Value {
     Value::Str(intern_str(mode()))
 }
 
+/// Item 5's ack-wait timeout, env `AXVERITY_SLICE4_ACK_TIMEOUT_MS`, default 0
+/// (ms) — MEASURED, not assumed. Since a hotblk block is thread-local (one per
+/// pg_server worker) and a worker processes one connection synchronously, a
+/// request thread waiting on its OWN block's natural fill can never be woken
+/// by a DIFFERENT connection's writes, and cannot fill it further itself while
+/// blocked — so under the simple query protocol the timeout NEVER helps; it
+/// is pure added latency before "write the delta now" (Chris's framing).
+/// Confirmed empirically post-channel-sharding (8 concurrent connections,
+/// 200 rows/worker): 0ms -> 820.5 rows/s, 2ms -> 696.1 rows/s, 5ms -> 582.8
+/// rows/s -- monotonically worse as the timeout grows, so 0 is the measured
+/// optimum for this design, not a placeholder.
+fn ack_timeout_ms_raw() -> i64 {
+    static MS: OnceLock<i64> = OnceLock::new();
+    *MS.get_or_init(|| {
+        std::env::var("AXVERITY_SLICE4_ACK_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .filter(|n| *n >= 0)
+            .unwrap_or(0)
+    })
+}
+
+/// `slice4_ack_timeout_ms(Unit) -> Int`
+pub fn slice4_ack_timeout_ms(_: Value) -> Value {
+    Value::Int(ack_timeout_ms_raw())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

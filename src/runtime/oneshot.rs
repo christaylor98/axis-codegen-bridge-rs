@@ -87,6 +87,38 @@ pub(crate) fn wait_oneshot(id: i64) {
     registry().lock().unwrap().remove(&id);
 }
 
+/// Block the calling thread until `id` is signaled OR `timeout_ms` elapses,
+/// whichever comes first. Returns `true` if signaled, `false` on timeout — in
+/// the timeout case the cell is NOT retired (the caller may force durability
+/// itself, e.g. AXVERITY_SLICE4_BLOCK_DURABILITY_V2's timeout-triggered
+/// partial seal, then wait again); the eventual `signal_oneshot` or a later
+/// `wait_oneshot` retires it. If `id` is unknown this returns `true`
+/// immediately (same "never hang on a nonexistent oneshot" contract as
+/// `wait_oneshot`).
+pub(crate) fn wait_oneshot_timeout(id: i64, timeout_ms: u64) -> bool {
+    let cell = match registry().lock().unwrap().get(&id) {
+        Some(c) => c.clone(),
+        None => return true,
+    };
+    let done = cell.done.lock().unwrap();
+    if *done {
+        return true;
+    }
+    let (done, result) = cell
+        .cv
+        .wait_timeout(done, std::time::Duration::from_millis(timeout_ms))
+        .unwrap();
+    let signaled = *done;
+    drop(done);
+    if signaled {
+        // Mirror wait_oneshot's retirement — the cell's life is over once a
+        // waiter has observed `done`.
+        registry().lock().unwrap().remove(&id);
+    }
+    let _ = result; // WaitTimeoutResult; `*done` is the authoritative check
+    signaled
+}
+
 /// Mark `id` done, wake its waiter, and RETIRE the cell from the registry.
 ///
 /// Retiring here (not only in `wait_oneshot`) is what makes a FAST-mode caller —
@@ -128,6 +160,25 @@ pub fn oneshot_wait(arg: Value) -> Value {
     };
     wait_oneshot(id);
     Value::Unit
+}
+
+/// `oneshot_wait_timeout(id: Int, timeout_ms: Int) -> Bool`. Blocks until `id`
+/// is signaled or `timeout_ms` elapses; returns whether it was signaled.
+#[track_caller]
+pub fn oneshot_wait_timeout(args: Value) -> Value {
+    let es = match args {
+        Value::Tuple(es) if es.len() == 2 => es,
+        other => panic!("oneshot_wait_timeout: expected Tuple(Int, Int), got {:?}", other),
+    };
+    let id = match &es[0] {
+        Value::Int(n) => *n,
+        other => panic!("oneshot_wait_timeout: arg 0 expected Int, got {:?}", other),
+    };
+    let ms = match &es[1] {
+        Value::Int(n) => *n,
+        other => panic!("oneshot_wait_timeout: arg 1 expected Int, got {:?}", other),
+    };
+    Value::Bool(wait_oneshot_timeout(id, ms.max(0) as u64))
 }
 
 /// `oneshot_signal(id: Int) -> Unit`. Marks `id` done and wakes its waiter.
@@ -172,6 +223,33 @@ mod tests {
         signal_oneshot(id);
         wait_oneshot(id); // retires it
         signal_oneshot(id); // already retired → no-op, no panic
+    }
+
+    #[test]
+    fn wait_timeout_returns_false_when_nothing_signals() {
+        let id = new_oneshot();
+        let signaled = wait_oneshot_timeout(id, 15);
+        assert!(!signaled);
+        // Cell must still be live (not retired) so a later real wait works.
+        signal_oneshot(id);
+        wait_oneshot(id);
+    }
+
+    #[test]
+    fn wait_timeout_returns_true_when_signaled_before_deadline() {
+        let id = new_oneshot();
+        let t = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(10));
+            signal_oneshot(id);
+        });
+        let signaled = wait_oneshot_timeout(id, 2000);
+        assert!(signaled);
+        t.join().unwrap();
+    }
+
+    #[test]
+    fn wait_timeout_on_unknown_id_returns_true_immediately() {
+        assert!(wait_oneshot_timeout(999_999_999, 5));
     }
 
     #[test]

@@ -59,5 +59,6 @@ pub mod cursor;
 pub mod sqlite_ro;
 pub mod slice4;
 pub mod hotblk_recover;
+pub mod ack_registry;
 
 pub use value::Value;
