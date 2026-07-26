@@ -52,6 +52,14 @@ struct FieldShard {
     map: HashMap<String, Vec<String>>,
     fseg: i64,
     foff: i64,
+    // AXVERITY_SLICE4_BLOCK_DURABILITY_V2, item 2 — the next hotblk block_seq
+    // to scan (1 = nothing scanned yet, hotblk's own numbering starts at 1).
+    // Under slice4_mode "on" no WAL segment is ever written for a pgwire
+    // INSERT, so this shard's ONLY source for those rows is the corresponding
+    // hotblk directory (walindex::hotblk_dir_from_wal_prefix). Tracked
+    // separately from fseg/foff because it is a different numbering scheme
+    // (whole-file sequence, not seg+byte-offset).
+    hb_seq: i64,
 }
 
 fn bump_frontier(sh: &mut FieldShard, seg: i64, end: i64) {
@@ -103,7 +111,7 @@ pub fn fieldidx_open(arg: Value) -> Value {
     let h = next_handle();
     FIDX.with(|idx| {
         idx.borrow_mut()
-            .insert(h, FieldShard { map: HashMap::new(), fseg: 0, foff: 0 });
+            .insert(h, FieldShard { map: HashMap::new(), fseg: 0, foff: 0, hb_seq: 1 });
     });
     Value::Int(h)
 }
@@ -294,9 +302,35 @@ fn segment_len(prefix: &str, seq: i64) -> Option<u64> {
         .map(|m| m.len())
 }
 
+/// AXVERITY_SLICE4_BLOCK_DURABILITY_V2, item 2 — scan every NEW sealed hotblk
+/// block for this shard (from `sh.hb_seq` onward) via `walindex::
+/// walk_hotblk_frames`, indexing each RECORD payload exactly as a WAL-sourced
+/// one (`index_payload` doesn't care which file the bytes came from). A shard
+/// with no corresponding hotblk directory (prefix doesn't parse, or the
+/// directory was never created because slice4 is off) is a harmless no-op —
+/// `walk_hotblk_frames` just finds no `block-1.bin` and returns immediately.
+/// Returns frames scanned (folded into the caller's WAL-side count).
+fn scan_hotblk(sh: &mut FieldShard, prefix: &str) -> i64 {
+    let flush_dir = match super::walindex::hotblk_dir_from_wal_prefix(prefix) {
+        Some(d) => d,
+        None => return 0,
+    };
+    let map = &mut sh.map;
+    let (next_seq, scanned) =
+        super::walindex::walk_hotblk_frames(&flush_dir, sh.hb_seq, |_seq, _poff, _plen, _env, payload, hexh| {
+            if let Ok(text) = std::str::from_utf8(payload) {
+                index_payload(map, text, hexh);
+            }
+        });
+    sh.hb_seq = next_seq;
+    scanned
+}
+
 /// Full (re)build of shard `sh`: load the disposable snapshot (if valid), then
 /// forward-replay the framed WAL from the SNAPSHOT watermark via the ONE shared
 /// scanner `walindex::walk_frames`. This is the cold-start / fresh-handle cost.
+/// ALSO scans this shard's hotblk blocks (item 2) — a pgwire INSERT under
+/// slice4_mode "on" writes ONLY there, never to a WAL segment.
 fn do_rebuild(sh: &mut FieldShard, prefix: &str, snap_path: &str) -> i64 {
     let (wm_seg, wm_off) = load_snapshot(&mut sh.map, snap_path);
     bump_frontier(sh, wm_seg, wm_off);
@@ -308,7 +342,7 @@ fn do_rebuild(sh: &mut FieldShard, prefix: &str, snap_path: &str) -> i64 {
             }
         });
     bump_frontier(sh, fr_seg, fr_off);
-    scanned
+    scanned + scan_hotblk(sh, prefix)
 }
 
 /// GENUINELY-INCREMENTAL replay of shard `sh`: forward-replay the framed WAL from
@@ -326,19 +360,29 @@ fn do_rebuild(sh: &mut FieldShard, prefix: &str, snap_path: &str) -> i64 {
 fn do_replay(sh: &mut FieldShard, prefix: &str) -> i64 {
     let (from_seg, from_off) = (sh.fseg, sh.foff);
     let has_next = segment_len(prefix, from_seg + 1).is_some();
-    match segment_len(prefix, from_seg) {
-        Some(len) if (len as i64) <= from_off && !has_next => return 0, // no delta
-        None if !has_next => return 0, // frontier segment gone, no successor
-        _ => {}
+    let wal_has_delta = match segment_len(prefix, from_seg) {
+        Some(len) if (len as i64) <= from_off && !has_next => false, // no delta
+        None if !has_next => false, // frontier segment gone, no successor
+        _ => true,
+    };
+    let mut scanned = 0i64;
+    if wal_has_delta {
+        let map = &mut sh.map;
+        let (fr_seg, fr_off, wal_scanned) =
+            super::walindex::walk_frames(prefix, from_seg, from_off, |_seg, _off, _len, _env, payload, hexh| {
+                if let Ok(text) = std::str::from_utf8(payload) {
+                    index_payload(map, text, hexh);
+                }
+            });
+        bump_frontier(sh, fr_seg, fr_off);
+        scanned += wal_scanned;
     }
-    let map = &mut sh.map;
-    let (fr_seg, fr_off, scanned) =
-        super::walindex::walk_frames(prefix, from_seg, from_off, |_seg, _off, _len, _env, payload, hexh| {
-            if let Ok(text) = std::str::from_utf8(payload) {
-                index_payload(map, text, hexh);
-            }
-        });
-    bump_frontier(sh, fr_seg, fr_off);
+    // AXVERITY_SLICE4_BLOCK_DURABILITY_V2, item 2 — always check for new hotblk
+    // blocks too (a pgwire INSERT under slice4_mode "on" writes ONLY there).
+    // walk_hotblk_frames itself is the cheap guard: a single missing
+    // `block-<hb_seq>.bin` (the common no-new-block-since-last-replay case) is
+    // one failed `fs::read` away, not a full-file read.
+    scanned += scan_hotblk(sh, prefix);
     scanned
 }
 
@@ -471,7 +515,7 @@ pub fn fieldidx_res_get(args: Value) -> Value {
             let h = next_handle();
             FIDX.with(|idx| {
                 idx.borrow_mut()
-                    .insert(h, FieldShard { map: HashMap::new(), fseg: 0, foff: 0 });
+                    .insert(h, FieldShard { map: HashMap::new(), fseg: 0, foff: 0, hb_seq: 1 });
             });
             RESIDENT.with(|r| {
                 r.borrow_mut().insert(shard.clone(), h);
@@ -582,7 +626,7 @@ mod residency_tests {
         // Seed B base frames, then a cold build over the whole store.
         let b = 500usize;
         append_frames(&seg0, 0..b);
-        let mut sh = FieldShard { map: HashMap::new(), fseg: 0, foff: 0 };
+        let mut sh = FieldShard { map: HashMap::new(), fseg: 0, foff: 0, hb_seq: 1 };
         let scanned_full = do_rebuild(&mut sh, &prefix, "/nonexistent.snap");
         assert_eq!(scanned_full, b as i64, "cold build must walk the whole store");
         assert_eq!(sh.map.len(), b, "cold build indexed all base postings");
@@ -615,7 +659,7 @@ mod residency_tests {
         let prefix = format!("{}/seg-", dir.to_str().unwrap());
 
         append_frames(&format!("{}0.log", prefix), 0..10);
-        let mut sh = FieldShard { map: HashMap::new(), fseg: 0, foff: 0 };
+        let mut sh = FieldShard { map: HashMap::new(), fseg: 0, foff: 0, hb_seq: 1 };
         assert_eq!(do_rebuild(&mut sh, &prefix, "/nonexistent.snap"), 10);
 
         // A later segment appears (a rotation). Replay must pick up its frames.

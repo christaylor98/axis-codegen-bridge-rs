@@ -45,9 +45,10 @@ use super::value::{get_str, intern_str, Value};
 struct IdxShard {
     #[allow(dead_code)]
     shard: String,
-    map: HashMap<String, (i64, i64, i64)>, // key -> (seg, off, len)
+    map: HashMap<String, (i64, i64, i64)>, // key -> (seg, off, len); seg<0 => hotblk block -seg
     fseg: i64, // frontier segment: the WAL position this shard is current as of
     foff: i64, // frontier offset within fseg (next-write position)
+    hb_seq: i64, // AXVERITY_SLICE4_BLOCK_DURABILITY_V2 item 2: next hotblk block_seq to scan
 }
 
 /// Advance a shard's frontier watermark to `(seg, end)` if it is beyond the
@@ -89,7 +90,7 @@ pub fn walidx_open(arg: Value) -> Value {
     };
     let h = next_handle();
     IDX.with(|idx| {
-        idx.borrow_mut().insert(h, IdxShard { shard, map: HashMap::new(), fseg: 0, foff: 0 });
+        idx.borrow_mut().insert(h, IdxShard { shard, map: HashMap::new(), fseg: 0, foff: 0, hb_seq: 1 });
     });
     Value::Int(h)
 }
@@ -453,6 +454,70 @@ where
     (fr_seg, fr_off, scanned)
 }
 
+/// AXVERITY_SLICE4_BLOCK_DURABILITY_V2, item 2 (the real prerequisite for task
+/// 6, found by testing) — under `slice4_mode "on"`, `pg_exec_insert` no longer
+/// writes a WAL segment at all (reclog_submit is skipped); every live read-side
+/// projection that only ever scanned `<prefix><seq>.log` WAL segments
+/// (`fieldidx`, `walidx`) would otherwise never see a single row, which is
+/// exactly what a real SELECT test caught (0 rows for a row already durably
+/// sealed in its block). This derives the hotblk flush_dir a shard's WAL
+/// prefix corresponds to, so those projections can ALSO scan hotblk blocks as
+/// a second frame source — same frame format (H|P|V|env|payload), same shared
+/// hash-checked parser, different file-naming convention only.
+///
+/// `prefix` is always `wal_seg_prefix(shard)` = `".axverity/wal/<shard>-"`
+/// (lib/wal_seg_prefix.m1) in every caller; parsing it back to
+/// `".axverity/hotblocks/<shard>"` avoids widening the fieldidx/walidx M1-
+/// facing ABI (which many callers already depend on) just to pass a second
+/// path. Returns `None` for a prefix that doesn't match this exact shape
+/// (defensive; every real caller's shape is fixed, so this should never fire).
+pub(crate) fn hotblk_dir_from_wal_prefix(prefix: &str) -> Option<String> {
+    let shard = prefix.strip_prefix(".axverity/wal/")?.strip_suffix('-')?;
+    if shard.is_empty() {
+        return None;
+    }
+    Some(format!(".axverity/hotblocks/{}", shard))
+}
+
+/// Walk EVERY sealed `<flush_dir>/block-<seq>.bin` in sequence order starting
+/// at `from_seq` (hotblk's own numbering starts at 1; `from_seq=1` is a full
+/// scan), hash-checking every frame via the SAME shared parser
+/// (`parse_frames_from_bytes`) `walk_frames` uses for WAL segments — so a
+/// hotblk block and a WAL segment can never drift on frame layout
+/// (FRAME_PARSERS_UPDATED_LOCKSTEP extended to the block tier). Unlike a WAL
+/// segment, a sealed block is a COMPLETE, atomically-renamed file (`block_flush
+/// ::write_bin_durable` is tmp+fsync+rename) — there is no "torn tail mid-file"
+/// case for one; the only stopping conditions are a missing block (the
+/// frontier: nothing sealed yet, or a still-active in-memory block not yet
+/// flushed — the documented, settled ack-window edge case) or, defensively, a
+/// corrupted one. Returns `(next_seq_to_try, frames_scanned)` — `next_seq_to_try`
+/// is the frontier a caller should resume from on its next incremental replay.
+///
+/// `visit` receives `(block_seq, payload_off_within_block, payload_len, env,
+/// payload, hexh)` — the positional fields let a content-pointer index
+/// (`walidx`) record where in WHICH block a hash's bytes live, mirroring what
+/// it already records for a WAL-segment frame (`(seg, off, len)`).
+pub(crate) fn walk_hotblk_frames<F>(flush_dir: &str, from_seq: i64, mut visit: F) -> (i64, i64)
+where
+    F: FnMut(i64, i64, i64, &[u8], &[u8], &str),
+{
+    let mut seq = if from_seq < 1 { 1 } else { from_seq };
+    let mut scanned: i64 = 0;
+    loop {
+        let path = format!("{}/block-{}.bin", flush_dir, seq);
+        let data = match std::fs::read(&path) {
+            Ok(d) => d,
+            Err(_) => break, // no more sealed blocks — frontier
+        };
+        let (_end_off, _torn) = parse_frames_from_bytes(&data, 0, |poff, plen, env, payload, hexh| {
+            visit(seq, poff, plen, env, payload, hexh);
+            scanned += 1;
+        });
+        seq += 1;
+    }
+    (seq, scanned)
+}
+
 /// On-disk byte length of the framed WAL segment `<prefix><seq>.log`, or `None`
 /// if it does not exist. Used by `do_replay`'s cheap stat-guard to decide whether
 /// a frontier segment has grown at all before paying a whole-file read. Mirrors
@@ -468,6 +533,27 @@ fn segment_len(prefix: &str, seq: i64) -> Option<u64> {
 /// resident path can share it. Content-hash index visitor: key = payload digest,
 /// value = (seg, payload offset, payload len); the envelope is ignored here (the
 /// pk-index consumes it via the same walk in pkindex.rs). Returns frames scanned.
+/// AXVERITY_SLICE4_BLOCK_DURABILITY_V2, item 2 — scan every NEW sealed hotblk
+/// block for this shard (from `sh.hb_seq` onward), recording each hash's
+/// location as `(-block_seq, payload_off, payload_len)` — the SAME 3-tuple
+/// shape a WAL-segment frame gets, distinguished by a NEGATIVE seg (a real WAL
+/// seg is always >= 0, so this is an unambiguous sentinel, not a new wire
+/// format). `wal_read.m1` branches on the sign to pick the right file. A shard
+/// with no corresponding hotblk directory is a harmless no-op.
+fn scan_hotblk(sh: &mut IdxShard, prefix: &str) -> i64 {
+    let flush_dir = match hotblk_dir_from_wal_prefix(prefix) {
+        Some(d) => d,
+        None => return 0,
+    };
+    let map = &mut sh.map;
+    let (next_seq, scanned) =
+        walk_hotblk_frames(&flush_dir, sh.hb_seq, |block_seq, poff, plen, _env, _payload, hexh| {
+            map.insert(hexh.to_string(), (-block_seq, poff, plen));
+        });
+    sh.hb_seq = next_seq;
+    scanned
+}
+
 fn do_rebuild(sh: &mut IdxShard, prefix: &str, snap_path: &str) -> i64 {
     let (wm_seg, wm_off) = load_snapshot(&mut sh.map, snap_path);
     bump_frontier(sh, wm_seg, wm_off);
@@ -477,7 +563,7 @@ fn do_rebuild(sh: &mut IdxShard, prefix: &str, snap_path: &str) -> i64 {
             map.insert(hexh.to_string(), (seg, off, len));
         });
     bump_frontier(sh, fr_seg, fr_off); // torn/exhausted → frontier
-    scanned
+    scanned + scan_hotblk(sh, prefix)
 }
 
 /// GENUINELY-INCREMENTAL replay of shard `sh`: forward-replay the framed WAL from
@@ -497,17 +583,25 @@ fn do_rebuild(sh: &mut IdxShard, prefix: &str, snap_path: &str) -> i64 {
 fn do_replay(sh: &mut IdxShard, prefix: &str) -> i64 {
     let (from_seg, from_off) = (sh.fseg, sh.foff);
     let has_next = segment_len(prefix, from_seg + 1).is_some();
-    match segment_len(prefix, from_seg) {
-        Some(len) if (len as i64) <= from_off && !has_next => return 0, // no delta
-        None if !has_next => return 0, // frontier segment gone, no successor
-        _ => {}
+    let wal_has_delta = match segment_len(prefix, from_seg) {
+        Some(len) if (len as i64) <= from_off && !has_next => false, // no delta
+        None if !has_next => false, // frontier segment gone, no successor
+        _ => true,
+    };
+    let mut scanned = 0i64;
+    if wal_has_delta {
+        let map = &mut sh.map;
+        let (fr_seg, fr_off, wal_scanned) =
+            walk_frames(prefix, from_seg, from_off, |seg, off, len, _env, _payload, hexh| {
+                map.insert(hexh.to_string(), (seg, off, len));
+            });
+        bump_frontier(sh, fr_seg, fr_off);
+        scanned += wal_scanned;
     }
-    let map = &mut sh.map;
-    let (fr_seg, fr_off, scanned) =
-        walk_frames(prefix, from_seg, from_off, |seg, off, len, _env, _payload, hexh| {
-            map.insert(hexh.to_string(), (seg, off, len));
-        });
-    bump_frontier(sh, fr_seg, fr_off);
+    // AXVERITY_SLICE4_BLOCK_DURABILITY_V2, item 2 — always check for new hotblk
+    // blocks too; walk_hotblk_frames' single missing-file stat is the cheap
+    // guard for the common no-new-block case.
+    scanned += scan_hotblk(sh, prefix);
     scanned
 }
 
@@ -667,7 +761,7 @@ pub fn walidx_res_get(args: Value) -> Value {
             IDX.with(|idx| {
                 idx.borrow_mut().insert(
                     h,
-                    IdxShard { shard: shard.clone(), map: HashMap::new(), fseg: 0, foff: 0 },
+                    IdxShard { shard: shard.clone(), map: HashMap::new(), fseg: 0, foff: 0, hb_seq: 1 },
                 );
             });
             RESIDENT.with(|r| {
@@ -779,7 +873,7 @@ mod residency_tests {
 
         let b = 500usize;
         append_frames(&seg0, 0..b);
-        let mut sh = IdxShard { shard: "0".into(), map: HashMap::new(), fseg: 0, foff: 0 };
+        let mut sh = IdxShard { shard: "0".into(), map: HashMap::new(), fseg: 0, foff: 0, hb_seq: 1 };
         let scanned_full = do_rebuild(&mut sh, &prefix, "/nonexistent.snap");
         assert_eq!(scanned_full, b as i64, "cold build must walk the whole store");
         assert_eq!(sh.map.len(), b, "cold build indexed all base objects");
@@ -809,7 +903,7 @@ mod residency_tests {
         let prefix = format!("{}/seg-", dir.to_str().unwrap());
 
         append_frames(&format!("{}0.log", prefix), 0..10);
-        let mut sh = IdxShard { shard: "0".into(), map: HashMap::new(), fseg: 0, foff: 0 };
+        let mut sh = IdxShard { shard: "0".into(), map: HashMap::new(), fseg: 0, foff: 0, hb_seq: 1 };
         assert_eq!(do_rebuild(&mut sh, &prefix, "/nonexistent.snap"), 10);
 
         append_frames(&format!("{}1.log", prefix), 10..25);
@@ -831,7 +925,7 @@ mod residency_tests {
         append_frames(&format!("{}0.log", prefix), 0..n);
 
         // fresh rebuild reference
-        let mut ref_sh = IdxShard { shard: "s".into(), map: HashMap::new(), fseg: 0, foff: 0 };
+        let mut ref_sh = IdxShard { shard: "s".into(), map: HashMap::new(), fseg: 0, foff: 0, hb_seq: 1 };
         do_rebuild(&mut ref_sh, &prefix, "/nope.snap");
 
         // resident handle, keyed by shard "s"
