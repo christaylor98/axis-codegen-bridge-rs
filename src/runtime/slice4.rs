@@ -6,11 +6,44 @@
 //! together because none is independently correct" — the intent's own words).
 //!
 //! `slice4_mode()`, env `AXVERITY_SLICE4_BLOCK_DURABILITY`:
-//!   unset / `off` / `0` / `false` → `"off"` (today's reclog-based path,
-//!                                            byte-identical to pre-turn — the
+//!   unset / `on` / `1` / `true`   → `"on"`  (the framed-block path — DEFAULT)
+//!   `off` / `0` / `false`         → `"off"` (the legacy reclog-based path,
+//!                                            byte-identical to pre-V2 — the
 //!                                            preserved fallback)
-//!   `on` / `1` / `true`           → `"on"`  (the new framed-block path)
-//! Default OFF (hard-limit: do not flip the default; Chris decides).
+//!
+//! ## DEFAULT FLIPPED off -> on by AXVERITY_HOTPATH_UNBLOCK_V1, item 4
+//!
+//! V2 shipped this dial default-OFF with "do not flip the default; Chris
+//! decides". Chris decided: AXVERITY_HOTPATH_UNBLOCK_V1 authorises the flip
+//! explicitly, because leaving it off meant the singular-janitor bottleneck
+//! V2 was created to fix was still what a default-configured server ran —
+//! V2's own bug class, still shipping.
+//!
+//! Measured on a clean post-CountingAlloc-removal baseline, A/B'd within ONE
+//! run on one machine state (scripts/hotpath-ab-alloc.py, INSERT, 16-worker
+//! pool, fresh store per instance, variant order flipped every K):
+//!
+//!   K       off (was default)      on (now default)     on/off
+//!   1        475.9 ops/s  1.00x     201.3 ops/s  1.00x    0.42
+//!   2        472.8        0.99x     221.6        1.10x    0.47
+//!   4        476.4        1.00x     437.7        2.17x    0.92
+//!   8        471.8        0.99x     850.1        4.22x    1.80
+//!  16        474.0        1.00x    1404.8        6.98x    2.96
+//!
+//! `off` is FLAT to three digits from K=1 to K=16 — the textbook shared-
+//! serialization signature, and the single `pg_reclog_janitor` thread is the
+//! point. `on` reaches 6.98x. The crossover is near K≈4-5.
+//!
+//! HONEST COST OF THE FLIP, stated rather than buried: at K=1 the new default
+//! is 2.4x SLOWER (201 vs 476 ops/s). A single-connection writer pays for
+//! per-record framing and a block-flush round trip that the batched reclog
+//! path amortised. This is a deliberate trade of single-connection latency for
+//! concurrency that actually scales; a single-connection-bound workload should
+//! set `AXVERITY_SLICE4_BLOCK_DURABILITY=off`, which remains fully supported.
+//!
+//! Durability is not weakened by the flip: the kill-9 crash-recovery gate
+//! (scripts/verify-slice4-kill9.sh) exercises this path and now exercises it as
+//! the DEFAULT, with no env forcing.
 //!
 //! Read once per process (OnceLock-cached), the same pattern as
 //! `walshard`/`fieldidx`'s env-driven dials.
@@ -24,13 +57,17 @@ fn mode() -> &'static str {
     MODE.get_or_init(|| match std::env::var("AXVERITY_SLICE4_BLOCK_DURABILITY") {
         Ok(v) => {
             let v = v.trim().to_ascii_lowercase();
-            if v == "on" || v == "1" || v == "true" {
-                "on"
-            } else {
+            // Explicit opt-OUT is the only way to get the legacy path now; an
+            // empty/unparseable value falls through to the default like unset.
+            if v == "off" || v == "0" || v == "false" {
                 "off"
+            } else {
+                "on"
             }
         }
-        Err(_) => "off",
+        // AXVERITY_HOTPATH_UNBLOCK_V1 item 4 — default flipped off -> on. See
+        // the module docs for the measured justification and the honest K=1 cost.
+        Err(_) => "on",
     })
 }
 
@@ -71,11 +108,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_off_when_unset() {
+    fn defaults_on_when_unset() {
+        // AXVERITY_HOTPATH_UNBLOCK_V1 item 4 flipped this default off -> on.
         // NOTE: relies on the env var being unset in the test process; other
         // tests in this binary never set AXVERITY_SLICE4_BLOCK_DURABILITY.
         if std::env::var("AXVERITY_SLICE4_BLOCK_DURABILITY").is_err() {
-            assert_eq!(mode(), "off");
+            assert_eq!(mode(), "on");
         }
     }
 }
