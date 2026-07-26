@@ -509,10 +509,27 @@ where
             Ok(d) => d,
             Err(_) => break, // no more sealed blocks — frontier
         };
-        let (_end_off, _torn) = parse_frames_from_bytes(&data, 0, |poff, plen, env, payload, hexh| {
+        // AXVERITY_BREAK_111_BINDING_V1 Phase 1 — under preallocation a
+        // `block-<seq>.bin` can exist while EMPTY (pre-created) or PARTIAL (being
+        // written right now), so presence no longer implies completeness. Both
+        // must stop the walk at this seq WITHOUT advancing: the caller persists
+        // the returned seq as its frontier (`scan_hotblk`'s `sh.hb_seq`), and
+        // stepping past a block that is about to be written would make its rows
+        // permanently invisible to this index. See blockfile.rs.
+        let body = match super::blockfile::split_complete(&data) {
+            Some(b) => b,
+            None => break, // pre-created or mid-write — this seq IS the frontier
+        };
+        let (end_off, torn) = parse_frames_from_bytes(body, 0, |poff, plen, env, payload, hexh| {
             visit(seq, poff, plen, env, payload, hexh);
             scanned += 1;
         });
+        // A trailer can survive a crash that lost an interior page, leaving a
+        // complete-looking block with a hole the per-frame hash check catches.
+        // Fail safe: stop here rather than skip the block.
+        if !super::blockfile::body_is_intact(body.len(), end_off, torn) {
+            break;
+        }
         seq += 1;
     }
     (seq, scanned)

@@ -95,8 +95,23 @@ fn build_succinct_stub(bytes: &[u8]) -> String {
 /// when `byte_len >= 0` is supplied.
 fn build_entry(block_seq: i64, flush_dir: String, byte_len: i64, idx_cell: i64) -> Entry {
     let bin_path = format!("{}/block-{}.bin", flush_dir, block_seq);
-    let bytes = std::fs::read(&bin_path)
+    let raw = std::fs::read(&bin_path)
         .unwrap_or_else(|e| panic!("index_build_batch: read {}: {}", bin_path, e));
+    // AXVERITY_BREAK_111_BINDING_V1 Phase 1 — under preallocation the file
+    // carries a completeness trailer (blockfile.rs). Index the BODY, so the
+    // seal's recorded `byte_len` and the merkle keep meaning exactly what they
+    // meant before the trailer existed. This path only ever runs for a block the
+    // flush worker has already fsynced and notified, so an incomplete file here
+    // is a genuine fail-stop, not an expected frontier.
+    let bytes = match super::blockfile::split_complete(&raw) {
+        Some(body) => body.to_vec(),
+        None => panic!(
+            "index_build_batch: {} is incomplete ({} bytes, no valid trailer) — \
+             notified before its flush finished?",
+            bin_path,
+            raw.len()
+        ),
+    };
     if byte_len >= 0 && bytes.len() != byte_len as usize {
         panic!(
             "index_build_batch: {} is {} bytes, seal recorded byte_len={} (torn/short flush?)",
@@ -305,6 +320,20 @@ pub fn index_rebuild_dir(arg: Value) -> Value {
         })
         .collect();
     seqs.sort_unstable();
+    // AXVERITY_BREAK_111_BINDING_V1 Phase 1 — storm recovery enumerates the
+    // DIRECTORY, so under preallocation it sees files that were created ahead of
+    // the write frontier and never written, plus at most one that a crash left
+    // half-written. Neither is a block; skipping them here is what keeps
+    // `build_entry`'s fail-stop meaningful for the real corruption case.
+    let seqs: Vec<i64> = seqs
+        .into_iter()
+        .filter(|&seq| {
+            std::fs::read(format!("{}/block-{}.bin", dir, seq))
+                .ok()
+                .map(|d| super::blockfile::split_complete(&d).is_some())
+                .unwrap_or(false)
+        })
+        .collect();
     let entries: Vec<Entry> = seqs
         .iter()
         .map(|&seq| build_entry(seq, dir.clone(), -1, 0))

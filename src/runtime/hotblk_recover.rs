@@ -112,19 +112,31 @@ pub fn hotblk_recover_rebuild(arg: Value) -> Value {
                 Some(d) => d,
                 None => break, // no more sealed blocks — clean frontier
             };
+            // AXVERITY_BREAK_111_BINDING_V1 Phase 1 — a preallocated block file
+            // exists before it is written, so "present" no longer means "sealed".
+            // An empty (pre-created) or partially written file is the recovery
+            // frontier: stop, exactly as a missing file does. Its rows cannot
+            // have been acked, because the ack fires only after this block's own
+            // fsync (block_flush.rs → ack_registry::signal_block).
+            let body = match super::blockfile::split_complete(&data) {
+                Some(b) => b,
+                None => break,
+            };
             total_blocks += 1;
-            let (_end_off, _torn) = parse_frames_from_bytes(&data, 0, |_poff, _plen, env, _payload, hexh| {
+            let (end_off, torn) = parse_frames_from_bytes(body, 0, |_poff, _plen, env, _payload, hexh| {
                 if let Some(name) = env_to_name(env) {
                     sh.pk.insert(name, format!("sha256:{}", hexh)); // last-append-wins
                 }
                 sh.hashes.insert(hexh.to_string());
                 total_frames += 1;
             });
-            // A torn frame inside an atomically-renamed sealed block should
-            // never happen; if it ever does, this block's valid PREFIX is
-            // still indexed and the scan still stops at this block (same
-            // fail-safe posture as a WAL segment's torn tail) — no worse than
-            // the WAL-based projections' existing behavior.
+            // A torn frame inside a block that CLAIMS to be complete means a
+            // crash persisted the trailer's page but lost an interior one. The
+            // valid prefix is still indexed and the scan stops here — the same
+            // fail-safe posture as a WAL segment's torn tail.
+            if !super::blockfile::body_is_intact(body.len(), end_off, torn) {
+                break;
+            }
             seq += 1;
         }
         sh.blocks_scanned = total_blocks;

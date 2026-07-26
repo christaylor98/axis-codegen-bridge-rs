@@ -46,9 +46,64 @@
 //!
 //! Identities are sha256(name_utf8), the bridge-wide convention.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::io::Write;
 
+use super::blockfile::{prealloc_batch, prealloc_enabled, trailer_for};
 use super::value::{get_str, intern_str, Value};
+
+thread_local! {
+    /// Highest block seq this thread has already pre-created a file for, per
+    /// flush_dir. Thread-local because the flush janitor is per-shard — one
+    /// thread owns one `flush_dir` — so this needs no lock, the same
+    /// shared-nothing model as `hotblk.rs`/`walshard.rs`. A map rather than a
+    /// scalar only because the direct-call path can drive several dirs from one
+    /// thread in tests.
+    static PREALLOC_HWM: RefCell<HashMap<String, i64>> = RefCell::new(HashMap::new());
+}
+
+/// AXVERITY_BREAK_111_BINDING_V1 Phase 1 — make sure `block-<seq>.bin` already
+/// EXISTS (empty) before the flush needs it, so the flush itself never creates a
+/// directory entry and never has to fsync the parent to make one durable.
+///
+/// Creates a whole batch at a time and pays ONE directory fsync for the batch, so
+/// the amortised cost is `1/BATCH` directory fsyncs per block. This runs on the
+/// flush janitor's own thread — already off the request path (that is this
+/// module's entire reason for existing), so it adds no client-visible latency,
+/// and it is NOT the hot path.
+///
+/// `create_new(true)` means an existing file is left exactly as it is: a restart
+/// that re-preallocates over a directory holding real blocks cannot truncate one.
+fn ensure_preallocated(flush_dir: &str, seq: i64) {
+    let batch = prealloc_batch();
+    PREALLOC_HWM.with(|c| {
+        let mut m = c.borrow_mut();
+        let hwm = m.entry(flush_dir.to_string()).or_insert(-1);
+        if seq <= *hwm {
+            return;
+        }
+        // Cover `seq` itself plus a batch of successors.
+        let upto = seq + batch - 1;
+        let mut made_any = false;
+        for s in seq..=upto {
+            let p = format!("{}/block-{}.bin", flush_dir, s);
+            match std::fs::OpenOptions::new().write(true).create_new(true).open(&p) {
+                Ok(_) => made_any = true,
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(e) => panic!("block_flush_write: prealloc create {}: {}", p, e),
+            }
+        }
+        if made_any {
+            // ONE directory fsync for the whole batch — this is the fsync the
+            // per-block path used to pay every single time.
+            if let Ok(dir) = std::fs::File::open(flush_dir) {
+                let _ = dir.sync_all();
+            }
+        }
+        *hwm = upto;
+    });
+}
 
 /// One parsed, ready-to-write flush job.
 struct Job {
@@ -165,6 +220,31 @@ fn write_bin_durable(flush_dir: &str, block_seq: i64, byte_len: i64, bytes: &[u8
     std::fs::create_dir_all(flush_dir)
         .unwrap_or_else(|e| panic!("block_flush_write: mkdir {}: {}", flush_dir, e));
     let path = format!("{}/block-{}.bin", flush_dir, block_seq);
+
+    // ── AXVERITY_BREAK_111_BINDING_V1 Phase 1: preallocated path, ONE fsync ──
+    //
+    // The directory entry already exists and was already made durable by
+    // `ensure_preallocated`'s batched directory fsync, so this write needs only
+    // its own data fsync — no tmp file, no rename, no parent-dir fsync. The
+    // trailer goes out in the SAME write_all as the body, so completeness costs
+    // nothing extra and a reader can tell a finished block from a pre-created or
+    // half-written one (blockfile.rs explains why that is now necessary).
+    if prealloc_enabled() {
+        ensure_preallocated(flush_dir, block_seq);
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap_or_else(|e| panic!("block_flush_write: open prealloc {}: {}", path, e));
+        let mut out = Vec::with_capacity(bytes.len() + super::blockfile::BLOCK_TRAILER_LEN);
+        out.extend_from_slice(bytes);
+        out.extend_from_slice(&trailer_for(bytes.len()));
+        f.write_all(&out)
+            .unwrap_or_else(|e| panic!("block_flush_write: write {}: {}", path, e));
+        f.sync_all()
+            .unwrap_or_else(|e| panic!("block_flush_write: fsync {}: {}", path, e));
+        return;
+    }
+
     let tmp = format!("{}/block-{}.bin.tmp.{}", flush_dir, block_seq, std::process::id());
     {
         let mut f = std::fs::File::create(&tmp)
