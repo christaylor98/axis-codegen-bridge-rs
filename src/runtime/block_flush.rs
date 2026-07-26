@@ -81,40 +81,50 @@ fn as_bytes(field: &'static str, v: Value) -> Vec<u8> {
 }
 
 /// Parse a single framed-Bytes job: `"<seq>\t<dir>\t<len>\t<cell>\n" ++ <bytes>`.
-fn parse_framed(frame: Vec<u8>) -> Job {
-    let nl = frame
-        .iter()
-        .position(|&b| b == b'\n')
-        .unwrap_or_else(|| panic!("block_flush_write: framed job has no header terminator"));
-    let header = std::str::from_utf8(&frame[..nl])
-        .unwrap_or_else(|e| panic!("block_flush_write: header not UTF-8: {}", e));
+/// Returns `None` (never panics) on a malformed header.
+///
+/// AXVERITY_SLICE4_BLOCK_DURABILITY_V2 hardening: this fallback shape is NOT
+/// used by the current live producer (`pg_hotblk_seal_mint` always sends the
+/// 5-field Ctor via `pg_hotblk_job` — confirmed from source, unchanged by
+/// framing) so this branch is dead code today. But item 5 made THIS thread
+/// durability-critical: a panic here would kill the flush-janitor thread for
+/// its shard, and every future INSERT on that shard would have its ack
+/// (`pg_ack_wait`'s unbounded fallback) hang forever waiting for a signal that
+/// will never come. Since this specific shape has no invariant depending on
+/// panicking (unlike a genuine byte_len/Ctor-field mismatch, which DOES
+/// indicate real corruption and should still fail-stop), a malformed header
+/// is skipped (logged, not silently dropped) instead of taking the thread down.
+fn parse_framed(frame: &[u8]) -> Option<Job> {
+    let nl = frame.iter().position(|&b| b == b'\n')?;
+    let header = std::str::from_utf8(&frame[..nl]).ok()?;
     let mut it = header.split('\t');
-    let block_seq: i64 = it
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or_else(|| panic!("block_flush_write: bad block_seq in header {:?}", header));
-    let flush_dir = it
-        .next()
-        .unwrap_or_else(|| panic!("block_flush_write: missing flush_dir in header {:?}", header))
-        .to_string();
-    let byte_len: i64 = it
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or_else(|| panic!("block_flush_write: bad byte_len in header {:?}", header));
-    let idx_cell: i64 = it
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or_else(|| panic!("block_flush_write: bad idx_cell in header {:?}", header));
+    let block_seq: i64 = it.next()?.parse().ok()?;
+    let flush_dir = it.next()?.to_string();
+    let byte_len: i64 = it.next()?.parse().ok()?;
+    let idx_cell: i64 = it.next()?.parse().ok()?;
     let bytes = frame[nl + 1..].to_vec();
-    Job { block_seq, flush_dir, byte_len, idx_cell, bytes }
+    Some(Job { block_seq, flush_dir, byte_len, idx_cell, bytes })
 }
 
-/// Parse one drained channel item into a Job (Ctor/Tuple 5-field, or framed Bytes).
-fn parse_job(item: Value) -> Job {
+/// Parse one drained channel item into a Job (Ctor/Tuple 5-field, or framed
+/// Bytes). Returns `None` for a malformed framed-Bytes item (logged, skipped —
+/// see `parse_framed`); still panics on a malformed Ctor/Tuple or an
+/// altogether wrong shape, both of which indicate a genuine producer bug on
+/// the actually-live path, not a defensively-unreachable one.
+fn parse_job(item: Value) -> Option<Job> {
     match item {
-        Value::Bytes(frame) => parse_framed(frame),
-        Value::Ctor { fields, .. } => job_from_fields("Ctor", fields),
-        Value::Tuple(es) => job_from_fields("Tuple", es),
+        Value::Bytes(frame) => match parse_framed(&frame) {
+            Some(job) => Some(job),
+            None => {
+                eprintln!(
+                    "block_flush_write: skipping malformed framed-Bytes job ({} bytes, no valid header)",
+                    frame.len()
+                );
+                None
+            }
+        },
+        Value::Ctor { fields, .. } => Some(job_from_fields("Ctor", fields)),
+        Value::Tuple(es) => Some(job_from_fields("Tuple", es)),
         other => panic!(
             "block_flush_write: expected a 5-field job (Ctor/Tuple) or a framed Bytes, got {:?}",
             other
@@ -191,7 +201,10 @@ pub fn block_flush_write(arg: Value) -> Value {
     };
     let mut n = 0i64;
     for item in items {
-        let job = parse_job(item);
+        let job = match parse_job(item) {
+            Some(job) => job,
+            None => continue, // malformed framed-Bytes fallback item — logged, skipped (see parse_job)
+        };
         write_bin_durable(&job.flush_dir, job.block_seq, job.byte_len, &job.bytes);
         // AXVERITY_SLICE4_BLOCK_DURABILITY_V2, item 5 — signal every INSERT
         // ack waiting on THIS block, immediately after its fsync (inside
@@ -292,6 +305,21 @@ mod tests {
     fn empty_drain_is_noop() {
         assert_eq!(block_flush_write(Value::Unit), Value::Unit);
         assert_eq!(block_flush_write(Value::List(vec![])), Value::Int(0));
+    }
+
+    #[test]
+    fn malformed_framed_bytes_header_is_skipped_not_panicking() {
+        // AXVERITY_SLICE4_BLOCK_DURABILITY_V2 hardening — a framed-Bytes item
+        // with NO header terminator (the block_flush.rs:88 fail-stop this
+        // guards) must be skipped, not crash the thread. Mixed with a
+        // well-formed Ctor job in the same batch to confirm the malformed
+        // item doesn't take the good one down with it.
+        let dir = unique_dir("malformed-header");
+        let good = b"good-payload".to_vec();
+        let malformed = Value::Bytes(b"no newline anywhere in this frame".to_vec());
+        let out = block_flush_write(Value::List(vec![malformed, ctor_job(0, &dir, &good, 0)]));
+        assert_eq!(out, Value::Int(1), "only the well-formed job should count");
+        assert_eq!(std::fs::read(format!("{}/block-0.bin", dir)).unwrap(), good);
     }
 
     #[test]
