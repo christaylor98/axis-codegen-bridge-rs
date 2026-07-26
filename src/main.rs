@@ -478,6 +478,14 @@ fn cmd_build(args: &[String]) {
         }
 
         let n_entries = entry_names.len();
+        // AXVERITY_HOTPATH_UNBLOCK_V1, item 5 — the per-entry restart budget. A
+        // BOUND, not an unlimited retry: an entry that keeps panicking must end up
+        // reported as a failure, not silently respawned forever. Read once.
+        s += "fn _ax_restart_budget() -> u32 {\n";
+        s += "    static B: std::sync::OnceLock<u32> = std::sync::OnceLock::new();\n";
+        s += "    *B.get_or_init(|| std::env::var(\"AXVERITY_ENTRY_RESTART_BUDGET\")\n";
+        s += "        .ok().and_then(|v| v.trim().parse::<u32>().ok()).unwrap_or(100u32))\n";
+        s += "}\n\n";
         s += "fn main() {\n";
         s += "    init_runtime();\n";
         s += "    let _argv: Vec<Value> = std::env::args().skip(1)\n";
@@ -496,6 +504,37 @@ fn cmd_build(args: &[String]) {
             } else {
                 format!("unsafe {{ ax_fn_{}(a) }}", hash256_to_hex(&eid))
             };
+            // AXVERITY_HOTPATH_UNBLOCK_V1, item 5 — SUPERVISED entry.
+            //
+            // Before this, a panicking entry thread was gone for good: the join
+            // loop printed "<name>: PANIC" and the pool was permanently one
+            // worker narrower. Measured directly on a 16-worker pg_server pool
+            // with scripts/hotpath-pool-probe.py: two workers died to
+            // `tcp_write(N): Broken pipe` and the pool went 16 -> 14 and stayed
+            // there for the process's life. Since a worker is bound to one
+            // connection for that connection's lifetime, a shrinking pool is a
+            // shrinking concurrent-connection capacity.
+            //
+            // The entry body now re-runs in place after a panic. Re-entry is safe
+            // for the pool entries by construction: `wal_shard_set` re-binds this
+            // thread's shard, and `tcp_listen_shared` is idempotent by design
+            // (every worker calls it and gets the SAME listener handle back).
+            // Re-running in the SAME thread rather than spawning a fresh one is
+            // deliberate — the thread name, stack size and shard binding are
+            // preserved, and /proc/<pid>/task never shrinks, so the pool width a
+            // probe observes is the pool width that exists.
+            //
+            // THIS DOES NOT EXCUSE THE PANIC, and is built so it cannot quietly
+            // become a restart loop:
+            //   * the underlying cause is fixed at the root (net.rs `peer_gone`:
+            //     a vanished client is EOF, not a fault),
+            //   * every restart prints the panic payload and the budget consumed,
+            //   * restarts are BOUNDED (AXVERITY_ENTRY_RESTART_BUDGET, default
+            //     100); on exhaustion the worker stays down and the original
+            //     panic payload is returned, so the join loop still reports PANIC
+            //     and the process still exits non-zero,
+            //   * backoff escalates 50ms..2s, so a genuinely wedged entry crawls
+            //     and screams instead of burning a core in silence.
             s += "    {\n";
             s += "        let a = args.clone();\n";
             s += &format!("        let _sc = _sink_cells[{}].clone();\n", idx);
@@ -503,11 +542,35 @@ fn cmd_build(args: &[String]) {
             s += &format!("        let h = std::thread::Builder::new()\n");
             s += &format!("            .name({:?}.to_string())\n", name);
             s += &format!("            .stack_size({})\n", entry_stack_size);
-            s += "            .spawn(move || std::panic::catch_unwind(\n";
+            s += "            .spawn(move || {\n";
+            s += "                let mut restarts: u32 = 0u32;\n";
+            s += "                loop {\n";
+            s += "                    let a = a.clone();\n";
+            s += "                    let _sc = _sc.clone();\n";
+            s += "                    let _sr = _sr.clone();\n";
+            s += "                    let _r = std::panic::catch_unwind(\n";
             // On success: write PASS verdict (1u8) to sink before returning.
             // On panic: never reaches write; sink stays empty → FAIL.
-            s += &format!("                std::panic::AssertUnwindSafe(move || {{ let _v = {}; let _ = unsafe {{ _sc.lock().unwrap().write(1u8, &*_sr) }}; _v }})\n", call_expr);
-            s += &format!("            )).expect({:?});\n", format!("spawn {}", name));
+            s += &format!("                        std::panic::AssertUnwindSafe(move || {{ let _v = {}; let _ = unsafe {{ _sc.lock().unwrap().write(1u8, &*_sr) }}; _v }})\n", call_expr);
+            s += "                    );\n";
+            s += "                    match _r {\n";
+            s += "                        Ok(_v) => return Ok(_v),\n";
+            s += "                        Err(_p) => {\n";
+            s += "                            let _msg = _p.downcast_ref::<&str>().map(|s| s.to_string())\n";
+            s += "                                .or_else(|| _p.downcast_ref::<String>().cloned())\n";
+            s += "                                .unwrap_or_else(|| \"<non-string panic payload>\".to_string());\n";
+            s += "                            restarts += 1u32;\n";
+            s += "                            if restarts > _ax_restart_budget() {\n";
+            s += &format!("                                eprintln!(\"{}: PANIC #{{}} ({{}}) -- restart budget {{}} EXHAUSTED, worker STAYING DOWN\", restarts, _msg, _ax_restart_budget());\n", name);
+            s += "                                return Err(_p);\n";
+            s += "                            }\n";
+            s += &format!("                            eprintln!(\"{}: PANIC #{{}} ({{}}) -- RESPAWNING entry in place (budget {{}}/{{}}). The panic is a BUG; respawn preserves pool width, it does not excuse it.\", restarts, _msg, restarts, _ax_restart_budget());\n", name);
+            s += "                            let _ms: u64 = std::cmp::min(50u64 << std::cmp::min(restarts, 6u32), 2000u64);\n";
+            s += "                            std::thread::sleep(std::time::Duration::from_millis(_ms));\n";
+            s += "                        }\n";
+            s += "                    }\n";
+            s += "                }\n";
+            s += &format!("            }}).expect({:?});\n", format!("spawn {}", name));
             s += &format!("        handles.push(({:?}, {}usize, h));\n", name, idx);
             s += "    }\n\n";
         }

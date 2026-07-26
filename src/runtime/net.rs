@@ -18,12 +18,20 @@
 //!
 //!   * `tcp_read(stream: Int) -> Bytes`
 //!         Block until ≥1 byte is available, then return one chunk (up to
-//!         64 KiB). Returns empty `Bytes` at end-of-stream (peer closed).
-//!         Panics on I/O error or if `stream` is not a stream.
+//!         64 KiB). Returns empty `Bytes` at end-of-stream (peer closed) — and,
+//!         since AXVERITY_HOTPATH_UNBLOCK_V1, also on a peer-gone error
+//!         (ECONNRESET & co, see `peer_gone`), because an abrupt disconnect is
+//!         end-of-stream by any useful definition. Panics on any OTHER I/O error
+//!         or if `stream` is not a stream.
 //!
 //!   * `tcp_write(stream: Int, data: Bytes) -> Unit`
-//!         Write all of `data` and flush. Panics on I/O error or if `stream`
-//!         is not a stream.
+//!         Write all of `data` and flush. A peer-gone error (EPIPE & co) is NOT
+//!         fatal — the bytes are undeliverable because the conversation is over,
+//!         so the write is dropped and the session ends through the read side's
+//!         EOF, exactly as PostgreSQL's `pq_flush` does. Panics on any OTHER I/O
+//!         error or if `stream` is not a stream. Before that fix, one vanished
+//!         client killed a whole `pg_worker` thread and the pool never recovered
+//!         it (measured 16 -> 14).
 //!
 //!   * `tcp_close(handle: Int) -> Unit`
 //!         Drop the listener or stream. Panics on an unknown handle (a
@@ -69,18 +77,82 @@ enum Sock {
 //     worker and then shared by all N workers calling tcp_accept on them. ⇒
 //     must stay shared, but are immutable + touched only at accept.
 //
-// So the `threadlocal` variant (flag `AXVERITY_NET_REGISTRY=threadlocal`, the
-// `shared` Mutex path the default) moves STREAM handles into a thread-local map
-// (no lock on the read/write/close hot path) while LISTENERS stay in the shared
+// So the `threadlocal` variant moves STREAM handles into a thread-local map (no
+// lock on the read/write/close hot path) while LISTENERS stay in the shared
 // registry. Handle-space split so get_sock/close can route with only the i64:
 //   * stream handles  — POSITIVE, from a thread-local counter (per-thread 1,2,…)
 //   * listener handles — NEGATIVE, from the global counter negated
 // Never 0 (the pg loop-state done-sentinel), never colliding across the sign
 // boundary. In `shared` mode BOTH kinds get positive handles in the shared
 // registry — byte-identical to the original behavior.
+//
+// ── DEFAULT FLIPPED shared -> threadlocal by AXVERITY_HOTPATH_UNBLOCK_V1 ──────
+//
+// AXVERITY_BRIDGE_LOCKFREE_EXPERIMENT_V1 left this default `shared` on a
+// measured "no win". That measurement was taken with allocprobe::CountingAlloc
+// installed as the process global allocator — ~397 allocations per INSERT, each
+// doing two lock-prefixed RMWs on ONE shared 32-byte cacheline. A socket-lock
+// difference could not possibly have shown through that, so the verdict was
+// evidence that the allocator was louder, not that the lock was free.
+//
+// Re-measured on the clean post-removal baseline, A/B'd within ONE run
+// (scripts/hotpath-ab-alloc.py, 16-worker pool, fresh store per instance,
+// variant order flipped every K):
+//
+//   K    SELECT threadlocal/shared    INSERT threadlocal/shared
+//   1              1.00                        1.00
+//   2              1.00                         —
+//   4              1.00                        1.01
+//   8              0.99                         —
+//  16              1.00                        1.07  (driftB 15.6%, i.e. noise)
+//
+// So the no-win verdict SURVIVES decontamination: throughput-neutral to three
+// digits. The reason both results are consistent is a COUNT, not a mechanism —
+// ~800 shared-cacheline atomic ops per operation for the allocator versus ~2
+// lock acquisitions for this registry, ~400x fewer touches of shared state.
+// "Has a lock" was never the predictor; touches-per-op on a shared line is.
+//
+// Flipped anyway, for two reasons that are not throughput:
+//   1. It is what the grounding above already concluded is CORRECT: a stream is
+//      created and used on one thread for its whole lifetime, so it has no
+//      business in a process-global map. Verified still true before flipping —
+//      `conn` never leaves the worker thread (its only cross-boundary use is
+//      pg_reply_tag on the same thread) and no lib_async janitor does socket I/O.
+//   2. It removes the POISON surface from the hot path. A panic taken while a
+//      registry guard was live used to break socket lookup for the whole process
+//      (see `reg_lock`), and under `shared` that registry holds every stream.
+//      Under `threadlocal` only accept touches it. `reg_lock`'s poison tolerance
+//      stays as defense-in-depth for that remaining path.
+// Explicit opt-out: AXVERITY_NET_REGISTRY=shared.
 fn net_threadlocal() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| matches!(std::env::var("AXVERITY_NET_REGISTRY").as_deref(), Ok("threadlocal")))
+    *ON.get_or_init(|| {
+        !matches!(std::env::var("AXVERITY_NET_REGISTRY").as_deref(), Ok("shared"))
+    })
+}
+
+/// Lock the shared socket registry, RECOVERING from poisoning.
+/// AXVERITY_HOTPATH_UNBLOCK_V1, item 5.
+///
+/// Found while proving the supervised-entry respawn path actually works: after a
+/// single panic taken while a registry guard was live, every later
+/// `registry().lock().unwrap()` in the process died with `PoisonError`. Because
+/// `net_threadlocal()` defaults to FALSE, the shared registry holds EVERY socket
+/// including streams — so one worker's panic did not merely cost one worker, it
+/// permanently broke socket lookup for the whole server. That is a far larger
+/// failure than the attrition this turn set out to fix, and it was hiding behind
+/// it: with nothing respawning, the process usually died before a second worker
+/// could observe the poison.
+///
+/// Recovery is sound here, not a shrug. The guarded value is a
+/// `HashMap<i64, Arc<Sock>>` and every panic site in this module raises AFTER its
+/// map operation has completed — `get_sock`'s unknown-handle `panic!` fires on the
+/// looked-up `Option`, and the listener/stream mismatch fires once the guard is
+/// already dropped. No path leaves the map partially mutated, so there is no
+/// broken invariant for poisoning to protect. Refusing to recover is strictly
+/// worse: it escalates one connection's fault into total loss of service.
+fn reg_lock() -> std::sync::MutexGuard<'static, HashMap<i64, Arc<Sock>>> {
+    registry().lock().unwrap_or_else(|e| e.into_inner())
 }
 
 thread_local! {
@@ -109,7 +181,7 @@ fn next_handle() -> i64 {
 /// contract). Negative handle in threadlocal mode so get_sock routes it here.
 fn insert_listener(sock: Sock) -> i64 {
     let h = if net_threadlocal() { -next_handle() } else { next_handle() };
-    registry().lock().unwrap().insert(h, Arc::new(sock));
+    reg_lock().insert(h, Arc::new(sock));
     h
 }
 
@@ -125,7 +197,7 @@ fn insert_stream(sock: Sock) -> i64 {
         })
     } else {
         let h = next_handle();
-        registry().lock().unwrap().insert(h, Arc::new(sock));
+        reg_lock().insert(h, Arc::new(sock));
         h
     }
 }
@@ -140,9 +212,7 @@ fn get_sock(handle: i64, who: &str) -> Arc<Sock> {
             .with(|m| m.borrow().get(&handle).cloned())
             .unwrap_or_else(|| panic!("{}: unknown socket handle {}", who, handle))
     } else {
-        registry()
-            .lock()
-            .unwrap()
+        reg_lock()
             .get(&handle)
             .cloned()
             .unwrap_or_else(|| panic!("{}: unknown socket handle {}", who, handle))
@@ -154,7 +224,7 @@ fn remove_sock(handle: i64) -> Option<Arc<Sock>> {
     if net_threadlocal() && handle > 0 {
         TL_STREAMS.with(|m| m.borrow_mut().remove(&handle))
     } else {
-        registry().lock().unwrap().remove(&handle)
+        reg_lock().remove(&handle)
     }
 }
 
@@ -221,8 +291,36 @@ thread_local! {
     static BATCH: RefCell<HashMap<i64, Vec<u8>>> = RefCell::new(HashMap::new());
 }
 
+/// Is this I/O error "the peer is gone"? AXVERITY_HOTPATH_UNBLOCK_V1, item 5.
+///
+/// A server writing to a socket whose client has vanished is a NORMAL event, not
+/// a server fault — every real client eventually disappears mid-conversation
+/// (Ctrl-C, RST, network drop, a driver that closes without a Terminate message).
+/// PostgreSQL treats exactly this set as a client disconnect: `pq_flush` logs it
+/// as COMMERROR and ends the session; it does not abort the backend.
+///
+/// Deliberately a WHITELIST, not a catch-all. Genuine unexpected I/O failures
+/// (ENOSPC, EBADF, a listener handed to a write path) must still panic loudly —
+/// swallowing every error here is how a real bug becomes an invisible one, and
+/// that is the failure mode this turn is explicitly guarding against.
+fn peer_gone(e: &std::io::Error) -> bool {
+    use std::io::ErrorKind::*;
+    matches!(
+        e.kind(),
+        BrokenPipe | ConnectionReset | ConnectionAborted | NotConnected | UnexpectedEof
+    )
+}
+
 /// The actual socket write (the original `tcp_write` body). Writes ALL of `data`
-/// and flushes the OS socket. Panics on I/O error / wrong handle kind.
+/// and flushes the OS socket.
+///
+/// A peer-gone error is NOT fatal (see `peer_gone`): the bytes are undeliverable
+/// because the conversation is over, so there is nothing to do and nothing to
+/// report to the client. The connection is torn down through the normal path —
+/// the serve loop's next `tcp_read` returns 0 bytes, `pg_frame_buf_incomplete`
+/// sees a short frame, `pg_query_step_ext` returns conn=0, and
+/// `pg_conn_alive_ext` ends the loop — after which the worker goes back to
+/// `tcp_accept`. Any OTHER I/O error still panics.
 fn raw_write(handle: i64, data: &[u8]) {
     // AXVERITY_HOTPATH_MEASUREMENT_V1, measurement (B) — SPLITPROBE-gated marks
     // decomposing the tcp_write bridge call on the thread executing it:
@@ -237,13 +335,23 @@ fn raw_write(handle: i64, data: &[u8]) {
         Sock::Listener(_) => panic!("tcp_write: handle {} is a listener, not a stream", handle),
     };
     super::tsmark::markp(111);
-    stream
-        .write_all(data)
-        .unwrap_or_else(|e| panic!("tcp_write({}): {}", handle, e));
+    if let Err(e) = stream.write_all(data) {
+        if peer_gone(&e) {
+            // Client disconnected mid-response. Normal; end quietly and let the
+            // read side terminate the session. THIS was the worker-attrition
+            // cause: `tcp_write(19): Broken pipe (os error 32)` panicked the
+            // whole pg_worker thread, and nothing replaced it.
+            return;
+        }
+        panic!("tcp_write({}): {}", handle, e);
+    }
     super::tsmark::markp(112);
-    stream
-        .flush()
-        .unwrap_or_else(|e| panic!("tcp_write({}): flush: {}", handle, e));
+    if let Err(e) = stream.flush() {
+        if peer_gone(&e) {
+            return;
+        }
+        panic!("tcp_write({}): flush: {}", handle, e);
+    }
     super::tsmark::markp(113);
 }
 
@@ -437,7 +545,12 @@ pub fn tcp_listen_shared(v: Value) -> Value {
         other => panic!("tcp_listen_shared: expected Int port, got {:?}", other),
     };
     // Serialize registration so exactly one thread binds; the rest reuse it.
-    let mut shared = shared_listeners().lock().unwrap();
+    // Poison-tolerant for the same reason as `reg_lock`: a bind panic in one
+    // worker must not wedge every other worker's startup. The guarded map is
+    // only mutated after a successful bind, so a panic cannot leave it torn.
+    let mut shared = shared_listeners()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     if let Some(&(h, bound)) = shared.get(&port) {
         return Value::Tuple(vec![Value::Int(h), Value::Int(bound)]);
     }
@@ -524,9 +637,18 @@ pub fn tcp_read(v: Value) -> Value {
         Sock::Listener(_) => panic!("tcp_read: handle {} is a listener, not a stream", handle),
     };
     let mut buf = [0u8; 65536];
-    let n = stream
-        .read(&mut buf)
-        .unwrap_or_else(|e| panic!("tcp_read({}): {}", handle, e));
+    // AXVERITY_HOTPATH_UNBLOCK_V1, item 5 — the read-side twin of the raw_write
+    // fix. An abrupt client disconnect surfaces as ECONNRESET on read just as
+    // readily as EPIPE on write (which of the two you get is a race against the
+    // peer's RST), so panicking here would leave the same worker-attrition hole
+    // half-open. A peer-gone read is reported as 0 bytes — EOF — which is
+    // already exactly how the serve loop detects a finished connection. Other
+    // I/O errors still panic.
+    let n = match stream.read(&mut buf) {
+        Ok(n) => n,
+        Err(ref e) if peer_gone(e) => 0,
+        Err(e) => panic!("tcp_read({}): {}", handle, e),
+    };
     Value::Bytes(buf[..n].to_vec())
 }
 
