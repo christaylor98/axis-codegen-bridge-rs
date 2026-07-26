@@ -60,5 +60,6 @@ pub mod sqlite_ro;
 pub mod slice4;
 pub mod hotblk_recover;
 pub mod ack_registry;
+pub mod hotblk_pool;
 
 pub use value::Value;

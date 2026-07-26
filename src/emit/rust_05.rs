@@ -389,6 +389,10 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("slice4_ack_timeout_ms", "axis_codegen_bridge::runtime::slice4::slice4_ack_timeout_ms");
     m.insert("ack_register",          "axis_codegen_bridge::runtime::ack_registry::ack_register");
     m.insert("ack_signal_block",      "axis_codegen_bridge::runtime::ack_registry::ack_signal_block");
+
+    // ── Slice 4 arena pre-allocation pool (hotblk_pool.rs, item 6) ──────────────
+    m.insert("hotblk_pool_put",  "axis_codegen_bridge::runtime::hotblk_pool::hotblk_pool_put");
+    m.insert("hotblk_pool_take", "axis_codegen_bridge::runtime::hotblk_pool::hotblk_pool_take");
     //    channels.rs — bounded, block-on-full channel (distinct from the
     //    existing unbounded Channel; existing one untouched).
     m.insert("bchan_send",           "axis_codegen_bridge::runtime::channels::bchan_send");
