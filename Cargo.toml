@@ -11,6 +11,15 @@ path = "src/lib.rs"
 name = "axis-codegen-bridge"
 path = "src/main.rs"
 
+[features]
+default = []
+# AXVERITY_HOTPATH_UNBLOCK_V1 — per-allocation counting (runtime::allocprobe).
+# OFF by default: as an unconditional #[global_allocator] it was measured as the
+# dominant serialization point in production pg_server (see src/runtime/
+# allocprobe.rs). Enable ONLY for a measurement turn:
+#   cargo build --release --features allocprobe
+allocprobe = []
+
 [dependencies]
 capnp = "0.19"
 serde_json = "1.0"

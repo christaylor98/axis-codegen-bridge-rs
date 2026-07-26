@@ -42,6 +42,13 @@
 //!                           attributable to the marking thread's own stage
 //!                           under single-writer concurrency — see the turn's
 //!                           report for how multi-writer runs are handled.
+//!                           AXVERITY_HOTPATH_UNBLOCK_V1: these four columns are
+//!                           ZERO unless the bridge was built `--features
+//!                           allocprobe`, which is NO LONGER the default — the
+//!                           counting allocator was itself measured as the
+//!                           dominant serialization point. Each dump stamps
+//!                           `# allocprobe=on|off` so zeros are never read as
+//!                           measurements.
 //! into a SEPARATE thread-local buffer (`PMARKS`), dumped by the SAME
 //! `ts_flush` call to a NEW file `<dir>/wp-<pid>-<seq>.tsv` alongside the
 //! existing `ts-<pid>-<seq>.tsv` (which is untouched — old file, old format,
@@ -191,6 +198,61 @@ pub fn ts_mark(arg: Value) -> Value {
     Value::Unit
 }
 
+/// AXVERITY_HOTPATH_MEASUREMENT_V1, measurement (A) — the SPLITPROBE gate.
+///
+/// Read once per process, same OnceLock pattern as `writeprobe_enabled`.
+fn splitprobe_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| {
+        matches!(
+            std::env::var("AXVERITY_SPLITPROBE").as_deref(),
+            Ok("1") | Ok("on") | Ok("true")
+        )
+    })
+}
+
+/// `ts_markp(id: Int) -> Unit` — a SPLITPROBE-gated mark.
+///
+/// Exists so the parse/hash/index-publish span can be subdivided WITHOUT adding
+/// unconditional recording work to the production INSERT path: when
+/// `AXVERITY_SPLITPROBE` is unset (the default) the whole body is one relaxed
+/// `OnceLock<bool>` load and a return — no clock read, no buffer push, no
+/// allocation. When it is set, the mark is recorded into exactly the same
+/// `MARKS`/`PMARKS` buffers `ts_mark` uses and is dumped by the same `ts_flush`,
+/// so the existing offline readers need no change.
+///
+/// The residual cost when DISABLED is one M1 CCall dispatch plus that load —
+/// NOT zero. That residual is measured directly and reported by the turn rather
+/// than assumed negligible (the same discipline the writeprobe extension's ~14%
+/// figure was held to).
+#[track_caller]
+pub fn ts_markp(arg: Value) -> Value {
+    if !splitprobe_enabled() {
+        return Value::Unit;
+    }
+    let id = match arg {
+        Value::Int(n) => n,
+        other => panic!("ts_markp: expected Int id, got {:?}", other),
+    };
+    let n = mono_nanos();
+    MARKS.with(|m| m.borrow_mut().push((id, n)));
+    capture_probe(id, n);
+    Value::Unit
+}
+
+/// Rust-callable SPLITPROBE-gated mark — the `mark()` analogue of `ts_markp`,
+/// for bracketing bridge-internal work on the thread executing it. No-op (one
+/// relaxed load) unless `AXVERITY_SPLITPROBE=1`.
+#[inline]
+pub fn markp(id: i64) {
+    if !splitprobe_enabled() {
+        return;
+    }
+    let n = mono_nanos();
+    MARKS.with(|m| m.borrow_mut().push((id, n)));
+    capture_probe(id, n);
+}
+
 /// Rust-callable mark — records (id, monotonic_nanos) on the CALLING thread.
 /// Used to bracket bridge-internal work (e.g. the janitor fsync in reclog.rs) on
 /// the actual thread executing it, per the audit's on-the-executing-thread rule.
@@ -263,6 +325,18 @@ pub fn ts_flush(arg: Value) -> Value {
             if !pm.is_empty() {
                 let wp_path = format!("{}/wp-{}-{}.tsv", dir, std::process::id(), seq);
                 let mut ws = String::with_capacity(pm.len() * 64);
+                // AXVERITY_HOTPATH_UNBLOCK_V1 — the four alloc_* columns are all
+                // ZERO unless the bridge was built `--features allocprobe`, which
+                // is no longer the default (the counting allocator was itself the
+                // measured bottleneck). Stamp that fact into the file so a reader
+                // can never mistake "counting compiled out" for "nothing
+                // allocated". Comment line: offline readers skip `#`.
+                if !pm.is_empty() {
+                    ws.push_str(&format!(
+                        "# allocprobe={}\n",
+                        if allocprobe::ENABLED { "on" } else { "off (alloc_* columns are zeros, NOT measurements)" }
+                    ));
+                }
                 for r in pm.iter() {
                     ws.push_str(&format!(
                         "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",

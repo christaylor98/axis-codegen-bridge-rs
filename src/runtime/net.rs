@@ -224,17 +224,27 @@ thread_local! {
 /// The actual socket write (the original `tcp_write` body). Writes ALL of `data`
 /// and flushes the OS socket. Panics on I/O error / wrong handle kind.
 fn raw_write(handle: i64, data: &[u8]) {
+    // AXVERITY_HOTPATH_MEASUREMENT_V1, measurement (B) — SPLITPROBE-gated marks
+    // decomposing the tcp_write bridge call on the thread executing it:
+    //   110->111 get_sock (registry lookup + Arc clone)
+    //   111->112 write_all (the socket syscall)
+    //   112->113 flush
+    // markp is a no-op (one relaxed load) unless AXVERITY_SPLITPROBE=1.
+    super::tsmark::markp(110);
     let sock = get_sock(handle, "tcp_write");
     let mut stream: &TcpStream = match &*sock {
         Sock::Stream(s) => s,
         Sock::Listener(_) => panic!("tcp_write: handle {} is a listener, not a stream", handle),
     };
+    super::tsmark::markp(111);
     stream
         .write_all(data)
         .unwrap_or_else(|e| panic!("tcp_write({}): {}", handle, e));
+    super::tsmark::markp(112);
     stream
         .flush()
         .unwrap_or_else(|e| panic!("tcp_write({}): flush: {}", handle, e));
+    super::tsmark::markp(113);
 }
 
 /// Append `data` to the conn's coalescing buffer; flush if it reaches the cap.

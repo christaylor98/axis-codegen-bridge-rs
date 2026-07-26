@@ -332,6 +332,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
 
     // ── TEMPORARY timing instrumentation (AXVERITY_INSERT_PATH_TIMING_AUDIT_V1) ─
     m.insert("ts_mark",              "axis_codegen_bridge::runtime::tsmark::ts_mark");
+    m.insert("ts_markp",             "axis_codegen_bridge::runtime::tsmark::ts_markp");
     m.insert("ts_mark_val",          "axis_codegen_bridge::runtime::tsmark::ts_mark_val");
     m.insert("ts_flush",             "axis_codegen_bridge::runtime::tsmark::ts_flush");
     m.insert("channel_depth",        "axis_codegen_bridge::runtime::channels::channel_depth");
