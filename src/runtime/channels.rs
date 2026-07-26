@@ -345,12 +345,44 @@ pub(crate) fn bounded_try_send(name: &str, item: Value) -> bool {
     true
 }
 
-/// Current depth of a bounded channel (test-support; the bounded twin of
-/// `channel_depth`). Locks, reads len, unlocks. cfg(test): only the shadow
-/// drills use it today — lift the gate if runtime instrumentation ever needs it.
-#[cfg(test)]
+/// Current depth of a bounded channel (the bounded twin of `channel_depth`).
+/// Locks, reads len, unlocks.
+///
+/// AXVERITY_MEMCPY_HOTPATH_TRIAL_V1 lifted the former `#[cfg(test)]` gate: that
+/// turn has to answer "does the pool keep up, or does it back up" with a
+/// measurement rather than an argument, and queue depth IS that measurement.
+/// It is read by the pool thread once per drained item, never by a request
+/// thread, so it adds no shared-line touches to the hot path.
 pub(crate) fn bounded_len(name: &str) -> usize {
     bounded_channel_for(name).queue.lock().unwrap().len()
+}
+
+/// Block until exactly one item is available and return it. The single-item
+/// twin of `bounded_drain_batch`, for consumers whose per-item work is done in
+/// M1 (which has no list-iteration form that could walk a drained batch).
+pub(crate) fn bounded_take_blocking(name: &str) -> Value {
+    let ch = bounded_channel_for(name);
+    let mut q = ch.queue.lock().unwrap();
+    loop {
+        if let Some(v) = q.pop_front() {
+            drop(q);
+            ch.not_full.notify_one();
+            return v;
+        }
+        q = ch.not_empty.wait(q).unwrap();
+    }
+}
+
+/// `bchan_take(name: Text) -> Value`. Blocks until one item is available.
+#[track_caller]
+pub fn bchan_take(name: Value) -> Value {
+    bounded_take_blocking(&name_of(&name))
+}
+
+/// `bchan_len(name: Text) -> Int`. Current queue depth.
+#[track_caller]
+pub fn bchan_len(name: Value) -> Value {
+    Value::Int(bounded_len(&name_of(&name)) as i64)
 }
 
 /// Block until ≥1 item, then accumulate one batch until `max` items OR

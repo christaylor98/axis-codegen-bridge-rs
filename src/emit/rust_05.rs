@@ -398,6 +398,11 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     //    existing unbounded Channel; existing one untouched).
     m.insert("bchan_send",           "axis_codegen_bridge::runtime::channels::bchan_send");
     m.insert("bchan_drain",          "axis_codegen_bridge::runtime::channels::bchan_drain");
+    //    AXVERITY_MEMCPY_HOTPATH_TRIAL_V1 — single-item blocking take (M1 has no
+    //    list-iteration form to walk a drained batch) + queue-depth probe (the
+    //    turn must MEASURE whether the pool backs up, not argue about it).
+    m.insert("bchan_take",           "axis_codegen_bridge::runtime::channels::bchan_take");
+    m.insert("bchan_len",            "axis_codegen_bridge::runtime::channels::bchan_len");
     //    reclog.rs — the batched recovery-log writer (folds payload + PK bind).
     m.insert("reclog_submit",        "axis_codegen_bridge::runtime::reclog::reclog_submit");
     m.insert("reclog_flush_once",    "axis_codegen_bridge::runtime::reclog::reclog_flush_once");
@@ -409,6 +414,25 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
 
     // ── Slice 4 rollout dial (slice4.rs — AXVERITY_SLICE4_BLOCK_DURABILITY_V2) ──
     m.insert("slice4_mode",          "axis_codegen_bridge::runtime::slice4::slice4_mode");
+
+    // ── memcpy hot path (rawblk.rs / pgbshape.rs — AXVERITY_MEMCPY_HOTPATH_TRIAL_V1)
+    //    The dial is `AXVERITY_MEMCPY_HOTPATH` = off (default) | a | b. Nothing
+    //    below is on the default path.
+    m.insert("memcpy_hotpath_mode",  "axis_codegen_bridge::runtime::rawblk::memcpy_hotpath_mode");
+    m.insert("memcpy_canon_mode",    "axis_codegen_bridge::runtime::rawblk::memcpy_canon_mode");
+    m.insert("rawblk_frame",         "axis_codegen_bridge::runtime::rawblk::rawblk_frame");
+    m.insert("rawblk_recover_open",       "axis_codegen_bridge::runtime::rawblk::rawblk_recover_open");
+    m.insert("rawblk_recover_rebuild",    "axis_codegen_bridge::runtime::rawblk::rawblk_recover_rebuild");
+    m.insert("rawblk_recover_stats",      "axis_codegen_bridge::runtime::rawblk::rawblk_recover_stats");
+    m.insert("rawblk_recover_dump_pk",    "axis_codegen_bridge::runtime::rawblk::rawblk_recover_dump_pk");
+    m.insert("rawblk_recover_dump_hashes","axis_codegen_bridge::runtime::rawblk::rawblk_recover_dump_hashes");
+    m.insert("hotblk_dir_guard",     "axis_codegen_bridge::runtime::rawblk::hotblk_dir_guard");
+    m.insert("derive_stat",           "axis_codegen_bridge::runtime::rawblk::derive_stat");
+    m.insert("derive_stat_flush",     "axis_codegen_bridge::runtime::rawblk::derive_stat_flush");
+    m.insert("pgb_parse_shape",      "axis_codegen_bridge::runtime::pgbshape::pgb_parse_shape");
+    m.insert("pgb_bind_capture",     "axis_codegen_bridge::runtime::pgbshape::pgb_bind_capture");
+    m.insert("pgb_payload",          "axis_codegen_bridge::runtime::pgbshape::pgb_payload");
+    m.insert("pgb_record",           "axis_codegen_bridge::runtime::pgbshape::pgb_record");
 
     // ── Slice 4 hotblk-block recovery (hotblk_recover.rs, task 4) ───────────────
     m.insert("hotblk_recover_open",      "axis_codegen_bridge::runtime::hotblk_recover::hotblk_recover_open");

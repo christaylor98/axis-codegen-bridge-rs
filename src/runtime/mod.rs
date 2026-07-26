@@ -61,5 +61,7 @@ pub mod slice4;
 pub mod hotblk_recover;
 pub mod ack_registry;
 pub mod hotblk_pool;
+pub mod rawblk;
+pub mod pgbshape;
 
 pub use value::Value;
