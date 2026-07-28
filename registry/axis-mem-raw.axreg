@@ -26,12 +26,9 @@
 // Value's own sum definition references it — omitting it just moves the
 // same "unknown name" failure one line down). Purely additive: zero
 // change to any of the seven fns' identity, contract, or behavior.
-type Unit  = prim unit
-type Int   = prim int
-type Text  = prim text
-type Bool  = prim bool
-type Value = sum [ AsUnit(Unit) | AsBool(Bool) | AsInt(Int) | AsText(Text) ]
-type Bytes = prim bytes
+// Unit/Int/Text/Bool/Value/Bytes are declared in axRegistry-working/
+// axis-bridge.axreg, co-fed with this registry by every invocation that
+// feeds it here.
 
 // ───────────── cell_new_raw / cell_load_raw / cell_cas_raw ─────────────
 // Self-describing atomic-cell handle: the Int returned by cell_new_raw IS
