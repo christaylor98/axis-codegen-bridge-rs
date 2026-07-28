@@ -9,8 +9,8 @@
  "axreg": {
   "path": "/home/chris/dev/axRegistry-working/axis-bridge.axreg",
   "declared_count": 323,
-  "declared_and_used": 177,
-  "declared_not_used": 146,
+  "declared_and_used": 176,
+  "declared_not_used": 147,
   "used_not_declared": [
    "cell_cas_raw",
    "cell_load_raw",
@@ -25,7 +25,25 @@
    "mem_write_raw",
    "str_after",
    "str_before"
-  ]
+  ],
+  "phase0_correction": {
+   "intent_id": "INSERT_PATH_HONESTY_V1",
+   "date": "2026-07-29",
+   "was": {
+    "declared_and_used": 177,
+    "declared_not_used": 146
+   },
+   "now": {
+    "declared_and_used": 176,
+    "declared_not_used": 147
+   },
+   "unaccounted_symbol": "axbi_parse",
+   "bucket": "declared_not_used (DEAD)",
+   "why_the_scripted_pass_missed_it": "The caller census scored a symbol 'used' on any non-definition .rs call hit but did not exclude #[cfg(test)] modules. axbi_parse has three such hits (src/runtime/axbi.rs:248, 309, 315), all inside the `#[cfg(test)] mod tests` that begins at axbi.rs:202. That scored it declared_and_used (177). Separately, axbi_parse is not a member of the 181-member view 'view:axbridge:impl-of-axverity-surface-v1', so the body-audit pass never emitted a record for it -- the records array holds only 176 axreg_declared=true entries. The symbol fell into the gap between the two passes and was counted by neither bucket's record list.",
+   "decisive_evidence": "axbi_parse is absent from symbol_map() in src/emit/rust_05.rs, the sole M1->Rust bridge dispatch table consumed by bridge_builtin_map() (rust_05.rs:526). No M1 program can reach it regardless of its declaration, so the three test-module hits cannot constitute a live dispatch consumer -- the exact criterion the DEAD verdict_reason names.",
+   "stop_condition_check": "Gap resolved to exactly one symbol (set difference declared(323) - declared_not_used(146) - records[axreg_declared](176) = {axbi_parse}). The >1-symbol STOP condition did not fire; this is an off-by-one, not a parser fault. The deletion recommendation remains safe to authorize.",
+   "no_verdict_revised": true
+  }
  },
  "records": [
   {
@@ -9304,6 +9322,29 @@
    ],
    "evidence_commands": [
     "rg -c '\\bargv_or\\s*\\(' --glob '*.m1' <3 repos> -> 0 call sites"
+   ]
+  },
+  {
+   "symbol": "axbi_parse",
+   "axreg_declared": true,
+   "axreg_kind": "leaf",
+   "axreg_in": "(ValueList)",
+   "axreg_out": "Value",
+   "axreg_effect": "reads",
+   "verdict": "DEAD",
+   "verdict_reason": "Declared in axis-bridge.axreg with zero M1 call sites (comment-stripped \\b<name>\\s*\\( over all .m1 in axVerity-working + axis-lang-lab-working; the two axis-lang-lab-working examples/surface-m1/format/ hits are '--' comment lines and do not survive comment stripping), and zero non-definition .rs call hits establishing a live dispatch consumer -- its three .rs hits are all inside #[cfg(test)] mod tests (axbi.rs:202), and the symbol is absent from symbol_map() in src/emit/rust_05.rs so no M1 dispatch to it can exist. Registry sprawl candidate; NOT body-audited (outside the 181-member view). ALIAS CAUTION (cb69b96): verify no other .axreg aliases this identity before removal. ADDED BY INSERT_PATH_HONESTY_V1 PHASE 0 -- this record closes the 323 arithmetic; no pre-existing verdict was revised.",
+   "m1_call_hits": 0,
+   "m1_defined_in_m1": false,
+   "rust_call_hits": 0,
+   "rust_call_hits_test_only": 3,
+   "other_axreg_files": [
+    "axRegistry-working/axis-bridge.axreg",
+    "axis-codegen-bridge-rs/registry/axis-codegen-bridge.axreg"
+   ],
+   "evidence_commands": [
+    "rg -c '\\baxbi_parse\\s*\\(' --glob '*.m1' <3 repos> -> 0 non-comment call sites",
+    "rg -n '\\baxbi_parse\\s*\\(' src/ --glob '*.rs' -> axbi.rs:248,309,315 (all below cfg(test) at 202)",
+    "rg -n 'axbi' src/emit/*.rs -> no match (absent from symbol_map/bridge_builtin_map)"
    ]
   },
   {

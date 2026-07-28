@@ -531,6 +531,12 @@ fn write_pool_stats(shard: &str, s: &[i64; 6]) {
 /// hot-path-to-published latency implied by its `ts`.
 #[track_caller]
 pub fn derive_stat(args: Value) -> Value {
+    // INSERT_PATH_HONESTY_V1 Phase 3 — the single telemetry dial
+    // (AXVERITY_TELEMETRY, default OFF; see tsmark::telemetry_enabled). Gates the
+    // POOL_STATS counter bump AND the every-1024-items pooldepth-*.txt write.
+    if !super::tsmark::telemetry_enabled() {
+        return Value::Unit;
+    }
     let (shard, depth, ts) = match args {
         Value::Tuple(es) if es.len() == 3 => {
             let mut it = es.into_iter();
@@ -582,6 +588,12 @@ pub fn derive_stat(args: Value) -> Value {
 /// reports what it saw rather than losing the tail.
 #[track_caller]
 pub fn derive_stat_flush(arg: Value) -> Value {
+    // INSERT_PATH_HONESTY_V1 Phase 3 — dial, default OFF. Not a new behaviour:
+    // with the dial off derive_stat never bumps the accumulator, so s[0] == 0 and
+    // the body below already wrote nothing.
+    if !super::tsmark::telemetry_enabled() {
+        return Value::Unit;
+    }
     let shard = match arg {
         Value::Str(h) => get_str(&h),
         other => panic!("derive_stat_flush: expected Text, got {:?}", other),

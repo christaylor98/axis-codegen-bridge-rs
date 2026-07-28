@@ -99,6 +99,86 @@ fn mono_nanos() -> i64 {
     base.elapsed().as_nanos() as i64
 }
 
+/// INSERT_PATH_HONESTY_V1 Phase 3 — THE TELEMETRY DIAL.
+///
+/// One dial for the whole instrumentation surface: `ts_mark`, `ts_mark_val`,
+/// `ts_markp`, `ts_flush`, the Rust-side `mark`/`markp`, and (via
+/// `rawblk::derive_stat` / `derive_stat_flush`) the derive-pool counters.
+/// **Default OFF.** Unset / `0` / `off` / `false` → disabled; `1` / `on` /
+/// `true` → enabled.
+///
+/// WHY THIS EXISTS. Every one of those probes was unconditional. `ts_mark`
+/// alone ran at 11 live M1 sites per INSERT, each a clock read plus a
+/// thread-local `Vec` push — instrumentation billed to the write path being
+/// measured. The pending mmapseg-vs-hotblk substrate bake-off has to measure
+/// the write path, not its probes, so the probes became conditional.
+///
+/// Read ONCE per process and cached in a `OnceLock`, deliberately: an
+/// uncached `std::env::var` on the INSERT path would reintroduce (as a lock +
+/// allocation per call) exactly the cost this gate removes.
+///
+/// GATED-ON IS BYTE-IDENTICAL to the pre-gate behaviour — the gate is a pure
+/// prefix on each body; no body was altered, and no symbol was deleted.
+/// GATED-OFF is equivalent to the buffers simply never accumulating: `ts_flush`
+/// already returned `Int(0)` on an empty `MARKS`, and `derive_stat_flush`
+/// already wrote nothing when its accumulator was untouched. So the only
+/// observable difference with the dial off is the absence of the telemetry
+/// files themselves, which is the intent.
+///
+/// This dial is INDEPENDENT of `AXVERITY_WRITEPROBE` and `AXVERITY_SPLITPROBE`,
+/// which continue to select what an ENABLED mark additionally captures. With
+/// this dial off, those two have no effect — nothing is captured at all.
+#[cfg(not(test))]
+#[inline]
+pub fn telemetry_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(dial_from_env)
+}
+
+fn dial_from_env() -> bool {
+    matches!(
+        std::env::var("AXVERITY_TELEMETRY")
+            .ok()
+            .as_deref()
+            .map(|s| s.to_ascii_lowercase())
+            .as_deref(),
+        Some("1") | Some("on") | Some("true")
+    )
+}
+
+/// Test-build storage for the dial.
+///
+/// Production (`cfg(not(test))`) uses the `OnceLock` above — read once, cached,
+/// per this intent's requirement that the INSERT path never re-read the env.
+/// The `cfg(test)` build cannot use a `OnceLock`: this crate's test binary runs
+/// all modules' tests in one process and in arbitrary order, and several of them
+/// (`slabshadow`, `reclog`, `net`) drive code that calls `mark`/`markp`. Whichever
+/// ran first would latch the `OnceLock` to the env default (`false`, since
+/// `AXVERITY_TELEMETRY` is unset in a test run) and every later attempt to force
+/// the dial on would silently no-op — which is exactly how
+/// `marks_accumulate_and_flush_clears` failed under the full suite while passing
+/// in isolation.
+///
+/// So the test build swaps the *storage* (an `AtomicBool`, settable at any
+/// point) while keeping the *default* identical: off unless explicitly enabled.
+/// The gate's semantics are unchanged; only the one-shot latch is relaxed, and
+/// only where a one-shot latch makes the dial untestable.
+#[cfg(test)]
+static TEST_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(test)]
+#[inline]
+pub fn telemetry_enabled() -> bool {
+    TEST_ON.load(Ordering::Relaxed) || dial_from_env()
+}
+
+/// Test-only: force the dial ON for the remainder of this test process. Every
+/// test that exercises gated-on probe behaviour calls this first.
+#[cfg(test)]
+pub(crate) fn force_telemetry_on_for_tests() {
+    TEST_ON.store(true, Ordering::Relaxed);
+}
+
 /// Read the writeprobe gate ONCE per process. Unset / `0` / `off` / `false` →
 /// disabled (the default, zero-overhead beyond the one bool load). `1` / `on` /
 /// `true` → enabled.
@@ -188,6 +268,10 @@ fn capture_probe(id: i64, wall_ns: i64) {
 /// thread. The whole body is: read the clock, push a pair, return Unit.
 #[track_caller]
 pub fn ts_mark(arg: Value) -> Value {
+    // INSERT_PATH_HONESTY_V1 Phase 3 — dial, default OFF. See telemetry_enabled().
+    if !telemetry_enabled() {
+        return Value::Unit;
+    }
     let id = match arg {
         Value::Int(n) => n,
         other => panic!("ts_mark: expected Int id, got {:?}", other),
@@ -227,6 +311,12 @@ fn splitprobe_enabled() -> bool {
 /// figure was held to).
 #[track_caller]
 pub fn ts_markp(arg: Value) -> Value {
+    // INSERT_PATH_HONESTY_V1 Phase 3 — dial, default OFF. Composes with (does
+    // not replace) the SPLITPROBE gate below: enabling this dial alone leaves
+    // ts_markp a no-op exactly as today.
+    if !telemetry_enabled() {
+        return Value::Unit;
+    }
     if !splitprobe_enabled() {
         return Value::Unit;
     }
@@ -245,6 +335,10 @@ pub fn ts_markp(arg: Value) -> Value {
 /// relaxed load) unless `AXVERITY_SPLITPROBE=1`.
 #[inline]
 pub fn markp(id: i64) {
+    // INSERT_PATH_HONESTY_V1 Phase 3 — dial, default OFF.
+    if !telemetry_enabled() {
+        return;
+    }
     if !splitprobe_enabled() {
         return;
     }
@@ -257,6 +351,12 @@ pub fn markp(id: i64) {
 /// Used to bracket bridge-internal work (e.g. the janitor fsync in reclog.rs) on
 /// the actual thread executing it, per the audit's on-the-executing-thread rule.
 pub fn mark(id: i64) {
+    // INSERT_PATH_HONESTY_V1 Phase 3 — dial, default OFF. reclog.rs brackets the
+    // payload-WAL and name-log fsyncs with mark(70..73) on the INSERT path, so
+    // this is a live insert-path probe just like the M1 ts_mark sites.
+    if !telemetry_enabled() {
+        return;
+    }
     let n = mono_nanos();
     MARKS.with(|m| m.borrow_mut().push((id, n)));
     capture_probe(id, n);
@@ -267,6 +367,10 @@ pub fn mark(id: i64) {
 /// timestamp. The reader distinguishes value-marks from time-marks by id.
 #[track_caller]
 pub fn ts_mark_val(args: Value) -> Value {
+    // INSERT_PATH_HONESTY_V1 Phase 3 — dial, default OFF. See telemetry_enabled().
+    if !telemetry_enabled() {
+        return Value::Unit;
+    }
     let (id, val) = match args {
         Value::Tuple(es) if es.len() == 2 => {
             let mut it = es.into_iter();
@@ -295,6 +399,12 @@ pub fn ts_mark_val(args: Value) -> Value {
 /// value are completely unchanged by this addition.
 #[track_caller]
 pub fn ts_flush(arg: Value) -> Value {
+    // INSERT_PATH_HONESTY_V1 Phase 3 — dial, default OFF. Returning Int(0) here
+    // is not a new behaviour: with the dial off nothing is ever pushed, so MARKS
+    // is empty and the body below already returned Int(0) and wrote no file.
+    if !telemetry_enabled() {
+        return Value::Int(0);
+    }
     let dir = match arg {
         Value::Str(h) => get_str(&h),
         other => panic!("ts_flush: expected Text dir, got {:?}", other),
@@ -363,6 +473,7 @@ mod tests {
 
     #[test]
     fn marks_accumulate_and_flush_clears() {
+        force_telemetry_on_for_tests();
         for id in [10i64, 11, 12] {
             ts_mark(Value::Int(id));
         }
@@ -385,6 +496,9 @@ mod tests {
     fn writeprobe_disabled_by_default_pmarks_stay_empty() {
         // Gate reads env once per process; in the test binary it is unset, so
         // capture_probe must be a no-op and PMARKS must never populate.
+        // The telemetry dial must be forced on, else ts_mark returns before
+        // reaching capture_probe and the assertion would pass vacuously.
+        force_telemetry_on_for_tests();
         for id in [900i64, 901, 902] {
             ts_mark(Value::Int(id));
         }
