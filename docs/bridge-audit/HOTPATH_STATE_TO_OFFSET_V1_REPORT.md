@@ -4,14 +4,20 @@
 **derived-from:** `BRIDGE_SURFACE_AUDIT_V1` @ `994a08b`, `INSERT_PATH_HONESTY_V1`
 **runner:** ClaudeCode (authority: bounded, `AI_PROPOSE_ONLY`)
 
-**Status: HALTED AT PHASE 0.** Phase 1 not started.
+**Status: original intent HALTED AT PHASE 0; re-scoped adoption pass DELIVERED.**
 
-Phase 0 falsified the intent's central premise about its own named targets. Under
-`GROUND_BEFORE_DESIGN`, and per the request's *"Halt and report on any STOP condition
-rather than working around it"*, no design is proposed here. Three grounded findings
-require a re-scope decision from Chris before any further phase runs.
+This document has two parts, written in sequence:
 
-Nothing was modified. This report is the only artifact.
+1. **Phase 0 as originally specified — halted.** Grounding falsified the intent's
+   central premise about its own named targets, so no Phase 1 design was written.
+   Nothing was modified at that point. One claim in Finding 2 was later found to be
+   wrong and is corrected inline below.
+2. **[Adoption pass](#adoption-pass--re-scoped-authorized-delivered) — delivered.**
+   Chris re-scoped to the real defect the grounding uncovered and authorized it.
+   One file changed (`lib_hotwrite_workload/hrw_mint_block.m1`); the remaining 12
+   capacity-literal sites are enumerated and logged, 5 of them boundary-blocked.
+
+The measurement gate on the live path (options 2 and 3) remains closed.
 
 ---
 
@@ -104,9 +110,21 @@ tracking) — i.e. the hard part has already been thought through and bounded.
 as written constrains only `mem_read_raw`/`mem_write_raw`, and reserve is the
 function that *produces* the fat pointer rather than consuming it.
 
-The real gap is **adoption, not construction**: `mem_read_checked.m1`'s own header
-states it is *"Standalone module … **never wired into pg_server or
-axVerity-working's existing lib/**"*.
+**CORRECTION (added during the adoption pass).** The sentence that stood here —
+that the gap is adoption because the module is *"never wired into pg_server"* —
+was **wrong**. It repeated `mem_read_checked.m1`'s own header, and **that header is
+stale**. The wrappers *are* wired into the live path:
+
+| site | call |
+|---|---|
+| `lib/pg_hotblk_commit.m1:16` | `mem_write_checked(ptr1, Int(4194304), cursor1, bytes)` — **live insert path** |
+| `lib/pg_hotblk_seal_mint.m1:56,57` | `mem_read_checked` / `mem_free_checked` |
+| `lib/pg_derive_seal_mint.m1:35,36` | `mem_read_checked` / `mem_free_checked` |
+
+So the gap is neither construction nor adoption. It is the **capacity argument**:
+every one of those calls passes a hardcoded literal instead of the capacity the
+allocator returned. See "What the real defect is" below, which the adoption pass
+then narrowed further.
 
 ### Finding 3: Phase 2's failure-mode instruction contradicts the cited convention
 
@@ -292,3 +310,188 @@ Three coherent ways forward, for Chris to choose:
 3. **Close as already-satisfied.** If the aim was the `ONE_CHECKED_PATH` discipline
    itself, it is already met; the only outstanding work is wiring `lib_memchecked`
    into the live path, which is option 1.
+
+---
+
+# ADOPTION PASS — re-scoped, authorized, delivered
+
+Chris authorized the non-live adoption package: *"build the non-live threading now,
+report the live-path blocker precisely as a logged finding, don't try to solve it in
+the same pass"*, plus a folded-in request to grep for other
+`mem_free_checked(ptr, Int(<literal>))` sites and report them in the same output.
+Options 2 and 3 (touching the live path / bumping `NFIELDS`) remain closed and still
+require the measurement gate.
+
+## The capacity-literal audit (complete, comment-stripped, paren-aware)
+
+12 call sites pass a hardcoded literal capacity. None was previously catalogued.
+
+| zone | site | wrapper | capacity |
+|---|---|---|---|
+| **LIVE — blocked** | `lib/pg_hotblk_commit.m1:16` | `mem_write_checked` | `Int(4194304)` |
+| **LIVE — blocked** | `lib/pg_hotblk_seal_mint.m1:56` | `mem_read_checked` | `Int(4194304)` |
+| **LIVE — blocked** | `lib/pg_hotblk_seal_mint.m1:57` | `mem_free_checked` | `Int(4194304)` |
+| **LIVE — blocked** | `lib/pg_derive_seal_mint.m1:35` | `mem_read_checked` | `Int(4194304)` |
+| **LIVE — blocked** | `lib/pg_derive_seal_mint.m1:36` | `mem_free_checked` | `Int(4194304)` |
+| benchmark | `lib_hotwrite/hotwrite_step.m1:70` | `mem_write_checked` | `Int(524288)` |
+| benchmark | `lib_hotwrite_disk/hwd_step.m1:80` | `mem_write_checked` | `Int(524288)` |
+| benchmark | `lib_hotwrite_disk/hwd_seal_flush_reclaim.m1:40` | `mem_read_checked` | `Int(524288)` |
+| benchmark | `lib_hotwrite_disk/hwd_seal_flush_reclaim.m1:43` | `mem_free_checked` | `Int(524288)` |
+| benchmark | `lib_hotwrite_workload/hrw_step.m1:107` | `mem_write_checked` | `Int(4194304)` |
+| benchmark | `lib_hotwrite_workload/hrw_seal_flush_reclaim.m1:31` | `mem_read_checked` | `Int(4194304)` |
+| benchmark | `lib_hotwrite_workload/hrw_seal_flush_reclaim.m1:34` | `mem_free_checked` | `Int(4194304)` |
+
+Everything inside `lib_memchecked/` (the wrappers themselves and their 12-case
+selftest) is correctly parameterised — capacity is a parameter or a local, never a
+literal. The single literal there, `mem_free_checked(ptr, Int(0))` at
+`selftest/memchecked_selftest.m1:88`, is a deliberate negative case (case 11,
+"free_invalid_capacity_zero_expect_false").
+
+Two block sizes — `524288` and `4194304` — are maintained by hand across these 12
+sites in four modules. The codebase has already been bitten:
+`hrw_seal_flush_reclaim.m1:9` documents that it exists as a **clone** of the
+512 KiB version specifically because that one *"hardcodes capacity=Int(524288)"*.
+Cloning a function to change a constant is the drift this defect produces.
+
+### `mem_free_checked` with a literal capacity — the folded-in grep
+
+**4 real sites, and 2 of them are live.** This is the sharpest class: per
+`rawmem.rs`, `mem_free_raw` requires the capacity to match the original `alloc`
+`Layout` exactly, and a mismatch is **undefined behaviour, not a checked error** —
+so `mem_free_checked`'s bounds check cannot save a caller whose literal has drifted.
+
+| site | capacity | zone |
+|---|---|---|
+| `lib/pg_hotblk_seal_mint.m1:57` | `Int(4194304)` | **LIVE — blocked, logged** |
+| `lib/pg_derive_seal_mint.m1:36` | `Int(4194304)` | **LIVE — blocked, logged** |
+| `lib_hotwrite_disk/hwd_seal_flush_reclaim.m1:43` | `Int(524288)` | benchmark |
+| `lib_hotwrite_workload/hrw_seal_flush_reclaim.m1:34` | `Int(4194304)` | benchmark |
+
+Per instruction, the two live ones are logged here and **not** taken into scope on
+this pass.
+
+## What was shipped
+
+**One file: `lib_hotwrite_workload/hrw_mint_block.m1`.**
+
+```m1
+fn hrw_mint_block(next_block_seq: Int) -> Value(Int, Int, Int) {
+  let region   = mem_reserve_raw(Int(4194304))
+  let ptr      = tuple_field(region, Int(0))
+  let capacity = tuple_field(region, Int(1))   // was DISCARDED
+  let cell     = cell_new_raw(Int(0))
+  let _act     = cell_cas_raw(cell, Int(0), Int(1))
+  Value(Int, Int, Int)(ptr, cell, capacity)
+}
+```
+
+Why this is the load-bearing one-line change and not a token gesture:
+
+- It is **the only one of the three named allocation sites that the main
+  `scripts/build.sh` compiles** (line 74) — i.e. the only one on the live-path
+  build. `hotwrite_rotate_first` / `hotwrite_rotate_next` are reached solely by the
+  three dedicated benchmark build scripts.
+- It is the allocation site feeding the live path: `pg_hotblk_mint.m1:38` calls it
+  on the non-`slice4` branch.
+- It makes the allocator's real capacity **available at the live path's mint point
+  for the first time**. Every future fix to the five blocked live sites requires
+  that value to exist there; without this, that pass is impossible.
+- Capacity is **appended** as field 2, so all four existing readers
+  (`pg_hotblk_mint`, `hrw_rotate_first`, `hrw_rotate_next`,
+  `hotblk_allocator_step` — each verified to read only `ctor_field` 0 and 1) are
+  behaviourally untouched. The registry contract is `out Value`, which carries no
+  arity, so no axreg change was needed.
+- Cost: one extra `Int` in a ctor built **once per 4 MiB block**. Nothing per-record.
+
+Confirmed in the emitted Rust (`build/generated_hrw_mint_block_xb.rs:13-15`): two
+`tuple_field` dispatches now, on pool constants 0 and 1.
+
+Three now-stale comments asserting the old `Value(Int, Int)` arity were corrected in
+`hrw_mint_block.m1`, `hrw_rotate_first.m1`, `hrw_rotate_next.m1`.
+
+## Why the remaining 12 sites were not fixed on this pass
+
+**The five live sites are boundary-blocked.** `pg_hotblk_mint` has two branches. The
+`slice4_mode`-on branch takes its pointer from `hotblk_pool_take`, which returns
+`Value::Str("{ptr}\t{cell}")` (`hotblk_pool.rs:126`) — a Text encoding with no
+capacity field, owned by `AXVERITY_SLICE4_BLOCK_DURABILITY_V2` and gated by
+`slice4_mode`, which is named in `BAKEOFF_APPARATUS_UNTOUCHABLE`. Threading real
+capacity through the live path requires widening that encoding. Compounding it:
+`hotblk` has nowhere to *store* a capacity — slot 4 is documented as `block_start_i`
+(reserved, currently unused, so squatting on it would be wrong) and `NFIELDS = 6`
+leaves no slot 6.
+
+**The seven benchmark sites need per-record state widened.** This is the finding
+that changed the shape of the authorized package, so it is worth stating precisely:
+capacity cannot reach a seal/free site without travelling with the pointer through
+the per-record loop.
+
+- `hrw`: `hrw_mint_block` → `hrw_rotate_first`/`hrw_rotate_next` → **`hrw_step`'s
+  16-field `Value` ctor state** → `hrw_seal_current` → `hrw_queue_push` (6-field
+  comma-delimited queue entry) → `hrw_flush_oldest` → `hrw_seal_flush_reclaim`.
+  `hrw_rotate_next` seals the *previous* block using `ptr0` taken from that state,
+  so the old block's capacity must have been carried in it. Threading requires
+  widening the state to 17 fields and touching ~9 files.
+- `hotwrite` / `hwd`: pointer and cell travel as a tab-delimited `Text`
+  (`"<ptr>\t<cell>"`) parsed **every record** by `hotwrite_step` / `hwd_step`.
+  Appending a third field breaks every `str_after(bp, tab)` parser, so it cannot be
+  done without editing those per-record paths.
+
+Either way the edit lands in a throughput benchmark's inner loop and adds per-record
+CCalls, which would **move the very numbers these modules exist to produce**. At the
+~65 ns/CCall measured under `BYTE_INT_CODEC_COLLAPSE_V1`, ~2–4 added CCalls is
+~130–260 ns per record against a benchmark whose records cost ~1–2 µs — a 7–25 %
+perturbation of published spike figures. That is a decision about measurement
+integrity, not a mechanical refactor, and it is not this pass's call to make.
+
+## Recommended follow-on, in dependency order
+
+1. **Live path (needs the gate).** Give the `slice4` pool encoding a capacity field
+   and `hotblk` a slot to hold it, then switch the five live literals — chiefly the
+   two `mem_free_checked` UB sites. Requires touching `slice4` apparatus and
+   `hotblk.rs` (`NFIELDS` 6→7), so it needs explicit authorization and a
+   measurement gate. `hrw_mint_block` now supplies the capacity this depends on.
+2. **Benchmark chains (needs a perturbation decision).** Widen the `hrw` state and
+   the `hotwrite`/`hwd` Text protocols, accepting a re-baseline of the spike
+   numbers — or decide the drift risk in non-production benchmark code does not
+   justify invalidating their published figures, and leave them literal with a
+   comment pointing at this report.
+3. **Stale header.** `lib_memchecked/mem_read_checked.m1`'s "never wired into
+   pg_server" claim is false and misled this report's own Phase 0. Worth correcting
+   at the source.
+
+## Verification
+
+| check | result |
+|---|---|
+| `scripts/build.sh` (bridge + all axVerity binaries + 8-worker `pg_server` pool) | clean, exit 0, 0 errors |
+| `scripts/hotwrite-workload-build.sh` | OK |
+| `scripts/hotwrite-build.sh` | OK |
+| `scripts/hotwrite-disk-build.sh` | OK |
+| `lib_memchecked/selftest` — 12 cases incl. bounds rejection, exact-boundary accept, uninitialized-gap, capacity-zero reject | **all pass** |
+| `scripts/axv-smoke.sh` (live path; `pg_hotblk_mint` reads the changed fn) | **15/17** = documented baseline |
+| `scripts/slt-run.sh` | **6/6**, simple + extended |
+
+## Reintegration check — adoption pass
+
+| Anchor | Status |
+|---|---|
+| `FAT_POINTER_ALWAYS` | **ADVANCED, not yet satisfied.** The live path's mint point now carries the allocator's real capacity instead of discarding it. 12 downstream sites still reconstruct capacity from a literal; all 12 are enumerated above rather than left implicit. |
+| `ONE_CHECKED_PATH` | **HELD** — still zero callers of `mem_read_raw`/`mem_write_raw` outside `lib_memchecked/`. This pass added none. |
+| `NO_UNMEASURED_HOTPATH_CUTOVER` | **HELD** — no hot-path caller switched. The one change is behaviourally invisible to every existing reader and costs one `Int` per 4 MiB block. Options 2 and 3 remain closed. |
+| `BAKEOFF_APPARATUS_UNTOUCHABLE` | **HELD** — `slice4_mode` / `hotblk_pool` identified as the live-path blocker and deliberately **not** modified. `memcpy_*`, `slab_shadow_*` untouched. Benchmark inner loops left unperturbed, which is the same principle applied to measurement rather than to dials. |
+| `GROUND_BEFORE_DESIGN` | **HELD — and it changed the package twice.** Grounding corrected a stale "never wired in" claim, then revealed that "three allocation sites" resolves into one live-relevant site plus two benchmark-only ones whose consumers sit in per-record loops. |
+| `AI_PROPOSE_ONLY` | **HELD** — shipped only inside the authorized non-live scope; everything requiring a gate is logged, not done. |
+| scope discipline | **HELD** — the folded-in `mem_free_checked` grep found 2 live sites; per instruction they went into the blocker report, not into scope. |
+
+### Epistemic status
+
+| Claim | Type |
+|---|---|
+| 12 sites pass a literal capacity; 4 are `mem_free_checked`, 2 of those live | **fact** — paren-aware audit over every `*.m1`, output reproduced above |
+| `lib_memchecked` is wired into the live path; its header saying otherwise is stale | **fact** — `pg_hotblk_commit.m1:16` read directly |
+| `hrw_mint_block` is the only one of the three allocation sites on the main build | **fact** — `scripts/build.sh:74` |
+| All four readers take only fields 0 and 1, so appending is safe | **fact** — each call site read |
+| Capacity now comes from the allocator, not a constant | **fact** — `generated_hrw_mint_block_xb.rs:13-15` |
+| A mismatched `mem_free_checked` capacity is UB | **fact** — `rawmem.rs` `mem_free_raw` doc |
+| Threading the benchmark chains would perturb published spike numbers by ~7–25 % | **estimate** — derived from the measured ~65 ns/CCall and stated per-record costs; not measured on these binaries, which were deliberately not re-run |
