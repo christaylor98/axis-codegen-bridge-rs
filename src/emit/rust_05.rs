@@ -490,10 +490,15 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("bytes_concat",         "axis_codegen_bridge::runtime::bytes_codec::bytes_concat");
     m.insert("bytes_len",            "axis_codegen_bridge::runtime::bytes_codec::bytes_len");
     m.insert("bytes_slice",          "axis_codegen_bridge::runtime::bytes_codec::bytes_slice");
+    // Bytes <-> Int atoms (BYTE_INT_CODEC_COLLAPSE_V1) — width-agnostic; the
+    // width-named codecs below compose from these in M1.
+    m.insert("bytes_get",            "axis_codegen_bridge::runtime::bytes_codec::bytes_get");
+    m.insert("bytes_push",           "axis_codegen_bridge::runtime::bytes_codec::bytes_push");
     m.insert("int16_be_encode",      "axis_codegen_bridge::runtime::bytes_codec::int16_be_encode");
-    m.insert("int16_be_decode",      "axis_codegen_bridge::runtime::bytes_codec::int16_be_decode");
     m.insert("int32_be_encode",      "axis_codegen_bridge::runtime::bytes_codec::int32_be_encode");
-    m.insert("int32_be_decode",      "axis_codegen_bridge::runtime::bytes_codec::int32_be_decode");
+    // int16_be_decode / int32_be_decode RETIRED by BYTE_INT_CODEC_COLLAPSE_V1
+    // Phase 7 — replaced by M1 compositions over bytes_get (axVerity
+    // lib/be{16,32}_decode.m1). The two encoders remain pending its Phase 6 gate.
 
     // ── TCP sockets (net.rs — BRIDGE_TCP_SOCKET_V1) ─────────────────────────────
     m.insert("tcp_listen",           "axis_codegen_bridge::runtime::net::tcp_listen");
