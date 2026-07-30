@@ -34,6 +34,13 @@
 //!   3  cursor         bytes written so far in the active block
 //!   4  block_start_i  record ordinal the active block started at (manifest)
 //!   5  idx_cell       active block index-status cell address (Unindexed/Indexed)
+//!   6  capacity       active block's arena capacity in BYTES, as returned by
+//!                     mem_reserve_raw. Added by BENCHMARK_UB_AND_PROTOCOL_FIX_V1
+//!                     follow-up so the seal/free path stops reconstructing it from
+//!                     a hardcoded Int(4194304): mem_free_raw requires the capacity
+//!                     to match the original alloc Layout EXACTLY, and a mismatch is
+//!                     undefined behaviour, not a checked error. Read by
+//!                     pg_hotblk_write/commit and pg_{hotblk,derive}_seal_mint.
 //!
 //! An untouched slot reads all-zero; `ptr == 0` is the "no live block yet"
 //! sentinel M1 keys on to mint the first block on the thread's first INSERT.
@@ -49,7 +56,10 @@ use std::cell::RefCell;
 
 use super::value::Value;
 
-const NFIELDS: usize = 6;
+// 7 slots: 0..5 as documented above plus slot 6, the active block's capacity.
+// Widened from 6 deliberately rather than squatting on slot 4, which is reserved
+// for block_start_i even though nothing reads it yet.
+const NFIELDS: usize = 7;
 
 thread_local! {
     /// This thread's active hot-block accumulator. THREAD-LOCAL, never shared:
