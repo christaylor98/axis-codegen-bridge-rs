@@ -251,3 +251,105 @@ cross-thread `(ptr, cell)` encoding a capacity field, or giving `hotblk` a slot
 (`NFIELDS` 6→7) to carry it. Both are currently forbidden by name. Until then those
 five are the only literal-capacity sites left in the codebase, and the two frees
 among them remain the only UB exposure of this class.
+
+---
+
+# FOLLOW-UP: NFIELDS RELAXED, LAST TWO LIVE UB SITES CLOSED
+
+Authorized directly: *"relax NFIELDS to 7 and close the last two live sites."*
+Commits `ef70af5` (bridge), `70b5b90` (axVerity).
+
+**Result: zero literal-capacity sites remain in production code, codebase-wide.**
+The single remaining one is `memchecked_selftest.m1:88`'s
+`mem_free_checked(ptr, Int(0))` — the deliberate negative case asserting
+capacity-zero rejection, which must stay.
+
+## What changed
+
+`hotblk.rs`: `NFIELDS` 6 → 7, slot 6 = the active block's capacity as returned by
+`mem_reserve_raw`. Widened rather than squatting on slot 4, which is reserved for
+`block_start_i` even though nothing reads it yet. The existing range-check tests use
+`NFIELDS as i64` dynamically, so they cover 7 unchanged.
+
+All five live sites closed:
+
+| site | before | after |
+|---|---|---|
+| `pg_hotblk_seal_mint.m1:57` | `mem_free_checked(ptr, Int(4194304))` | `capacity` — **UB closed** |
+| `pg_derive_seal_mint.m1:36` | `mem_free_checked(ptr, Int(4194304))` | `capacity` — **UB closed** |
+| `pg_hotblk_seal_mint.m1:56` | `mem_read_checked(ptr, Int(4194304), …)` | `capacity` |
+| `pg_derive_seal_mint.m1:35` | `mem_read_checked(ptr, Int(4194304), …)` | `capacity` |
+| `pg_hotblk_commit.m1:16` | `mem_write_checked(ptr1, Int(4194304), …)` | `hotblk_get(Int(6))` |
+
+Plus `pg_hotblk_write`'s overflow test, so the rotate decision and the write bound
+can no longer disagree about the block size — the same defect class fixed in `hrw`.
+
+Ordering detail that matters: both seal fns read slot 6 **before** their tail call to
+`pg_hotblk_mint`, which overwrites it for the next block.
+
+## The slice4 problem, and the one literal that remains but cannot drift
+
+`pg_hotblk_mint` has two branches:
+
+- **slice4 OFF** — `hrw_mint_block` returns the authoritative `(ptr, cell, capacity)`.
+- **slice4 ON** — the block comes from `hotblk_pool_take`, whose cross-thread
+  `"<ptr>\t<cell>"` Text encoding carries **no capacity**. `hotblk_pool.rs` is an
+  inherently cross-thread producer/consumer queue, excluded by
+  `CONCURRENT_STAYS_SEPARATE` and gated by the `slice4_mode` bake-off dial. **It was
+  not modified.**
+
+So the slice4 branch must *state* the capacity. Stating it twice — once at the
+reservation, once at the fallback — is precisely the drift that makes the free UB. It
+is therefore stated **once**, in `lib_hotwrite_workload/hotblk_block_bytes.m1`, and
+**both** `hrw_mint_block`'s `mem_reserve_raw` and `pg_hotblk_mint`'s slice4 fallback
+call it. They cannot disagree.
+
+`ptrcell` widened 2 → 3 tab fields (`<ptr>\t<cell>\t<capacity>`), both branches
+supplying all three.
+
+One build-plumbing consequence, recorded because it caused the first build failure:
+`hotblk_block_bytes` lives in `lib_hotwrite_workload/` so
+`hotwrite-workload-build.sh` sees it, but `pg-server-build.sh` links against
+`lib_coreir/` rather than compiling `lib/` itself, so `build.sh` must eject the
+provider body explicitly — one added `compile` line.
+
+## Runtime verification
+
+A wrong slot 6 fails **silently, not loudly**: `mem_write_checked` *rejects* an
+out-of-bounds write and `mem_read_checked` returns an empty-`Bytes` sentinel. Neither
+panics. So it was exercised, not assumed.
+
+| check | result | what a wrong capacity would have done |
+|---|---|---|
+| smoke S6/S7 INSERT + **S8 round-trip SELECT** | PASS | write rejected → S8 returns nothing |
+| forced seal: 1200 rows × ~4 KB on a throwaway store | **1200 sealed block files of ~4130 bytes each** (not zero) + 10893-byte manifest | `mem_read_checked` returns the empty sentinel → 1200 zero-byte files |
+| data after 1200 seal+free cycles | rows `999` and `1199` both queryable | data loss |
+
+Note the seal path ran **1200 times** in that run — so these two frees were being hit
+constantly on the live insert path, not rarely.
+
+| full chain | result |
+|---|---|
+| `cargo test --lib` | **278 passed, 0 failed** |
+| `scripts/build.sh` (incl. 8-worker `pg_server` pool) | clean |
+| the three spike build chains | OK |
+| `scripts/axv-smoke.sh` | **15/17** = documented baseline |
+| `scripts/slt-run.sh` | **6/6**, simple + extended |
+| orphaned `pg_server` processes / throwaway store | 0 / removed |
+
+## Reintegration check — follow-up
+
+| Anchor | Status |
+|---|---|
+| capacity from the allocator, no literal at any use site | **HELD** — all five live sites read slot 6; grep confirms zero production literals |
+| `NO_NEW_HARDCODED_LITERAL` | **HELD in spirit and letter** — the block size is written down exactly once, in `hotblk_block_bytes.m1`, and both the reservation and the slice4 fallback call it, so the two cannot drift |
+| `CONCURRENT_STAYS_SEPARATE` | **HELD** — `hotblk_pool` remained unmodified; the slice4 branch was solved around it rather than through it |
+| `BAKEOFF_APPARATUS_UNTOUCHABLE` | **HELD** — `slice4_mode` read only as a branch condition; no dial touched |
+| bounds check never weakened | **HELD** — five checks moved from a literal to the real value, which strengthens them |
+| runtime-verified, not assumed | **HELD** — the silent-failure modes were specifically provoked and shown absent |
+
+### Outcome
+
+*"Zero `mem_free_checked` hardcoded-literal sites remain anywhere in the codebase"* —
+the outcome reported as **PARTIAL** above is now **MET for all production code**. The
+one remaining site is the selftest's intentional capacity-zero rejection assertion.
