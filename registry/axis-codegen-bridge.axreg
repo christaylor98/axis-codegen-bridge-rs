@@ -194,10 +194,18 @@ type Fn = prim value
 // bytes_len(Bytes) -> Int               blob length in bytes
 // bytes_slice(Bytes, Int, Int) -> Bytes half-open [start,end); STRICT bounds, panics OOB
 //                                       (byte_at composes as bytes_slice(b, i, i+1))
+// bytes_get(Bytes, Int) -> Int          one byte as 0..=255; STRICT bounds, panics OOB
+// bytes_push(Bytes, Int) -> Bytes       append one 0..=255 byte; panics outside that range
 // int16_be_encode(Int) -> Bytes         accepts -32768..=65535, emits 2 BE bytes
-// int16_be_decode(Bytes) -> Int         exactly 2 bytes, signed two's-complement
 // int32_be_encode(Int) -> Bytes         accepts -2147483648..=4294967295, 4 BE bytes
-// int32_be_decode(Bytes) -> Int         exactly 4 bytes, signed two's-complement
+//
+// int16_be_decode / int32_be_decode were RETIRED by BYTE_INT_CODEC_COLLAPSE_V1
+// Phase 7 at verified zero live callers. Their replacements are axVerity's
+// lib/be16_decode.m1 / lib/be32_decode.m1, composed over the width-agnostic
+// `bytes_get` atom above. Do not re-add a width-named decoder (hard limit
+// WIDTH_IS_NOT_A_PRIMITIVE) -- a new width is a new M1 composition, not a new
+// bridge fn. The two encoders above DO still exist (declared in
+// axRegistry-working/axis-bridge.axreg, implemented in bytes_codec.rs).
 //
 // Impl: axis-codegen-bridge-rs/src/runtime/bytes_codec.rs
 // Identities are sha256(name_utf8) per §5b bootstrap rule — DO NOT recompute.
