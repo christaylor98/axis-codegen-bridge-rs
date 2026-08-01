@@ -450,6 +450,11 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("adj_build",            "axis_codegen_bridge::runtime::adjacency::adj_build");
     m.insert("adj_get",              "axis_codegen_bridge::runtime::adjacency::adj_get");
     m.insert("adj_stats",            "axis_codegen_bridge::runtime::adjacency::adj_stats");
+    // ── ORDERED frame-enumeration PROJECTION: pushed frames streamed in
+    //    LEDGER order, RAM-held, rebuilt per process, never persisted
+    //    (enumeration.rs — BRIDGE_ENUMERATION_V1).
+    m.insert("frame_stream",         "axis_codegen_bridge::runtime::enumeration::frame_stream");
+    m.insert("frame_stats",          "axis_codegen_bridge::runtime::enumeration::frame_stats");
 
     // ── SQL-facing field index: hot thread-local shard + disposable batched
     //    snapshot (fieldidx.rs — BRIDGE_FIELDIDX_V1, AXVERITY_INSERT_PATH_FASTPATH)

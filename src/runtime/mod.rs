@@ -38,6 +38,7 @@ pub mod contradicts;
 pub mod walshard;
 pub mod chunk;
 pub mod adjacency;
+pub mod enumeration;
 pub mod fieldidx;
 pub mod nameptr;
 pub mod hotmem;
