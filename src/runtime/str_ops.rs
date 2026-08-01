@@ -297,6 +297,52 @@ pub fn chr(v: Value) -> Value {
     }
 }
 
+/// `str_cmp(a, b) -> Int` — BYTE-order comparison (memcmp semantics, the
+/// same order SQLite's BINARY collation and the store's pinned autoindex
+/// orders use): -1 when a < b, 0 when equal, 1 when a > b. Added under the
+/// fold precedent (BRIDGE_STRCMP_SETMAP_V1): the workload that proved the
+/// need was axSemantica-working2's query-seam sorts, which had to build
+/// per-char comparison loops over an alphabet text because no ordering
+/// primitive existed.
+#[track_caller]
+pub fn str_cmp(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() == 2 => {
+            let a = match &es[0] {
+                Value::Str(h) => get_str(h),
+                other => panic!("str_cmp: expected Str, got {:?}", other),
+            };
+            let b = match &es[1] {
+                Value::Str(h) => get_str(h),
+                other => panic!("str_cmp: expected Str, got {:?}", other),
+            };
+            let r = match a.as_bytes().cmp(b.as_bytes()) {
+                std::cmp::Ordering::Less => -1,
+                std::cmp::Ordering::Equal => 0,
+                std::cmp::Ordering::Greater => 1,
+            };
+            Value::Int(r)
+        }
+        other => panic!("str_cmp: expected Tuple(Text, Text), got {:?}", other),
+    }
+}
+
+/// `ord(s) -> Int` — the Unicode code point of the FIRST char of `s`; -1 for
+/// the empty string. The inverse of `chr` (same precedent as str_cmp).
+#[track_caller]
+pub fn ord(v: Value) -> Value {
+    match v {
+        Value::Str(h) => {
+            let s = get_str(&h);
+            match s.chars().next() {
+                Some(c) => Value::Int(c as i64),
+                None => Value::Int(-1),
+            }
+        }
+        other => panic!("ord: expected Text, got {:?}", other),
+    }
+}
+
 /// `str_join(list, sep) -> Text` — join a `ValueList(Text)` with `sep`.
 #[track_caller]
 pub fn str_join(args: Value) -> Value {

@@ -455,6 +455,19 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     //    (enumeration.rs — BRIDGE_ENUMERATION_V1).
     m.insert("frame_stream",         "axis_codegen_bridge::runtime::enumeration::frame_stream");
     m.insert("frame_stats",          "axis_codegen_bridge::runtime::enumeration::frame_stats");
+    // ── BRIDGE_STRCMP_SETMAP_V1 (fold precedent): byte-order comparison,
+    //    chr's inverse, and named scratch sets/maps (thread-local, never
+    //    durable) — the primitives the M1 workload measured as missing.
+    m.insert("str_cmp",              "axis_codegen_bridge::runtime::str_ops::str_cmp");
+    m.insert("ord",                  "axis_codegen_bridge::runtime::str_ops::ord");
+    m.insert("set_add",              "axis_codegen_bridge::runtime::scratch::set_add");
+    m.insert("set_has",              "axis_codegen_bridge::runtime::scratch::set_has");
+    m.insert("set_len",              "axis_codegen_bridge::runtime::scratch::set_len");
+    m.insert("set_clear",            "axis_codegen_bridge::runtime::scratch::set_clear");
+    m.insert("map_put",              "axis_codegen_bridge::runtime::scratch::map_put");
+    m.insert("map_get",              "axis_codegen_bridge::runtime::scratch::map_get");
+    m.insert("map_len",              "axis_codegen_bridge::runtime::scratch::map_len");
+    m.insert("map_clear",            "axis_codegen_bridge::runtime::scratch::map_clear");
 
     // ── SQL-facing field index: hot thread-local shard + disposable batched
     //    snapshot (fieldidx.rs — BRIDGE_FIELDIDX_V1, AXVERITY_INSERT_PATH_FASTPATH)

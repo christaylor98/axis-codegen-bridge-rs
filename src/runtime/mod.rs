@@ -39,6 +39,7 @@ pub mod walshard;
 pub mod chunk;
 pub mod adjacency;
 pub mod enumeration;
+pub mod scratch;
 pub mod fieldidx;
 pub mod nameptr;
 pub mod hotmem;
