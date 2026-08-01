@@ -443,6 +443,14 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("hotblk_recover_dump_pk",     "axis_codegen_bridge::runtime::hotblk_recover::hotblk_recover_dump_pk");
     m.insert("hotblk_recover_dump_hashes", "axis_codegen_bridge::runtime::hotblk_recover::hotblk_recover_dump_hashes");
 
+    // ── Native graph adjacency PROJECTION: both-direction edge index held in
+    //    RAM, rebuilt from BOTH object-store tiers (loose + pack), never
+    //    persisted (adjacency.rs — BRIDGE_ADJACENCY_V1,
+    //    AXVERITY_GRAPH_INTERFACE_V1 / INDEXES_ARE_DERIVED_NEVER_DURABLE)
+    m.insert("adj_build",            "axis_codegen_bridge::runtime::adjacency::adj_build");
+    m.insert("adj_get",              "axis_codegen_bridge::runtime::adjacency::adj_get");
+    m.insert("adj_stats",            "axis_codegen_bridge::runtime::adjacency::adj_stats");
+
     // ── SQL-facing field index: hot thread-local shard + disposable batched
     //    snapshot (fieldidx.rs — BRIDGE_FIELDIDX_V1, AXVERITY_INSERT_PATH_FASTPATH)
     m.insert("fieldidx_open",        "axis_codegen_bridge::runtime::fieldidx::fieldidx_open");
