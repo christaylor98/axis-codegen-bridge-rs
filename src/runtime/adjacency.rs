@@ -114,17 +114,27 @@ fn addr_from_path(sub: &str, file: &str) -> Option<String> {
     Some(format!("sha256:{}{}", sub, file))
 }
 
-/// Parse `EDGE \t <source> \t <verb> \t <target>` out of RAW BYTES.
+/// Parse `EDGE \t <source> \t <verb> \t <target> [\t attrs...]` out of RAW
+/// BYTES.
 ///
 /// No UTF-8 requirement on the body as a whole — only the three fields, which
 /// are identifiers. Returns None for anything that is not a well-formed edge
 /// frame so a non-edge object (or a truncated one) is skipped, not fatal.
+///
+/// AXSEM_W2_READ_COMPLETE_V1 phase-3: the frame may carry ADDITIVE attribute
+/// fields after the target (ts= / tsprov= / ord= — mint time, its provenance
+/// marker, and the caller-asserted ordinal). splitn(5) ends the target at the
+/// fourth TAB, so the attrs are never silently swallowed into the target —
+/// which is exactly what the previous splitn(4) would have done, silently
+/// corrupting both the adjacency IN-key and every reported endpoint. The
+/// 4-field form parses unchanged (alias path, never hard-replaced); this
+/// projection only needs the triple, so the attr tail is not interpreted here.
 fn parse_edge(body: &[u8]) -> Option<(String, String, String)> {
     const TAG: &[u8] = b"EDGE\t";
     if !body.starts_with(TAG) {
         return None;
     }
-    let mut parts = body.splitn(4, |&b| b == b'\t');
+    let mut parts = body.splitn(5, |&b| b == b'\t');
     parts.next()?; // "EDGE"
     let src = parts.next()?;
     let verb = parts.next()?;
@@ -382,6 +392,17 @@ mod tests {
     #[test]
     fn parses_a_well_formed_edge_frame() {
         let b = b"EDGE\tsha256:aa\tcalls\tintent:x";
+        let (s, v, t) = parse_edge(b).expect("should parse");
+        assert_eq!(s, "sha256:aa");
+        assert_eq!(v, "calls");
+        assert_eq!(t, "intent:x");
+    }
+
+    #[test]
+    fn an_attr_carrying_edge_frame_keeps_a_clean_target() {
+        // AXSEM_W2_READ_COMPLETE_V1 phase-3: additive attr fields end the
+        // target at the fourth TAB instead of being swallowed into it.
+        let b = b"EDGE\tsha256:aa\tcalls\tintent:x\tts=2026-07-04T02:23:57.123Z\ttsprov=asserted\tord=41";
         let (s, v, t) = parse_edge(b).expect("should parse");
         assert_eq!(s, "sha256:aa");
         assert_eq!(v, "calls");
