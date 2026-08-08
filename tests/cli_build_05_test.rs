@@ -897,7 +897,7 @@ fn test_orphan_before_unanchored_cif_then_is_rejected() {
 
     let result = axis_codegen_bridge::emit::rust_05::emit_rust_lib_from_bundle(
         &bundle, "ambiguous_orphan", &std::collections::HashMap::new(), &std::collections::HashMap::new(),
-        &std::collections::HashSet::new(),
+        &std::collections::HashSet::new(), &std::collections::HashSet::new(),
     );
     let err = result.expect_err("ambiguous orphan-before-unanchored-CIf shape must be rejected");
     assert!(err.contains("BRANCH_SCOPING_V1"), "expected BRANCH_SCOPING_V1 tripwire message, got: {}", err);

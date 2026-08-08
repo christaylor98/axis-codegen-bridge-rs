@@ -41,7 +41,7 @@ fn channel_send_to_undeclared_name_is_emit_time_hard_error() {
         "undeclared_send",
         &HashMap::new(),
         &HashMap::new(),
-        &declared,
+        &declared, &std::collections::HashSet::new(),
     )
     .expect_err("channel_send to an undeclared channel must be rejected at emit time");
     assert!(
@@ -60,7 +60,7 @@ fn channel_send_to_empty_declared_set_is_rejected() {
         "no_decls",
         &HashMap::new(),
         &HashMap::new(),
-        &HashSet::new(),
+        &HashSet::new(), &std::collections::HashSet::new(),
     )
     .expect_err("with no declared channels, a literal channel_send must be rejected");
     assert!(err.contains("CHANNELS_STATIC"), "expected CHANNELS_STATIC, got: {}", err);
@@ -75,7 +75,7 @@ fn channel_send_to_declared_name_emits() {
         "declared_send",
         &HashMap::new(),
         &HashMap::new(),
-        &declared,
+        &declared, &std::collections::HashSet::new(),
     )
     .expect("channel_send to a declared channel must emit cleanly");
     assert!(

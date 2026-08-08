@@ -532,6 +532,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("tcp_connect",          "axis_codegen_bridge::runtime::net::tcp_connect");
     m.insert("tcp_accept",           "axis_codegen_bridge::runtime::net::tcp_accept");
     m.insert("tcp_read",             "axis_codegen_bridge::runtime::net::tcp_read");
+    m.insert("tcp_set_read_timeout", "axis_codegen_bridge::runtime::net::tcp_set_read_timeout");
     m.insert("tcp_write",            "axis_codegen_bridge::runtime::net::tcp_write");
     m.insert("tcp_close",            "axis_codegen_bridge::runtime::net::tcp_close");
     // ── AXVERITY_SLAB_TO_WIRE_BUILD_V1 — paired slab-to-wire emit + batching ──
@@ -605,6 +606,62 @@ pub fn load_registry_identity_map(paths: &[String]) -> HashMap<Hash256, String> 
         }
     }
     map
+}
+
+/// EFFECT_ORDER_V1: identities declared BOTH `effect pure` AND `deterministic
+/// true` across the `--reg` files — the same classification the compiler's
+/// CSE gate uses (hash-cons shareable only for pure+deterministic leaves).
+/// `compute_branch_paths` consults this set to refuse to SINK an
+/// effect-ordered node past another one: the registry type layer already
+/// declared cursor/set/map ops `deterministic false`, but branch scoping
+/// never looked, so a `cursor_get` consumed only by one if-arm was deferred
+/// into the arm and ran AFTER an earlier-positioned unconditional
+/// `cursor_close` (found via graphcore gr_cf_run: every current name filtered
+/// to empty). Unknown identities are treated as effectful (absent implies
+/// ordered).
+pub fn load_registry_pure_det(paths: &[String]) -> std::collections::HashSet<Hash256> {
+    let mut set = std::collections::HashSet::new();
+    for path in paths {
+        let content = match std::fs::read_to_string(path) {
+            Ok(c)  => c,
+            Err(e) => { eprintln!("warning: could not read --reg {}: {}", path, e); continue; }
+        };
+        let mut current_identity: Option<Hash256> = None;
+        let mut is_pure = false;
+        let mut is_det = false;
+        let mut in_contract = false;
+        for line in content.lines() {
+            let t = line.trim();
+            if let Some(rest) = t.strip_prefix("fn ") {
+                let name = rest.split_whitespace().next().unwrap_or("");
+                current_identity =
+                    if name.is_empty() { None } else { Some(sha256_bytes(name.as_bytes())) };
+                is_pure = false;
+                is_det = false;
+                in_contract = false;
+            } else if let Some(rest) = t.strip_prefix("identity ") {
+                let hex = rest.trim().trim_start_matches("0x");
+                if let Ok(id) = crate::core_ir_05::hex_to_hash256(hex) {
+                    current_identity = Some(id);
+                }
+            } else if let Some(rest) = t.strip_prefix("effect ") {
+                is_pure = rest.trim() == "pure";
+            } else if let Some(rest) = t.strip_prefix("deterministic ") {
+                is_det = rest.trim() == "true";
+            } else if t == "bridge_contract" {
+                in_contract = true;
+            } else if t == "end" {
+                if in_contract {
+                    in_contract = false;
+                } else if let Some(id) = current_identity.take() {
+                    if is_pure && is_det {
+                        set.insert(id);
+                    }
+                }
+            }
+        }
+    }
+    set
 }
 
 // ── Bridge-independent async fact scan (BRIDGE_SCAN_INDEPENDENT) ──────────────
@@ -964,7 +1021,10 @@ fn longest_common_prefix(paths: &[ScopePath]) -> ScopePath {
 /// a raw un-threaded orphan under a pool-ref branch, the build fails loudly
 /// right here instead of silently hoisting it to top level and reintroducing
 /// BRANCH_SCOPING_V1's exact bug for that one node.
-fn compute_branch_paths(bundle: &CoreBundle) -> Result<Vec<ScopePath>, String> {
+fn compute_branch_paths(
+    bundle: &CoreBundle,
+    pure_det: &std::collections::HashSet<Hash256>,
+) -> Result<Vec<ScopePath>, String> {
     let n = bundle.nodes.len();
     let mut uses: Vec<Vec<Use>> = (0..n).map(|_| Vec::new()).collect();
     // `bundle.result` — not "the last node" — is the authoritative root (see
@@ -1054,6 +1114,40 @@ fn compute_branch_paths(bundle: &CoreBundle) -> Result<Vec<ScopePath>, String> {
         // matters; anything reaching here is a genuinely safe top-level
         // orphan (e.g. a discarded value preceding an unrelated `CIf`).
         path[i] = longest_common_prefix(&required);
+        // EFFECT_ORDER_V1: sinking is unconditionally safe only for values.
+        // An effectful node written before the `CIf` (its consumers all sit in
+        // one arm) must NOT be deferred into the arm if that would let a
+        // later-indexed effectful node at an OUTER scope run before it — that
+        // reorders effects relative to program order (the cursor_get-after-
+        // cursor_close bug). Unsink one level at a time until no outer
+        // effectful node sits between this node and the CIf it would defer to.
+        // Arm-local effects (seq-threaded by nf_lowering into the arm result,
+        // with no outer effect between them and their CIf) never trip this,
+        // so BRANCH_SCOPING_V1 semantics are preserved. `CIf` counts as
+        // effectful (it may gate sunk effects); unknown identities count as
+        // effectful (absent implies ordered).
+        let effectful = |idx: usize| -> bool {
+            match &bundle.nodes[idx] {
+                Node::CCall { target_identity, .. } => !pure_det.contains(target_identity),
+                Node::CIf { .. } => true,
+                Node::CDeterminate => false,
+            }
+        };
+        if effectful(i) {
+            while let Some(&(k, _)) = path[i].last() {
+                let k = k as usize;
+                let reordered = ((i + 1)..k).any(|j| {
+                    effectful(j)
+                        && path[j].len() < path[i].len()
+                        && path[i][..path[j].len()] == path[j][..]
+                });
+                if reordered {
+                    path[i].pop();
+                } else {
+                    break;
+                }
+            }
+        }
     }
     Ok(path)
 }
@@ -1372,6 +1466,7 @@ pub fn emit_rust_lib_from_bundle(
     registry_identity_map: &HashMap<Hash256, String>,
     xbundle_providers: &HashMap<Hash256, String>,
     declared_channels: &std::collections::HashSet<String>,
+    pure_det: &std::collections::HashSet<Hash256>,
 ) -> Result<String, String> {
     let builtin = bridge_builtin_map();
     let name_to_path = symbol_map();
@@ -1601,7 +1696,7 @@ pub fn emit_rust_lib_from_bundle(
     // any `CIf`) stay hoisted at the unconditional top level, exactly as
     // before.
     let arg_kind_table = fn_arg_kinds();
-    let branch_paths = compute_branch_paths(bundle)?;
+    let branch_paths = compute_branch_paths(bundle, pure_det)?;
     let scope_groups = group_by_scope(bundle.nodes.len(), &branch_paths);
     out.push_str(&render_scope(
         None,

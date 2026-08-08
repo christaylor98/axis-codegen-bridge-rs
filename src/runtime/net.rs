@@ -622,6 +622,56 @@ pub fn tcp_accept(v: Value) -> Value {
 // ── tcp_read ─────────────────────────────────────────────────────────────────
 
 #[track_caller]
+/// `tcp_set_read_timeout(conn: Int, millis: Int) -> Unit` — bound how long a
+/// subsequent `tcp_read` on this connection will wait.
+///
+/// WHY THIS EXISTS. A serve loop reads until a request terminator arrives. With
+/// no bound, a client that connects and never completes its request blocks the
+/// read forever — and on a single-threaded accept loop that is a total outage,
+/// not a slow client. Observed exactly that way: an unterminated request from
+/// one connection made every subsequent well-formed request time out, including
+/// ones that had answered in 0.4s moments earlier, and the server recovered
+/// only when the first client closed.
+///
+/// A hang is worse than a refusal: a caller cannot distinguish "still working"
+/// from "never returning", so it waits. A bounded read turns that into an
+/// error the loop can answer.
+///
+/// millis <= 0 clears the timeout (blocking, the platform default).
+#[track_caller]
+pub fn tcp_set_read_timeout(args: Value) -> Value {
+    let (handle, millis) = match args {
+        Value::Tuple(es) if es.len() == 2 => {
+            let h = match &es[0] {
+                Value::Int(i) => *i,
+                o => panic!("tcp_set_read_timeout: arg 0 expected Int, got {:?}", o),
+            };
+            let m = match &es[1] {
+                Value::Int(i) => *i,
+                o => panic!("tcp_set_read_timeout: arg 1 expected Int, got {:?}", o),
+            };
+            (h, m)
+        }
+        o => panic!("tcp_set_read_timeout: expected Tuple(Int, Int), got {:?}", o),
+    };
+    let sock = get_sock(handle, "tcp_set_read_timeout");
+    let stream: &TcpStream = match &*sock {
+        Sock::Stream(s) => s,
+        Sock::Listener(_) => {
+            panic!("tcp_set_read_timeout: handle {} is a listener, not a stream", handle)
+        }
+    };
+    let dur = if millis > 0 {
+        Some(std::time::Duration::from_millis(millis as u64))
+    } else {
+        None
+    };
+    if let Err(e) = stream.set_read_timeout(dur) {
+        panic!("tcp_set_read_timeout({}): {}", handle, e);
+    }
+    Value::Unit
+}
+
 pub fn tcp_read(v: Value) -> Value {
     let handle = handle_arg(&v, "tcp_read");
     // AXVERITY_SLAB_TO_WIRE_BUILD_V1: never block on a read with unsent buffered
@@ -647,6 +697,14 @@ pub fn tcp_read(v: Value) -> Value {
     let n = match stream.read(&mut buf) {
         Ok(n) => n,
         Err(ref e) if peer_gone(e) => 0,
+        // A read timeout (see tcp_set_read_timeout) surfaces as WouldBlock or
+        // TimedOut depending on platform. Report it as EOF rather than
+        // panicking: the serve loop already treats 0 bytes as "the peer is
+        // done", which is exactly the right answer for a client that opened a
+        // connection and then stopped talking. Panicking here would take the
+        // worker down over a misbehaving client -- trading a hang for a crash.
+        Err(ref e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock
+                                       | std::io::ErrorKind::TimedOut) => 0,
         Err(e) => panic!("tcp_read({}): {}", handle, e),
     };
     Value::Bytes(buf[..n].to_vec())
