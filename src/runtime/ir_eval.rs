@@ -88,6 +88,7 @@ fn dispatch_table() -> &'static HashMap<&'static str, PrimFn> {
         m.insert("fs_read_text",    super::io::fs_read_text);
         m.insert("fs_write_text",   super::io::fs_write_text);
         m.insert("fs_append_text",  super::io::fs_append_text);
+        m.insert("fs_append_text_durable", super::io::fs_append_text_durable);
         m.insert("fs_file_exists",  super::io::fs_file_exists);
         m.insert("debug_trace",     super::io::debug_trace);
 

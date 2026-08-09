@@ -121,6 +121,48 @@ pub fn fs_append_text(args: Value) -> Value {
     }
 }
 
+// `fs_append_text_durable(path: Text, content: Text) -> Unit` —
+// AXVERITY_GRAPHCORE_APPEND_DURABILITY_FIX_V1. Same append semantics as
+// `fs_append_text` (open-append-or-create, write_all) but crash-safe: fsync
+// the file's data after the write, and — only when this call is the one
+// that created the file — fsync the parent directory too, so the new
+// directory entry itself survives a crash (same reasoning as
+// bytes_io.rs::write_durable's parent-dir fsync, minus the temp+rename
+// since an append target is never atomically replaced).
+#[track_caller]
+pub fn fs_append_text_durable(args: Value) -> Value {
+    use std::io::Write as IoWrite;
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Str(path_h), Value::Str(content_h)) => {
+                let path    = get_str(path_h);
+                let content = get_str(content_h);
+                if let Err(e) = append_durable(&path, content.as_bytes()) {
+                    panic!("fs_append_text_durable({}): {}", path, e);
+                }
+                Value::Unit
+            }
+            _ => panic!("fs_append_text_durable: expected Tuple(Str, Str)"),
+        },
+        _ => panic!("fs_append_text_durable: expected Tuple(path, content)"),
+    }
+}
+
+fn append_durable(path: &str, content: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as IoWrite;
+    let p = std::path::Path::new(path);
+    let existed = p.exists();
+    let mut f = std::fs::OpenOptions::new().append(true).create(true).open(p)?;
+    f.write_all(content)?;
+    f.sync_all()?;
+    if !existed {
+        let parent = p.parent().filter(|d| !d.as_os_str().is_empty())
+            .unwrap_or_else(|| std::path::Path::new("."));
+        std::fs::File::open(parent)?.sync_all()?;
+    }
+    Ok(())
+}
+
 #[track_caller]
 pub fn fs_file_exists(path: Value) -> Value {
     let path_str = match path {
