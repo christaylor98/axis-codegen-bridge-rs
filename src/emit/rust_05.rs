@@ -189,6 +189,15 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("debug_trace",   "axis_codegen_bridge::runtime::io::debug_trace");
     m.insert("fs_read_last_line", "axis_codegen_bridge::runtime::io::fs_read_last_line");
 
+    // Raw-terminal control (AXVERITY_GC_TUI_V1 — runtime/tty.rs). D040: the
+    // termios/ioctl/signal machinery lives here so M1 stays a byte-dispatch
+    // loop over tty_read_key's Int.
+    m.insert("tty_raw_on",   "axis_codegen_bridge::runtime::tty::tty_raw_on");
+    m.insert("tty_raw_off",  "axis_codegen_bridge::runtime::tty::tty_raw_off");
+    m.insert("tty_read_key", "axis_codegen_bridge::runtime::tty::tty_read_key");
+    m.insert("tty_rows",     "axis_codegen_bridge::runtime::tty::tty_rows");
+    m.insert("tty_cols",     "axis_codegen_bridge::runtime::tty::tty_cols");
+
     // Read-only SQLite row access (AXSEM_W2_STORAGE_RETROFIT_V1 — sqlite_ro.rs).
     // ONE dump-producer fn; the module hosts no write/exec/DDL/DML surface.
     m.insert("sqlite_ro_tsv", "axis_codegen_bridge::runtime::sqlite_ro::sqlite_ro_tsv");

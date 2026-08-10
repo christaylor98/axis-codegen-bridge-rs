@@ -25,6 +25,7 @@ pub mod hash;
 pub mod bytes_io;
 pub mod bytes_codec;
 pub mod net;
+pub mod tty;
 pub mod seek;
 pub mod logbuf;
 pub mod mmapseg;

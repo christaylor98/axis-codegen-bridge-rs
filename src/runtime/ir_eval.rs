@@ -92,6 +92,13 @@ fn dispatch_table() -> &'static HashMap<&'static str, PrimFn> {
         m.insert("fs_file_exists",  super::io::fs_file_exists);
         m.insert("debug_trace",     super::io::debug_trace);
 
+        // TTY (AXVERITY_GC_TUI_V1)
+        m.insert("tty_raw_on",      super::tty::tty_raw_on);
+        m.insert("tty_raw_off",     super::tty::tty_raw_off);
+        m.insert("tty_read_key",    super::tty::tty_read_key);
+        m.insert("tty_rows",        super::tty::tty_rows);
+        m.insert("tty_cols",        super::tty::tty_cols);
+
         // Process
         m.insert("proc_args",       super::process::proc_args);
         m.insert("proc_exit",       super::process::proc_exit);
