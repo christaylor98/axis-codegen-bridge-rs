@@ -28,6 +28,10 @@ clap = { version = "4.5", features = ["derive"] }
 sha2 = "0.10"
 rust_decimal = "1"
 libc = "0.2"
+# AXVERITY_POSTGRES_STORE_SWAP_V1 — postgres-backed durable store for the
+# graphcore store layer (pg_store.rs). Synchronous client; postgres's WAL +
+# group commit own durability, so the M1 store layer stops issuing fsyncs.
+postgres = "0.19"
 
 [build-dependencies]
 capnpc = "0.19"

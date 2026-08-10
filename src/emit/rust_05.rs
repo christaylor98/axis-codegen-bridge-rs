@@ -295,6 +295,18 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("fs_mkdir_p",           "axis_codegen_bridge::runtime::bytes_io::fs_mkdir_p");
     m.insert("bytes_to_text",        "axis_codegen_bridge::runtime::bytes_io::bytes_to_text");
 
+    // ── Postgres-backed durable store (pg_store.rs — AXVERITY_POSTGRES_STORE_SWAP_V1) ─
+    // Objects / ledger / anchor live in postgres; postgres's WAL + group commit
+    // own durability (one fdatasync per commit batch), so the M1 store layer no
+    // longer issues fsync barriers. Wire ABI and store-op semantics unchanged.
+    m.insert("pg_bytes_put",     "axis_codegen_bridge::runtime::pg_store::pg_bytes_put");
+    m.insert("pg_bytes_get",     "axis_codegen_bridge::runtime::pg_store::pg_bytes_get");
+    m.insert("pg_obj_block_put", "axis_codegen_bridge::runtime::pg_store::pg_obj_block_put");
+    m.insert("pg_log_append",    "axis_codegen_bridge::runtime::pg_store::pg_log_append");
+    m.insert("pg_log_scan",      "axis_codegen_bridge::runtime::pg_store::pg_log_scan");
+    m.insert("pg_anchor_get",    "axis_codegen_bridge::runtime::pg_store::pg_anchor_get");
+    m.insert("pg_anchor_set",    "axis_codegen_bridge::runtime::pg_store::pg_anchor_set");
+
     // ── Background indexer (indexer.rs — AXVERITY_INDEXER_THREADING_V1) ───────
     m.insert("index_build_batch",    "axis_codegen_bridge::runtime::indexer::index_build_batch");
     m.insert("idxseg_lookup",        "axis_codegen_bridge::runtime::indexer::idxseg_lookup");

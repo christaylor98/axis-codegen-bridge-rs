@@ -67,5 +67,6 @@ pub mod ack_registry;
 pub mod hotblk_pool;
 pub mod rawblk;
 pub mod pgbshape;
+pub mod pg_store;
 
 pub use value::Value;
