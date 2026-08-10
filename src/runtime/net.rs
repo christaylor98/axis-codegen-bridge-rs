@@ -585,8 +585,15 @@ pub fn tcp_connect(args: Value) -> Value {
         Value::Int(n) => panic!("tcp_connect: port {} out of range 0..=65535", n),
         other => panic!("tcp_connect: arg 1 expected Int port, got {:?}", other),
     };
-    let stream = TcpStream::connect((host.as_str(), port))
-        .unwrap_or_else(|e| panic!("tcp_connect({}:{}): {}", host, port, e));
+    // AXVERITY_GC_CLIENT_V1: a connect failure (refused, unreachable, etc.) is
+    // an ordinary down-path outcome for a client probe, not a bridge-level
+    // fault — return Int(-1) instead of panicking so M1 callers can answer it
+    // in-band (matches tcp_read's own EOF-as-0-bytes precedent for a
+    // different class of "the peer isn't there").
+    let stream = match TcpStream::connect((host.as_str(), port)) {
+        Ok(s) => s,
+        Err(_) => return Value::Int(-1),
+    };
     // fix:axverity-pointread-floor — disable Nagle on the client socket too, so
     // the bridge's own request/response spikes don't incur the same ~40ms
     // delayed-ACK stall (parity with the accepted-stream fix above).
