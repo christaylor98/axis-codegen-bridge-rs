@@ -326,6 +326,11 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     //    block_flush_write = the async seal-flush wait() handler (I/O glue).
     m.insert("hotblk_get",           "axis_codegen_bridge::runtime::hotblk::hotblk_get");
     m.insert("hotblk_set",           "axis_codegen_bridge::runtime::hotblk::hotblk_set");
+    //    D044 Phase 2 (AXVERITY_HOTBLK_TIMED_FLUSH_V1): lock-free cross-
+    //    thread read of the LOG-family accumulator's (ptr, cursor,
+    //    generation) for the independent timer thread.
+    m.insert("hotblk_active_block",  "axis_codegen_bridge::runtime::hotblk::hotblk_active_block");
+    m.insert("hotblk_timer_interval_ms", "axis_codegen_bridge::runtime::hotblk::hotblk_timer_interval_ms");
 
     // ── ISOLATION MEASUREMENT ONLY (HOTWRITE_ADMISSION_MINIMAL_CAPTURE_V1) ──
     //    single-call collapse of the per-record capture/stamp/hash/write cycle.

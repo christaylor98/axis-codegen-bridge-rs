@@ -51,15 +51,50 @@
 //! 2-arg (`Value::Tuple(2)` in, like logbuf_append) — the exact shapes logbuf.rs
 //! already exercises, so this leans on no unverified N-arg packing. Identities
 //! are sha256(name_utf8), the bridge-wide convention.
+//!
+//! ## AXVERITY_HOTBLK_TIMED_FLUSH_V1 (D044 Phase 2) — slot 7 + cross-thread publish
+//!
+//! Slot 7 (`generation`) is new: a monotonic counter, LOG-family-only
+//! (bumped only on a slot-0/`ptr` write — the OBJECT family never touches
+//! slot 0, see the disjoint-slots note above, so this can never fire for
+//! it), incremented every time this thread's active block changes identity
+//! (mint or rotate). It exists because `ptr` values get RECYCLED under
+//! D044 Phase 1's pool-based free-list — the same numeric address WILL
+//! recur later in the process's life, so `ptr` alone cannot serve as its
+//! own "is this still the block I think it is" check; `generation` can.
+//!
+//! `hotblk_set` ALSO transparently publishes `(ptr, cursor, generation)` to
+//! a process-wide `SeqCell` (`non_blocking_memory`, the established no-CAS
+//! discipline — see `interner_shard.rs`/`hotmem.rs`/`qhm.rs`) whenever slot
+//! 0 or slot 3 changes, so the independent timer thread
+//! (`graphcore/src/gcore_timer.m1`) can read this thread's current block
+//! state lock-free, without blocking the writer and without the writer
+//! knowing anything changed (D040: the M1 write path stays exactly as it
+//! was before this phase — pg_hotblk_write.m1/pg_hotblk_commit.m1 are
+//! byte-for-byte unchanged; only pg_hotblk_seal_mint.m1 gained a single
+//! extra `hotblk_get(Int(7))` read, to hand the flush worker the
+//! generation its full-block job belongs to — see block_flush.rs).
+//!
+//! SINGLE GLOBAL CELL, not per-thread: correct today because
+//! hotblk_get/hotblk_set have exactly one live caller family (graphcore's
+//! pg_hotblk_* path), and gcore_serve is verified single-threaded (D007,
+//! one serial accept loop) — so there is only ever one thread's worth of
+//! state to publish. If hotblk_get/hotblk_set ever gets a second,
+//! multi-threaded consumer, this cell needs to become per-thread-keyed;
+//! not built now (YAGNI — no such consumer exists to design against).
 
 use std::cell::RefCell;
+use std::sync::OnceLock;
 
-use super::value::Value;
+use super::non_blocking_memory::SeqCell;
+use super::value::{get_str, intern_str, Value};
 
-// 7 slots: 0..5 as documented above plus slot 6, the active block's capacity.
-// Widened from 6 deliberately rather than squatting on slot 4, which is reserved
-// for block_start_i even though nothing reads it yet.
-const NFIELDS: usize = 7;
+// 8 slots: 0..5 as documented above, slot 6 the active block's capacity,
+// slot 7 the D044 Phase 2 generation counter (LOG-family-only, see above).
+const NFIELDS: usize = 8;
+const FIELD_PTR: usize = 0;
+const FIELD_CURSOR: usize = 3;
+const FIELD_GENERATION: usize = 7;
 
 thread_local! {
     /// This thread's active hot-block accumulator. THREAD-LOCAL, never shared:
@@ -67,6 +102,34 @@ thread_local! {
     /// atomic, no registry — the same "thread-owned, no shared registry" model
     /// as logbuf.rs's LOGS.
     static HOTBLK: RefCell<[i64; NFIELDS]> = const { RefCell::new([0; NFIELDS]) };
+}
+
+/// D044 Phase 2's cross-thread publish target: `(ptr, cursor, generation)`.
+/// `OnceLock` because `SeqCell::new()` isn't `const fn` (matches
+/// `hotmem.rs`'s own `ARENA_SHARED: OnceLock<...>` pattern for the same
+/// reason).
+static ACTIVE_BLOCK: OnceLock<SeqCell<(i64, i64, i64)>> = OnceLock::new();
+
+fn active_block() -> &'static SeqCell<(i64, i64, i64)> {
+    ACTIVE_BLOCK.get_or_init(SeqCell::new)
+}
+
+/// `hotblk_timer_interval_ms(Unit) -> Int` — D044 Phase 2's timer tick
+/// interval, `AXVERITY_HOTBLK_TIMER_MS` (default 250, within D044's
+/// required 100-500ms bound), same env-knob-with-`OnceLock`-cache shape as
+/// `hotblk_pool.rs`'s own `pool_depth()`. The sole caller is
+/// `graphcore/src/gcore_timer.m1`.
+#[track_caller]
+pub fn hotblk_timer_interval_ms(_arg: Value) -> Value {
+    static MS: OnceLock<i64> = OnceLock::new();
+    let ms = *MS.get_or_init(|| {
+        std::env::var("AXVERITY_HOTBLK_TIMER_MS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .filter(|n| *n >= 1)
+            .unwrap_or(250)
+    });
+    Value::Int(ms)
 }
 
 /// `hotblk_get(field: Int) -> Int`
@@ -109,8 +172,47 @@ pub fn hotblk_set(args: Value) -> Value {
     if f < 0 || f as usize >= NFIELDS {
         panic!("hotblk_set: field {} out of range 0..{}", f, NFIELDS);
     }
-    HOTBLK.with(|s| s.borrow_mut()[f as usize] = v);
+    let published = HOTBLK.with(|s| {
+        let mut r = s.borrow_mut();
+        r[f as usize] = v;
+        // D044 Phase 2: a slot-0 (ptr) write is a mint/rotate — bump this
+        // thread's generation and publish (new ptr, cursor=0, new gen).
+        // A slot-3 (cursor) write is a plain accumulate — republish with
+        // the unchanged ptr/generation. Both read the REST of the fields
+        // from the same already-locked borrow, so this can't observe a
+        // torn combination of its own thread's fields.
+        match f as usize {
+            FIELD_PTR => {
+                r[FIELD_GENERATION] += 1;
+                Some((r[FIELD_PTR], 0i64, r[FIELD_GENERATION]))
+            }
+            FIELD_CURSOR => Some((r[FIELD_PTR], r[FIELD_CURSOR], r[FIELD_GENERATION])),
+            _ => None,
+        }
+    });
+    if let Some(triple) = published {
+        // SAFETY: hotblk_set has exactly one live caller family
+        // (graphcore's pg_hotblk_* path) and gcore_serve is verified
+        // single-threaded (D007) — see this module's doc comment.
+        unsafe {
+            active_block().write(triple);
+        }
+    }
     Value::Unit
+}
+
+/// `hotblk_active_block(Unit) -> Text` — D044 Phase 2. Lock-free cross-
+/// thread read of the LOG-family accumulator's current `(ptr, cursor,
+/// generation)`, as `"<ptr>\t<cursor>\t<generation>"`. The ONLY caller is
+/// `graphcore/src/gcore_timer.m1`'s timer thread; safe from any thread,
+/// any number of readers (`SeqCell::read`'s own contract). `"0\t0\t0"`
+/// before the first-ever write (nothing to checkpoint yet — matches the
+/// existing `ptr == 0` "no live block" sentinel every other reader of this
+/// register already keys on).
+#[track_caller]
+pub fn hotblk_active_block(_arg: Value) -> Value {
+    let (ptr, cursor, generation) = active_block().read(0).value().unwrap_or((0, 0, 0));
+    Value::Str(intern_str(&format!("{}\t{}\t{}", ptr, cursor, generation)))
 }
 
 #[cfg(test)]
@@ -137,5 +239,52 @@ mod tests {
     #[should_panic(expected = "out of range")]
     fn get_out_of_range_panics() {
         let _ = hotblk_get(Value::Int(NFIELDS as i64));
+    }
+
+    /// D044 Phase 2: hotblk_active_block reflects ptr/cursor writes, and
+    /// generation bumps ONLY on a ptr (field 0) write, never on a plain
+    /// cursor (field 3) accumulate.
+    ///
+    /// ACTIVE_BLOCK is a deliberate single PROCESS-WIDE cell (see this
+    /// module's own doc comment: correct because production has exactly
+    /// one thread ever calling hotblk_set). That means, unlike HOTBLK
+    /// itself, it is NOT isolated by running this test on a fresh thread —
+    /// every OTHER test in this same binary that calls hotblk_set (e.g.
+    /// unset_reads_zero_then_roundtrips) publishes to the SAME cell.
+    /// cargo test's default parallel runner interleaves them for real:
+    /// confirmed directly, twice — first an absolute "0\t0\t0" starting
+    /// assumption failed with "111\t444\t1" (a prior test's leftover
+    /// state), then even a RELATIVE g0/g0+1 check failed once fixed,
+    /// because another test's write landed on the SAME cell between two
+    /// of THIS test's own reads. Neither is a production bug (production
+    /// never has a second writer to race). #[ignore] here, same pattern
+    /// block_flush.rs's tests already use for their own shared
+    /// process-wide-state hazard — run explicitly, alone.
+    #[test]
+    #[ignore = "shares the process-wide ACTIVE_BLOCK cell with every other hotblk_set caller in this test binary — run explicitly, not as part of the default parallel suite"]
+    fn active_block_reflects_ptr_and_cursor_generation_only_on_ptr() {
+        std::thread::spawn(|| {
+            let read = || match hotblk_active_block(Value::Unit) {
+                Value::Str(h) => get_str(&h),
+                other => panic!("expected Text, got {:?}", other),
+            };
+            let gen_of = |s: &str| s.rsplit('\t').next().unwrap().parse::<i64>().unwrap();
+            let g0 = gen_of(&read());
+
+            hotblk_set(Value::Tuple(vec![Value::Int(0), Value::Int(4096)]));
+            let r1 = read();
+            assert_eq!(r1, format!("4096\t0\t{}", g0 + 1), "first ptr write: cursor resets, generation +1");
+
+            hotblk_set(Value::Tuple(vec![Value::Int(3), Value::Int(500)]));
+            assert_eq!(read(), format!("4096\t500\t{}", g0 + 1), "cursor write: ptr/generation unchanged");
+
+            hotblk_set(Value::Tuple(vec![Value::Int(3), Value::Int(900)]));
+            assert_eq!(read(), format!("4096\t900\t{}", g0 + 1), "second cursor write: still same generation");
+
+            hotblk_set(Value::Tuple(vec![Value::Int(0), Value::Int(8192)]));
+            assert_eq!(read(), format!("8192\t0\t{}", g0 + 2), "rotate: new ptr, cursor resets, generation +1 again");
+        })
+        .join()
+        .unwrap();
     }
 }

@@ -44,24 +44,69 @@
 //!     shape `pg_hotblk_job` (identity-pinned, unchanged from
 //!     AXVERITY_FRONTEND_WRITEPATH_INTEGRATION_V1) still constructs, used
 //!     for the LOG family. Routed to `pg_log_append`. AXVERITY_HOTBLK_POOL_
-//!     WIRE_V1 (D044 Phase 1) repurposes two of the four previously-inert
-//!     leading fields — the TYPE signature (and therefore the identity-
-//!     pinned ABI, §6: identity is sha256(name) only, never contract-aware)
-//!     is unchanged, only what the values MEAN:
+//!     WIRE_V1 (D044 Phase 1) + AXVERITY_HOTBLK_TIMED_FLUSH_V1 (D044 Phase
+//!     2) repurpose three of the four previously-inert leading fields — the
+//!     TYPE signature (and therefore the identity-pinned ABI, §6: identity
+//!     is sha256(name) only, never contract-aware) is unchanged, only what
+//!     the values MEAN:
 //!       field 0 (Int)  — the sealed block's arena `ptr` (was inert Int(0))
 //!       field 1 (Text) — the hotblk_pool shard name this block belongs to,
 //!                        "" if the producer isn't pool-managed (was inert
 //!                        Text(""))
-//!       fields 2,3     — still inert (Int(0), Int(0))
-//!       field 4 (Bytes)— the sealed block's bytes, unchanged
+//!       field 2 (Int)  — Phase 2: the block's generation (hotblk register
+//!                        slot 7 at seal time), used to dedup against
+//!                        whatever the timer thread already checkpointed
+//!                        for this same generation (was inert Int(0))
+//!       field 3        — still inert (Int(0))
+//!       field 4 (Bytes)— the sealed block's FULL bytes (from offset 0),
+//!                        unchanged — `commit_job` slices off whatever
+//!                        prefix a checkpoint already committed, see below
 //!     See graphcore/lib/pg_hotblk_job.m1's header.
 //!   * 2-field `Value::Ctor`/`Tuple` `(Bytes, Text)` — `(block, index)`, the
 //!     OBJECT family's own shape (graphcore/lib/gr_obj_flush.m1 builds it
 //!     directly; there is no identity-pinned producer for this family — see
 //!     that file's header for why). Routed to `pg_obj_block_put`. Not
 //!     pool-managed (D044 Phase 1 scopes the LOG family only).
+//!   * 3-field `Value::Ctor`/`Tuple` `(Int, Int, Int)` — AXVERITY_HOTBLK_
+//!     TIMED_FLUSH_V1 (D044 Phase 2): `pg_hotblk_checkpoint`'s shape,
+//!     `(generation, ptr, to)`. Sent by the independent timer thread
+//!     (`graphcore/src/gcore_timer.m1`) — a "flush roughly up to here" ask,
+//!     never the sole truth; see the watermark section below for how it's
+//!     reconciled against the LOG family's own seal jobs.
 //!
 //! Identities are sha256(name_utf8), the bridge-wide convention.
+//!
+//! ## AXVERITY_HOTBLK_TIMED_FLUSH_V1 (D044 Phase 2) — the checkpoint watermark
+//!
+//! `CHECKPOINT_WATERMARK` tracks `(generation, bytes_already_committed)`
+//! for the LOG family's single active block (see `hotblk.rs`'s own doc
+//! comment: there is exactly one such block today, gcore_serve is
+//! single-threaded, D007). Both a seal's LOG job (field 2 = its
+//! generation) and a timer's Checkpoint job (field 0 = its generation)
+//! reconcile against the SAME tracker via `advance_watermark`, so whichever
+//! trigger reaches the flush worker first — volume or time — the other
+//! never double-commits the overlap:
+//!   - `generation` older than the tracked one: entirely stale (the writer
+//!     has since rotated past it, its own seal already committed
+//!     everything that could ever matter) — dropped, untouched.
+//!   - `generation` equal to the tracked one: commit only the bytes past
+//!     the tracked watermark; if the requested `to` doesn't exceed it,
+//!     there's nothing new — dropped.
+//!   - `generation` newer than the tracked one: this is the first job this
+//!     watermark tracker has seen for it — commit from 0.
+//!
+//! Safe against races because `commit_job` runs on the SOLE flush-worker
+//! thread, processing the "hotmem-frame" channel strictly in enqueue
+//! order (FIFO), and a block only ever returns to `hotblk_pool` — making
+//! its `ptr` eligible for a NEW mint to reuse — as part of THIS SAME
+//! thread finishing that generation's own seal job. So by the time this
+//! thread could possibly process a job for generation G+1, generation G's
+//! seal job (enqueued strictly earlier — the writer cannot observe/publish
+//! G+1 until AFTER G's seal_mint call, which is what enqueues G's seal
+//! job, already ran) must already have been processed, and no other
+//! thread ever touches `ptr` in between. A checkpoint job that loses this
+//! race against its own seal isn't unsafe, just redundant — the
+//! `to`-vs-watermark check on the SAME generation catches it too.
 //!
 //! ## AXVERITY_HOTBLK_POOL_WIRE_V1 (D044 Phase 1) — the free-marker protocol
 //!
@@ -88,10 +133,44 @@
 //! per rotate synchronously; this moves the same one leak to the same one
 //! rotate, just after the flush instead of before.
 
+use std::sync::Mutex;
+
 use super::hotblk_pool;
 use super::pg_store;
 use super::rawmem;
 use super::value::{get_str, intern_str, Value};
+
+/// D044 Phase 2: `(generation, bytes_already_committed)` for the LOG
+/// family's single active block. Private to the sole flush-worker thread's
+/// own sequential processing — the `Mutex` is never contended (there is
+/// nothing else to contend with), it's just the safe way to hold mutable
+/// process-wide state without `unsafe`. See this module's own "checkpoint
+/// watermark" doc section for the reconciliation rules.
+static CHECKPOINT_WATERMARK: Mutex<(i64, i64)> = Mutex::new((0, 0));
+
+/// Reconcile a job's `(generation, to)` against the tracked watermark.
+/// Returns `Some(from)` — the byte offset this job should commit starting
+/// from — and advances the tracker to `(generation, to)`. Returns `None`
+/// (nothing new, or genuinely stale) without touching the tracker's
+/// watermark, except adopting a strictly-newer `generation` even on a
+/// no-op call so a LATER job for that same generation computes `from`
+/// relative to `to`, not incorrectly re-derives 0.
+fn advance_watermark(generation: i64, to: i64) -> Option<i64> {
+    let mut wm = CHECKPOINT_WATERMARK.lock().unwrap();
+    let (cur_gen, cur_wm) = *wm;
+    if generation < cur_gen {
+        return None; // strictly stale -- the writer has moved on
+    }
+    let from = if generation == cur_gen { cur_wm } else { 0 };
+    if to <= from {
+        if generation > cur_gen {
+            *wm = (generation, from);
+        }
+        return None; // nothing new since the tracked watermark
+    }
+    *wm = (generation, to);
+    Some(from)
+}
 
 fn as_bytes(field: &'static str, v: Value) -> Vec<u8> {
     match v {
@@ -116,23 +195,30 @@ fn as_int(field: &'static str, v: Value) -> i64 {
 
 /// One parsed, ready-to-commit flush job.
 enum Job {
-    /// LOG family: the accumulated ledger bytes, committed as one
-    /// `pg_log_append` row. `ptr`/`shard` identify the arena block this
-    /// came from for the free-marker protocol (D044 Phase 1) — `shard`
-    /// empty means "not pool-managed, don't return anything."
-    Log { ptr: i64, shard: String, bytes: Vec<u8> },
+    /// LOG family: the sealed block's FULL bytes (from offset 0), one
+    /// `pg_log_append` row after watermark-slicing. `ptr`/`shard` identify
+    /// the arena block for the free-marker protocol (D044 Phase 1) —
+    /// `shard` empty means "not pool-managed, don't return anything, don't
+    /// watermark-slice either" (Phase 2 only reconciles pool-managed
+    /// blocks, since only those can ever collide with a timer checkpoint).
+    /// `generation` is Phase 2's dedup key (D044 Phase 2).
+    Log { ptr: i64, shard: String, generation: i64, bytes: Vec<u8> },
     /// OBJECT family: a sealed arena block plus its pending index
     /// (`"<addr>\t<off>\t<len>\n"` lines), committed as one
     /// `pg_obj_block_put` transaction.
     Obj { block: Vec<u8>, index: String },
+    /// D044 Phase 2: a timer-triggered "flush roughly up to here" ask —
+    /// `pg_hotblk_checkpoint`'s shape, `(generation, ptr, to)`.
+    Checkpoint { generation: i64, ptr: i64, to: i64 },
 }
 
 /// Parse one drained channel item into a [`Job`]. Dispatches on field count
-/// — 5 fields is always a LOG job (pg_hotblk_job's identity-pinned shape),
-/// 2 fields is always an OBJECT job (gr_obj_flush's own shape). Panics on
-/// any other shape: unlike the old framed-Bytes fallback this replaces,
-/// there is no defensively-unreachable encoding here to tolerate — both
-/// producers are graphcore's own M1, in this same repo, so a malformed job
+/// — 5 fields is a LOG job (pg_hotblk_job's identity-pinned shape), 2
+/// fields is an OBJECT job (gr_obj_flush's own shape), 3 fields is a D044
+/// Phase 2 Checkpoint job (pg_hotblk_checkpoint's shape). Panics on any
+/// other shape: unlike the old framed-Bytes fallback this replaces, there
+/// is no defensively-unreachable encoding here to tolerate — every
+/// producer is graphcore's own M1, in this same repo, so a malformed job
 /// is a genuine producer bug and should fail loud.
 fn parse_job(item: Value) -> Job {
     match item {
@@ -140,10 +226,10 @@ fn parse_job(item: Value) -> Job {
             let mut it = fields.into_iter();
             let ptr = as_int("ptr", it.next().unwrap());
             let shard = as_text("shard", it.next().unwrap());
-            let _f2 = it.next().unwrap();
+            let generation = as_int("generation", it.next().unwrap());
             let _f3 = it.next().unwrap();
             let bytes = as_bytes("bytes", it.next().unwrap());
-            Job::Log { ptr, shard, bytes }
+            Job::Log { ptr, shard, generation, bytes }
         }
         Value::Ctor { fields, .. } | Value::Tuple(fields) if fields.len() == 2 => {
             let mut it = fields.into_iter();
@@ -151,8 +237,15 @@ fn parse_job(item: Value) -> Job {
             let index = as_text("index", it.next().unwrap());
             Job::Obj { block, index }
         }
+        Value::Ctor { fields, .. } | Value::Tuple(fields) if fields.len() == 3 => {
+            let mut it = fields.into_iter();
+            let generation = as_int("generation", it.next().unwrap());
+            let ptr = as_int("ptr", it.next().unwrap());
+            let to = as_int("to", it.next().unwrap());
+            Job::Checkpoint { generation, ptr, to }
+        }
         other => panic!(
-            "block_flush_write: expected a 5-field LOG job or a 2-field OBJECT job, got {:?}",
+            "block_flush_write: expected a 5-field LOG job, a 2-field OBJECT job, or a 3-field Checkpoint job, got {:?}",
             other
         ),
     }
@@ -195,13 +288,34 @@ fn advance_anchor(committed_block: &[u8]) {
 /// just became durable.
 fn commit_job(job: Job) {
     match job {
-        Job::Log { ptr, shard, bytes } => {
-            let text = String::from_utf8(bytes.clone())
-                .unwrap_or_else(|e| panic!("block_flush_write: log block is not valid UTF-8: {}", e));
-            pg_store::pg_log_append(Value::Str(intern_str(&text)));
-            advance_anchor(&bytes);
+        Job::Log { ptr, shard, generation, bytes } => {
+            // D044 Phase 2: for a pool-managed block, only commit whatever
+            // a timer checkpoint hasn't already durably flushed for this
+            // generation (see this module's "checkpoint watermark" doc
+            // section). A non-pool-managed job (empty shard) never
+            // reconciles against the tracker at all -- Phase 2 only ever
+            // exists for pool-managed blocks, so there is nothing for it
+            // to have collided with.
+            let to_commit: &[u8] = if shard.is_empty() {
+                &bytes[..]
+            } else {
+                match advance_watermark(generation, bytes.len() as i64) {
+                    Some(from) => &bytes[from as usize..],
+                    None => &[],
+                }
+            };
+            if !to_commit.is_empty() {
+                let text = String::from_utf8(to_commit.to_vec()).unwrap_or_else(|e| {
+                    panic!("block_flush_write: log block is not valid UTF-8: {}", e)
+                });
+                pg_store::pg_log_append(Value::Str(intern_str(&text)));
+                advance_anchor(to_commit);
+            }
             // Free-marker protocol (D044 Phase 1): only now, after the
-            // commit above is durable, is this block eligible for reuse.
+            // commit above (if any) is durable, is this block eligible for
+            // reuse. Unconditional on to_commit being non-empty -- the
+            // block is DONE being written to regardless of whether a
+            // checkpoint already covered all of it.
             if !shard.is_empty() {
                 let cell = as_int("fresh cell", rawmem::cell_new_raw(Value::Int(1)));
                 hotblk_pool::pool_return(&shard, ptr, cell);
@@ -213,6 +327,28 @@ fn commit_job(job: Job) {
                 Value::Str(intern_str(&index)),
             ]));
             advance_anchor(&block);
+        }
+        Job::Checkpoint { generation, ptr, to } => {
+            let Some(from) = advance_watermark(generation, to) else {
+                return; // stale or redundant -- drop silently, per design
+            };
+            let len = to - from;
+            if len <= 0 {
+                return;
+            }
+            let delta = match rawmem::mem_read_raw(Value::Tuple(vec![
+                Value::Int(ptr),
+                Value::Int(from),
+                Value::Int(len),
+            ])) {
+                Value::Bytes(b) => b,
+                other => panic!("block_flush_write: mem_read_raw returned non-Bytes: {:?}", other),
+            };
+            let text = String::from_utf8(delta.clone()).unwrap_or_else(|e| {
+                panic!("block_flush_write: checkpoint delta is not valid UTF-8: {}", e)
+            });
+            pg_store::pg_log_append(Value::Str(intern_str(&text)));
+            advance_anchor(&delta);
         }
     }
 }
@@ -383,5 +519,124 @@ mod tests {
             Value::Bytes(b) => assert_eq!(b, b"mixedbatchpayload"),
             other => panic!("expected Bytes, got {:?}", other),
         }
+    }
+
+    // D044 Phase 2 tests. CHECKPOINT_WATERMARK is process-wide global state
+    // (same reasoning as pg_store's scratch DB above, and hotblk.rs's
+    // ACTIVE_BLOCK) -- #[ignore], run explicitly, one at a time.
+
+    fn ctor_log_job_g(ptr: i64, shard: &str, generation: i64, bytes: &[u8]) -> Value {
+        Value::Ctor {
+            tag: 0,
+            fields: vec![
+                Value::Int(ptr),
+                Value::Str(intern_str(shard)),
+                Value::Int(generation),
+                Value::Int(0),
+                Value::Bytes(bytes.to_vec()),
+            ],
+        }
+    }
+
+    fn ctor_checkpoint_job(generation: i64, ptr: i64, to: i64) -> Value {
+        Value::Tuple(vec![Value::Int(generation), Value::Int(ptr), Value::Int(to)])
+    }
+
+    #[test]
+    #[ignore = "shares CHECKPOINT_WATERMARK (process-wide) and pg_store's scratch DB — run explicitly, not as part of the default suite"]
+    fn checkpoint_then_seal_does_not_duplicate() {
+        // A real arena so the Checkpoint job's mem_read_raw has something
+        // legitimate to read (unlike the LOG-job tests above, which never
+        // exercise mem_read_raw since they hand bytes straight through).
+        let full = format!("checkpoint-then-seal-payload-{}\n", std::process::id());
+        let full = full.as_bytes();
+        let cap = rawmem::mem_reserve_raw(Value::Int(full.len() as i64 + 16));
+        let ptr = match &cap {
+            Value::Tuple(es) => match &es[0] {
+                Value::Int(p) => *p,
+                other => panic!("expected Int ptr, got {:?}", other),
+            },
+            other => panic!("expected Tuple, got {:?}", other),
+        };
+        rawmem::mem_write_raw(Value::Tuple(vec![
+            Value::Int(ptr),
+            Value::Int(0),
+            Value::Bytes(full.to_vec()),
+        ]));
+
+        let generation = 900_000_000 + std::process::id() as i64;
+        let split = full.len() as i64 / 2;
+
+        // Timer checkpoints the first half.
+        let out = block_flush_write(Value::List(vec![ctor_checkpoint_job(generation, ptr, split)]));
+        assert_eq!(out, Value::Int(1));
+
+        // Seal arrives with the FULL bytes (as pg_hotblk_seal_mint.m1
+        // always sends them, from offset 0) for the SAME generation.
+        let shard = format!("checkpoint-test-shard-{}", std::process::id());
+        let out = block_flush_write(Value::List(vec![ctor_log_job_g(ptr, &shard, generation, full)]));
+        assert_eq!(out, Value::Int(1));
+
+        // The durable log must contain the marker text exactly ONCE, not
+        // duplicated by the seal re-committing what the checkpoint already
+        // flushed.
+        let scan = match pg_store::pg_log_scan(Value::Unit) {
+            Value::Str(h) => get_str(&h),
+            other => panic!("expected Text, got {:?}", other),
+        };
+        let marker = std::str::from_utf8(full).unwrap().trim_end();
+        assert_eq!(
+            scan.matches(marker).count(),
+            1,
+            "checkpoint + its own seal must commit the marker exactly once, not duplicate it"
+        );
+
+        // The block was still returned to the pool despite the checkpoint
+        // having covered part of it -- the seal's own free-marker step is
+        // unconditional (see commit_job's comment).
+        let (taken_ptr, _cell) = hotblk_pool::pool_take(&shard);
+        assert_eq!(taken_ptr, ptr, "seal must still return the block to its pool");
+    }
+
+    #[test]
+    #[ignore = "shares CHECKPOINT_WATERMARK (process-wide) — run explicitly, not as part of the default suite"]
+    fn stale_checkpoint_is_dropped_without_committing() {
+        let generation_new = 900_100_000 + std::process::id() as i64;
+        let generation_old = generation_new - 1; // strictly older, distinct range
+
+        // Advance the tracker to the NEWER generation first (simulates the
+        // writer having already rotated past what a late checkpoint still
+        // thinks is current).
+        let shard = format!("stale-checkpoint-shard-{}", std::process::id());
+        let marker = format!("stale-checkpoint-marker-{}\n", std::process::id());
+        let out = block_flush_write(Value::List(vec![ctor_log_job_g(
+            0, // ptr unused by this test -- no checkpoint here ever reads it
+            &shard,
+            generation_new,
+            marker.as_bytes(),
+        )]));
+        assert_eq!(out, Value::Int(1));
+
+        let before = match pg_store::pg_log_scan(Value::Unit) {
+            Value::Str(h) => get_str(&h),
+            other => panic!("expected Text, got {:?}", other),
+        };
+
+        // A checkpoint for the OLDER generation, arriving late, must be
+        // dropped -- silently, no panic, and critically no commit (it
+        // carries a bogus ptr on purpose; if this were mistakenly treated
+        // as live, mem_read_raw on it would be a real memory violation).
+        let out = block_flush_write(Value::List(vec![ctor_checkpoint_job(
+            generation_old,
+            i64::MAX / 2, // deliberately bogus -- must never be dereferenced
+            999_999,
+        )]));
+        assert_eq!(out, Value::Int(1), "block_flush_write still counts the job as processed, even when dropped");
+
+        let after = match pg_store::pg_log_scan(Value::Unit) {
+            Value::Str(h) => get_str(&h),
+            other => panic!("expected Text, got {:?}", other),
+        };
+        assert_eq!(before, after, "a stale checkpoint must commit nothing");
     }
 }
