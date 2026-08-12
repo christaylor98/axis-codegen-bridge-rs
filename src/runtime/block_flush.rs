@@ -24,10 +24,17 @@
 //!      so synchronously with the fire-and-forget send would race ahead of
 //!      the actual commit.
 //!
-//! NO_FILE_IO_RETURN: no `.axverity/hotblocks` paths, no `block-<seq>.bin`,
-//! no `flush_dir`, no shard machinery, no `fs_*` in the store path — the
-//! only durable writes are `pg_obj_block_put` / `pg_log_append` /
-//! `pg_anchor_set`. The index-frame seal->indexer notify is RETIRED (not
+//! NO_FILE_IO_RETURN (D039) — SUPERSEDED for the OBJECT family by D048
+//! (OBJSEG_V1): `pg_obj_block_put` now appends the sealed block's bytes to a
+//! fixed-size preallocated segment file (`objseg.rs`) as one pwrite+fsync;
+//! `gcore_objects` in postgres holds only the `(segment_id, offset, len)`
+//! pointer, never content. This is NOT a reversion to the pre-D039 disease
+//! (no per-object files, no `.axverity/hotblocks` shard machinery, no
+//! `fs_*` calls from M1) — the file I/O lives entirely in the Rust bridge,
+//! one write per flushed BLOCK (many objects), never one per object. The
+//! LOG family (`pg_log_append`) and the anchor (`pg_anchor_set`) are
+//! unchanged, still pure postgres rows. The index-frame seal->indexer notify
+//! is RETIRED (not
 //! reinvented): graphcore runs no indexer (INDEXER_NOTIFY, deferred), so
 //! there is nothing to notify.
 //!

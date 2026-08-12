@@ -1,25 +1,32 @@
 //! pg_store — postgres-backed durable store for the graphcore store layer
 //! (AXVERITY_POSTGRES_STORE_SWAP_V1).
 //!
-//! Objects, the append-only ledger, and the state anchor live in a real
-//! postgres database. Postgres's WAL + group commit OWN durability — one
-//! fdatasync per commit batch, crash-safe ordering for free — so the M1
-//! store layer stops issuing its own fsync barriers. Everything here is
-//! under the surface: the wire ABI and the store-op semantics (put/get/
-//! append/bind + log replay + anchor chain) are unchanged; the 107-test
-//! battery sees the same addresses, log lines, and wire format.
+//! The append-only ledger and the state anchor live in a real postgres
+//! database; postgres's WAL + group commit own their durability. Object
+//! CONTENT (D048, OBJSEG_V1) lives in fixed-size preallocated segment files
+//! on local disk (see `objseg.rs`) — `gcore_objects` holds only the index
+//! (`addr -> segment_id, seg_offset, len`), never the bytes. Everything
+//! here is under the surface: the wire ABI and the store-op semantics
+//! (put/get/append/bind + log replay + anchor chain) are unchanged; the
+//! 107-test battery sees the same addresses, log lines, and wire format.
 //!
 //! The builtins (bridge leaf fns, declared in axis-bridge.axreg):
 //!   * `pg_bytes_put(addr: Text, content: Bytes) -> Unit`
-//!         content-addressed object upsert (ON CONFLICT DO NOTHING).
+//!         content-addressed object upsert (ON CONFLICT DO NOTHING). Bytes
+//!         go through `objseg::seg_append`; only the resulting pointer is
+//!         a postgres row.
 //!   * `pg_bytes_get(addr: Text) -> Bytes`
 //!         object read; empty Bytes on absent (ZERO_ROWS_NEVER_MEANS_UNKNOWN
 //!         at the wire stays in M1 — the seam returns Bytes either way).
+//!         Looks up the pointer, then `objseg::seg_read`s the bytes.
 //!   * `pg_obj_block_put(block: Bytes, index: Text) -> Unit`
 //!         parse the arena's pending index ("<addr>\t<off>\t<len>\n" lines),
-//!         slice `block` per line, and insert every object in ONE committed
-//!         transaction — one commit (one group-commit fdatasync) per flushed
-//!         block, preserving the block-granular durability model.
+//!         append the WHOLE sealed `block` to the current segment in ONE
+//!         `pwrite`+`fsync` (D048 — this is the actual fix: the block used
+//!         to get exploded into one postgres row per object here; now it's
+//!         one contiguous disk write and postgres gets only per-object
+//!         pointers into it), then insert every object's index row in ONE
+//!         committed transaction.
 //!   * `pg_log_append(line: Text) -> Unit`
 //!         append one ledger block as a row (seq = append order).
 //!   * `pg_log_scan(Unit) -> Text`
@@ -48,14 +55,51 @@ use postgres::{Client, NoTls};
 
 use super::value::{Value, get_str, intern_str};
 
-// Schema (idempotent bootstrap; run on first connect).
+// Schema (idempotent bootstrap; run on first connect). gcore_objects is
+// handled separately by `migrate_gcore_objects` (D048 changed its shape
+// from content-holding to index-only; see that fn).
 const BOOTSTRAP: &[&str] = &[
-    "CREATE TABLE IF NOT EXISTS gcore_objects (addr text PRIMARY KEY, content bytea NOT NULL)",
     "CREATE TABLE IF NOT EXISTS gcore_log (seq bigserial PRIMARY KEY, line text NOT NULL)",
     "CREATE TABLE IF NOT EXISTS gcore_anchor (k text PRIMARY KEY, v text NOT NULL)",
     "CREATE TABLE IF NOT EXISTS gcore_meta (k text PRIMARY KEY, v text NOT NULL)",
-    "INSERT INTO gcore_meta(k, v) VALUES ('schema_version', '1') ON CONFLICT (k) DO NOTHING",
+    "INSERT INTO gcore_meta(k, v) VALUES ('schema_version', '2') ON CONFLICT (k) DO NOTHING",
 ];
+
+/// D048 (OBJSEG_V1): `gcore_objects` changed from `(addr, content bytea)` to
+/// `(addr, segment_id, seg_offset, len)` — an index into `objseg.rs`'s
+/// segment files, never the content itself. Pre-D048 data is disposable
+/// (Chris, 2026-08-12 turn: "existing data disposable" was the accepted
+/// default) — detected by the old `content` column's presence and dropped,
+/// not migrated row-by-row (there is nowhere for the old bytes to migrate
+/// TO without re-deriving segment offsets from scratch, and the store this
+/// runs against is either a fresh per-PID test scratch DB or a dev DB with
+/// nothing durable riding on it).
+fn migrate_gcore_objects(client: &mut Client) {
+    let has_old_col = client
+        .query_opt(
+            "SELECT 1 FROM information_schema.columns \
+             WHERE table_name = 'gcore_objects' AND column_name = 'content'",
+            &[],
+        )
+        .unwrap_or_else(|e| panic!("pg_store: migrate_gcore_objects check: {e}"))
+        .is_some();
+    if has_old_col {
+        client
+            .execute("DROP TABLE gcore_objects", &[])
+            .unwrap_or_else(|e| panic!("pg_store: migrate_gcore_objects drop: {e}"));
+    }
+    client
+        .execute(
+            "CREATE TABLE IF NOT EXISTS gcore_objects ( \
+                addr text PRIMARY KEY, \
+                segment_id bigint NOT NULL, \
+                seg_offset bigint NOT NULL, \
+                len bigint NOT NULL \
+             )",
+            &[],
+        )
+        .unwrap_or_else(|e| panic!("pg_store: migrate_gcore_objects create: {e}"));
+}
 
 static PG: OnceLock<Mutex<Client>> = OnceLock::new();
 
@@ -74,6 +118,7 @@ fn connect_and_bootstrap() -> Client {
     };
     let mut client = Client::connect(&dsn, NoTls)
         .unwrap_or_else(|e| panic!("pg_store: connect failed ({dsn}): {e}"));
+    migrate_gcore_objects(&mut client);
     for stmt in BOOTSTRAP {
         client.execute(*stmt, &[]).unwrap_or_else(|e| {
             panic!("pg_store: bootstrap failed ({stmt}): {e}")
@@ -135,52 +180,67 @@ fn to_bytes(v: Value, who: &str, what: &str) -> Vec<u8> {
 // ── pg_bytes_put / pg_bytes_get ─────────────────────────────────────────────
 
 /// `pg_bytes_put(addr: Text, content: Bytes) -> Unit` — content-addressed,
-/// idempotent upsert. One committed row; postgres's group commit owns the
-/// fsync.
+/// idempotent upsert. Bytes are appended to the current segment (D048,
+/// `objseg::seg_append` — one pwrite + one fsync); the postgres row is only
+/// the pointer.
 #[track_caller]
 pub fn pg_bytes_put(args: Value) -> Value {
     let (a, b) = unpack2(args, "pg_bytes_put");
     let addr = to_str(a, "pg_bytes_put", "addr");
     let content = to_bytes(b, "pg_bytes_put", "content");
+    let (seg_id, off) = super::objseg::seg_append(&content);
+    let len = content.len() as i64;
     let mut c = conn().lock().unwrap();
     c.execute(
-        "INSERT INTO gcore_objects(addr, content) VALUES ($1, $2) \
+        "INSERT INTO gcore_objects(addr, segment_id, seg_offset, len) VALUES ($1, $2, $3, $4) \
          ON CONFLICT (addr) DO NOTHING",
-        &[&addr, &content],
+        &[&addr, &seg_id, &off, &len],
     )
     .unwrap_or_else(|e| panic!("pg_bytes_put({addr}): {e}"));
     Value::Unit
 }
 
 /// `pg_bytes_get(addr: Text) -> Bytes` — empty Bytes on absent; the M1 seam
-/// maps empty -> miss (same convention as contentidx_get).
+/// maps empty -> miss (same convention as contentidx_get). Looks up the
+/// segment pointer, then reads the bytes off disk (D048).
 #[track_caller]
 pub fn pg_bytes_get(addr: Value) -> Value {
     let addr = to_str(addr, "pg_bytes_get", "addr");
     let mut c = conn().lock().unwrap();
-    match c.query_opt("SELECT content FROM gcore_objects WHERE addr = $1", &[&addr])
-        .unwrap_or_else(|e| panic!("pg_bytes_get({addr}): {e}"))
-    {
+    let row = c
+        .query_opt(
+            "SELECT segment_id, seg_offset, len FROM gcore_objects WHERE addr = $1",
+            &[&addr],
+        )
+        .unwrap_or_else(|e| panic!("pg_bytes_get({addr}): {e}"));
+    drop(c);
+    match row {
         Some(row) => {
-            let content: Vec<u8> = row.get(0);
-            Value::Bytes(content)
+            let seg_id: i64 = row.get(0);
+            let off: i64 = row.get(1);
+            let len: i64 = row.get(2);
+            Value::Bytes(super::objseg::seg_read(seg_id, off, len))
         }
         None => Value::Bytes(Vec::new()),
     }
 }
 
 /// `pg_obj_block_put(block: Bytes, index: Text) -> Unit` — parse the pending
-/// index lines and insert every object in ONE transaction. A malformed index
-/// line is a panic (loud corruption, never silent drop); the whole block
-/// commits atomically or not at all — strictly stronger than the old
-/// write-block-then-append-index two-step crash window.
+/// index lines, append the WHOLE `block` to the current segment in ONE
+/// pwrite+fsync (D048 — this used to explode into one postgres row per
+/// object; now it's one contiguous disk write), then insert every object's
+/// pointer row in ONE transaction. A malformed index line is a panic (loud
+/// corruption, never silent drop); the index commit is atomic or not at
+/// all — strictly stronger than the old write-block-then-append-index
+/// two-step crash window, and the segment append itself is durable
+/// (fsync'd) before any pointer row can reference it.
 #[track_caller]
 pub fn pg_obj_block_put(args: Value) -> Value {
     let (b, i) = unpack2(args, "pg_obj_block_put");
     let block = to_bytes(b, "pg_obj_block_put", "block");
     let index = to_str(i, "pg_obj_block_put", "index");
 
-    let mut objs: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut objs: Vec<(String, i64, i64)> = Vec::new(); // (addr, off-in-block, len)
     for line in index.lines() {
         if line.is_empty() {
             continue;
@@ -195,22 +255,26 @@ pub fn pg_obj_block_put(args: Value) -> Value {
             .unwrap_or_else(|e| panic!("pg_obj_block_put: bad length in {line:?}: {e}"));
         let end = off.checked_add(len)
             .unwrap_or_else(|| panic!("pg_obj_block_put: overflow in {line:?}"));
-        let content = block
-            .get(off..end)
-            .unwrap_or_else(|| panic!("pg_obj_block_put: slice out of range in {line:?} (block={})", block.len()));
-        objs.push((addr.to_string(), content.to_vec()));
+        if block.get(off..end).is_none() {
+            panic!("pg_obj_block_put: slice out of range in {line:?} (block={})", block.len());
+        }
+        objs.push((addr.to_string(), off as i64, len as i64));
     }
     if objs.is_empty() {
         return Value::Unit;
     }
 
+    // One contiguous, fsync'd write for the whole block -- the fix.
+    let (seg_id, base_off) = super::objseg::seg_append(&block);
+
     let mut c = conn().lock().unwrap();
     let mut tx = c.transaction().unwrap_or_else(|e| panic!("pg_obj_block_put: begin: {e}"));
-    for (addr, content) in &objs {
+    for (addr, off, len) in &objs {
+        let seg_offset = base_off + off;
         tx.execute(
-            "INSERT INTO gcore_objects(addr, content) VALUES ($1, $2) \
+            "INSERT INTO gcore_objects(addr, segment_id, seg_offset, len) VALUES ($1, $2, $3, $4) \
              ON CONFLICT (addr) DO NOTHING",
-            &[addr, content],
+            &[addr, &seg_id, &seg_offset, len],
         )
         .unwrap_or_else(|e| panic!("pg_obj_block_put({addr}): {e}"));
     }

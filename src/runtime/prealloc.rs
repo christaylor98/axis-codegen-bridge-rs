@@ -34,7 +34,11 @@ use super::value::{get_str, Value};
 /// Reserve `size` bytes of extent for `path` via `fallocate(KEEP_SIZE)`,
 /// creating the file if absent. Returns true if the reservation was applied,
 /// false if the filesystem does not support it (a tolerated no-op).
-fn prealloc_file(path: &str, size: i64) -> bool {
+///
+/// pub(crate): also reused by `objseg.rs` (D048) for graphcore's OBJECT
+/// segment files — same KEEP_SIZE rationale applies verbatim (see this
+/// module's header), no need for a second implementation.
+pub(crate) fn prealloc_file(path: &str, size: i64) -> bool {
     let f = OpenOptions::new()
         .create(true)
         .write(true)

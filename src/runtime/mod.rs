@@ -70,5 +70,6 @@ pub mod hotblk_pool;
 pub mod rawblk;
 pub mod pgbshape;
 pub mod pg_store;
+pub mod objseg;
 
 pub use value::Value;
