@@ -291,6 +291,11 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("qhm_get",              "axis_codegen_bridge::runtime::qhm::qhm_get");
     m.insert("qhm_flush",            "axis_codegen_bridge::runtime::qhm::qhm_flush");
     m.insert("qhm_stats",            "axis_codegen_bridge::runtime::qhm::qhm_stats");
+
+    // -- graphcore verb-index residency cache (gcidx.rs — D044 Phase 3,
+    //    AXVERITY_HOTBLK_TIMED_FLUSH_V1). Own cap, distinct from qhm's --
+    //    scoped exclusively to gr_index_lookup.m1's own artifact fetch.
+    m.insert("gcidx_get",            "axis_codegen_bridge::runtime::gcidx::gcidx_get");
     // -- AXVERITY_ZEROCOPY_READPATH_BUILD_V1 site 4: RECORD field extractor
     //    variants (record_field.rs); selected by AXVERITY_QHM_FIELD --
     m.insert("logbuf_open",          "axis_codegen_bridge::runtime::logbuf::logbuf_open");

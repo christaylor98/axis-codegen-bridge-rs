@@ -59,7 +59,11 @@ const BOOTSTRAP: &[&str] = &[
 
 static PG: OnceLock<Mutex<Client>> = OnceLock::new();
 
-fn conn() -> &'static Mutex<Client> {
+// pub(crate), not private: gcidx.rs's own tests need direct row-level
+// control (DELETE) to prove cache-only serving rather than assuming it
+// from code shape (D044 Phase 3's acceptance criteria — see that
+// module's tests).
+pub(crate) fn conn() -> &'static Mutex<Client> {
     PG.get_or_init(|| Mutex::new(connect_and_bootstrap()))
 }
 
