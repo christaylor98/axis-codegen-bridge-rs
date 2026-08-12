@@ -43,19 +43,54 @@
 //!   * 5-field `Value::Ctor`/`Tuple` `(Int, Text, Int, Int, Bytes)` — the
 //!     shape `pg_hotblk_job` (identity-pinned, unchanged from
 //!     AXVERITY_FRONTEND_WRITEPATH_INTEGRATION_V1) still constructs, used
-//!     for the LOG family. Only the last field (the sealed block's bytes)
-//!     carries meaning now — the other four are inert placeholders kept so
-//!     pg_hotblk_job's type signature (and therefore its identity-pinned
-//!     ABI) stays unchanged; see graphcore/lib/pg_hotblk_job.m1's header.
-//!     Routed to `pg_log_append`.
+//!     for the LOG family. Routed to `pg_log_append`. AXVERITY_HOTBLK_POOL_
+//!     WIRE_V1 (D044 Phase 1) repurposes two of the four previously-inert
+//!     leading fields — the TYPE signature (and therefore the identity-
+//!     pinned ABI, §6: identity is sha256(name) only, never contract-aware)
+//!     is unchanged, only what the values MEAN:
+//!       field 0 (Int)  — the sealed block's arena `ptr` (was inert Int(0))
+//!       field 1 (Text) — the hotblk_pool shard name this block belongs to,
+//!                        "" if the producer isn't pool-managed (was inert
+//!                        Text(""))
+//!       fields 2,3     — still inert (Int(0), Int(0))
+//!       field 4 (Bytes)— the sealed block's bytes, unchanged
+//!     See graphcore/lib/pg_hotblk_job.m1's header.
 //!   * 2-field `Value::Ctor`/`Tuple` `(Bytes, Text)` — `(block, index)`, the
 //!     OBJECT family's own shape (graphcore/lib/gr_obj_flush.m1 builds it
 //!     directly; there is no identity-pinned producer for this family — see
-//!     that file's header for why). Routed to `pg_obj_block_put`.
+//!     that file's header for why). Routed to `pg_obj_block_put`. Not
+//!     pool-managed (D044 Phase 1 scopes the LOG family only).
 //!
 //! Identities are sha256(name_utf8), the bridge-wide convention.
+//!
+//! ## AXVERITY_HOTBLK_POOL_WIRE_V1 (D044 Phase 1) — the free-marker protocol
+//!
+//! A pool-managed block (non-empty `shard`) is only eligible for reuse once
+//! ITS bytes are durably committed here. `commit_job`'s LOG arm, after
+//! `pg_log_append` + `advance_anchor` succeed, mints a fresh Active-state
+//! cell (`rawmem::cell_new_raw`, same call `pg_hotblk_mint.m1` used to make
+//! inline) and returns `(ptr, cell)` to `hotblk_pool::pool_return(shard,
+//! ...)` — the NON-BLOCKING return path (`pool_put`, the allocator's own
+//! blocking-at-cap push, is deliberately NOT used here: the allocator races
+//! ahead and re-fills the queue to cap almost immediately after every
+//! `pool_take`, so a same-cap blocking return routinely finds the queue
+//! full and deadlocks the sole flush-worker thread inside this very call —
+//! reproduced directly via graphcore's tests/run.sh P3 stale-detection
+//! case before this fix; see `pool_return`'s own doc for the full trace).
+//! Nothing else in this codebase ever calls `pool_return`/`pool_put` for
+//! the LOG family — so a block genuinely cannot be handed back out to a new
+//! writer (`hotblk_pool_take`) while a flush against it is still in
+//! flight; the only path back into circulation runs through this exact
+//! commit succeeding first. The old (now-Sealed) cell is left leaked — cells are
+//! permanent for the process lifetime by explicit prior decision
+//! (rawmem.rs's own doc comment on `cell_new_raw`), and this doesn't change
+//! that leak rate: today's pre-Phase-1 seal_mint already leaked one cell
+//! per rotate synchronously; this moves the same one leak to the same one
+//! rotate, just after the flush instead of before.
 
+use super::hotblk_pool;
 use super::pg_store;
+use super::rawmem;
 use super::value::{get_str, intern_str, Value};
 
 fn as_bytes(field: &'static str, v: Value) -> Vec<u8> {
@@ -72,11 +107,20 @@ fn as_text(field: &'static str, v: Value) -> String {
     }
 }
 
+fn as_int(field: &'static str, v: Value) -> i64 {
+    match v {
+        Value::Int(n) => n,
+        other => panic!("block_flush_write: {} expected Int, got {:?}", field, other),
+    }
+}
+
 /// One parsed, ready-to-commit flush job.
 enum Job {
     /// LOG family: the accumulated ledger bytes, committed as one
-    /// `pg_log_append` row.
-    Log { bytes: Vec<u8> },
+    /// `pg_log_append` row. `ptr`/`shard` identify the arena block this
+    /// came from for the free-marker protocol (D044 Phase 1) — `shard`
+    /// empty means "not pool-managed, don't return anything."
+    Log { ptr: i64, shard: String, bytes: Vec<u8> },
     /// OBJECT family: a sealed arena block plus its pending index
     /// (`"<addr>\t<off>\t<len>\n"` lines), committed as one
     /// `pg_obj_block_put` transaction.
@@ -93,8 +137,13 @@ enum Job {
 fn parse_job(item: Value) -> Job {
     match item {
         Value::Ctor { fields, .. } | Value::Tuple(fields) if fields.len() == 5 => {
-            let bytes = as_bytes("bytes", fields.into_iter().nth(4).unwrap());
-            Job::Log { bytes }
+            let mut it = fields.into_iter();
+            let ptr = as_int("ptr", it.next().unwrap());
+            let shard = as_text("shard", it.next().unwrap());
+            let _f2 = it.next().unwrap();
+            let _f3 = it.next().unwrap();
+            let bytes = as_bytes("bytes", it.next().unwrap());
+            Job::Log { ptr, shard, bytes }
         }
         Value::Ctor { fields, .. } | Value::Tuple(fields) if fields.len() == 2 => {
             let mut it = fields.into_iter();
@@ -146,11 +195,17 @@ fn advance_anchor(committed_block: &[u8]) {
 /// just became durable.
 fn commit_job(job: Job) {
     match job {
-        Job::Log { bytes } => {
+        Job::Log { ptr, shard, bytes } => {
             let text = String::from_utf8(bytes.clone())
                 .unwrap_or_else(|e| panic!("block_flush_write: log block is not valid UTF-8: {}", e));
             pg_store::pg_log_append(Value::Str(intern_str(&text)));
             advance_anchor(&bytes);
+            // Free-marker protocol (D044 Phase 1): only now, after the
+            // commit above is durable, is this block eligible for reuse.
+            if !shard.is_empty() {
+                let cell = as_int("fresh cell", rawmem::cell_new_raw(Value::Int(1)));
+                hotblk_pool::pool_return(&shard, ptr, cell);
+            }
         }
         Job::Obj { block, index } => {
             pg_store::pg_obj_block_put(Value::Tuple(vec![
@@ -249,6 +304,34 @@ mod tests {
             other => panic!("expected Text, got {:?}", other),
         };
         assert_ne!(before, after, "anchor must advance after a durable commit");
+    }
+
+    #[test]
+    #[ignore = "shares pg_store's process-wide scratch DB with pg_store::tests::round_trips — run explicitly, not as part of the default suite"]
+    fn log_job_with_shard_returns_block_to_pool() {
+        // D044 Phase 1 free-marker protocol: a non-empty shard field means
+        // this job's block is pool-managed, and committing it must return
+        // (ptr, a freshly-minted cell) to that shard's pool -- a subsequent
+        // pool_take on the SAME shard must succeed immediately (not block)
+        // and hand back the ptr this job carried.
+        let shard = format!("block_flush_pool_test_shard_{}", std::process::id());
+        let marker = format!("block_flush_pool_test_marker_{}\n", std::process::id());
+        let ptr = 0x1234_5678i64; // synthetic -- never dereferenced by this test
+        let job = Value::Ctor {
+            tag: 0,
+            fields: vec![
+                Value::Int(ptr),
+                Value::Str(intern_str(&shard)),
+                Value::Int(0),
+                Value::Int(0),
+                Value::Bytes(marker.into_bytes()),
+            ],
+        };
+        let out = block_flush_write(Value::List(vec![job]));
+        assert_eq!(out, Value::Int(1));
+        let (taken_ptr, taken_cell) = hotblk_pool::pool_take(&shard);
+        assert_eq!(taken_ptr, ptr, "pool must hand back the same ptr the committed job carried");
+        assert!(taken_cell != 0, "returned cell must be a real minted AtomicI64 address");
     }
 
     #[test]

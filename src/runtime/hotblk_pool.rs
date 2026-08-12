@@ -76,6 +76,33 @@ pub(crate) fn pool_put(shard: &str, ptr: i64, cell: i64) {
     p.not_empty.notify_one();
 }
 
+/// AXVERITY_HOTBLK_POOL_WIRE_V1 (D044 Phase 1) — push a FLUSH-WORKER-freed
+/// `(ptr, cell)` back into circulation WITHOUT ever blocking, even past
+/// `cap`. This is a deliberately different contract from `pool_put` above:
+/// `pool_put` blocking at cap is correct for the allocator thread (it's
+/// throttling ITS OWN eagerness, per this module's own doc comment), but is
+/// a genuine deadlock risk for the flush-worker's return step — the
+/// allocator races ahead and tops the queue up to `cap` almost immediately
+/// after every `pool_take`, so a same-cap blocking return would routinely
+/// find the queue already full and block the sole flush-worker thread
+/// inside `commit_job`, permanently starving every job queued behind it
+/// (reproduced directly: graphcore's tests/run.sh P3 stale-detection case
+/// went from PASS to a deterministic FAIL — the second of two expected log
+/// flushes during a burst never reached postgres because the worker was
+/// stuck here). Growing past `cap` on this path is the correct trade: it
+/// costs a few extra idle 64 KiB arenas sitting in the queue until the
+/// request thread's next few `pool_take`s catch up (self-correcting, not
+/// unbounded — bounded by how far ahead of `pool_take` the request thread's
+/// OWN rotation rate can ever get, which this fn does not need to know
+/// about), never a stuck flush worker.
+pub(crate) fn pool_return(shard: &str, ptr: i64, cell: i64) {
+    let p = pool_for(shard);
+    let mut q = p.queue.lock().unwrap();
+    q.push_back((ptr, cell));
+    drop(q);
+    p.not_empty.notify_one();
+}
+
 /// Pop one ready `(ptr, cell)` from `shard`'s pool, BLOCKING if empty (the
 /// documented "what happens when the allocator can't keep up" case the intent
 /// requires be measured, not assumed away). Internal Rust entry —
