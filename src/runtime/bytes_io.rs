@@ -78,6 +78,65 @@ pub fn fs_write_bytes(args: Value) -> Value {
     Value::Unit
 }
 
+// ── fs_write_raw ─────────────────────────────────────────────────────────────
+// AXVERITY_WRITE_PATH_SLICE_V1 (axVerity-working2): durably write a raw
+// memory range directly to a file — the same write_durable() barrier as
+// fs_write_bytes (temp + fsync + rename + parent-dir fsync), but without
+// materializing a Value::Bytes copy first. Narrowly scoped to this one
+// need: move opaque bytes from a known address to a file, no type
+// interpretation involved.
+
+/// `fs_write_raw(path: Text, ptr: Int, offset: Int, len: Int) -> Unit`
+///
+/// Panics if `offset < 0 || len < 0`. Caller is responsible for `ptr+offset`
+/// through `ptr+offset+len` being a valid, initialized range — same
+/// unchecked contract as `mem_read_raw`.
+#[track_caller]
+pub fn fs_write_raw(args: Value) -> Value {
+    let (path_v, ptr_v, offset_v, len_v) = match args {
+        Value::Tuple(es) if es.len() == 4 => {
+            let mut it = es.into_iter();
+            (
+                it.next().unwrap(),
+                it.next().unwrap(),
+                it.next().unwrap(),
+                it.next().unwrap(),
+            )
+        }
+        other => panic!("fs_write_raw: expected Tuple(Text, Int, Int, Int), got {:?}", other),
+    };
+    let path = match path_v {
+        Value::Str(h) => get_str(h),
+        other => panic!("fs_write_raw: arg 0 expected Text, got {:?}", other),
+    };
+    let ptr = match ptr_v {
+        Value::Int(n) => n,
+        other => panic!("fs_write_raw: arg 1 expected Int, got {:?}", other),
+    };
+    let offset = match offset_v {
+        Value::Int(n) => n,
+        other => panic!("fs_write_raw: arg 2 expected Int, got {:?}", other),
+    };
+    let len = match len_v {
+        Value::Int(n) => n,
+        other => panic!("fs_write_raw: arg 3 expected Int, got {:?}", other),
+    };
+    if offset < 0 || len < 0 {
+        panic!(
+            "fs_write_raw: offset and len must be >= 0, got offset={}, len={}",
+            offset, len
+        );
+    }
+    let slice = unsafe {
+        let src = (ptr as *const u8).add(offset as usize);
+        std::slice::from_raw_parts(src, len as usize)
+    };
+    if let Err(e) = write_durable(&path, slice) {
+        panic!("fs_write_raw({}): {}", path, e);
+    }
+    Value::Unit
+}
+
 // ── fs_read_bytes ────────────────────────────────────────────────────────────
 
 #[track_caller]

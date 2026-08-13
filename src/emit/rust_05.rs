@@ -268,6 +268,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     // ── Bytes I/O (BRIDGE_BYTES_IO_M1 — resolves hld:axverity-text-to-bytes-dependency) ─
     m.insert("text_to_bytes",        "axis_codegen_bridge::runtime::bytes_io::text_to_bytes");
     m.insert("fs_write_bytes",       "axis_codegen_bridge::runtime::bytes_io::fs_write_bytes");
+    m.insert("fs_write_raw",         "axis_codegen_bridge::runtime::bytes_io::fs_write_raw");
     m.insert("fs_read_bytes",        "axis_codegen_bridge::runtime::bytes_io::fs_read_bytes");
     // ── Seek / range read (seek.rs — BRIDGE_SEEK_V1, spike:axverity-spike1) ─────
     m.insert("fs_read_range",        "axis_codegen_bridge::runtime::seek::fs_read_range");
@@ -581,6 +582,11 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("mem_write_raw",        "axis_codegen_bridge::runtime::rawmem::mem_write_raw");
     m.insert("mem_read_raw",         "axis_codegen_bridge::runtime::rawmem::mem_read_raw");
     m.insert("mem_free_raw",         "axis_codegen_bridge::runtime::rawmem::mem_free_raw");
+    // AXVERITY_WRITE_PATH_SLICE_V1 (axVerity-working2) — narrowly-scoped raw
+    // memcpy + fixed-width Int<->raw-bytes, not a general reinterpret-cast.
+    m.insert("mem_copy_raw",         "axis_codegen_bridge::runtime::rawmem::mem_copy_raw");
+    m.insert("mem_write_int_raw",    "axis_codegen_bridge::runtime::rawmem::mem_write_int_raw");
+    m.insert("mem_read_int_raw",     "axis_codegen_bridge::runtime::rawmem::mem_read_int_raw");
 
     m
 }

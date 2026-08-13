@@ -85,6 +85,22 @@ fn unpack3(fn_name: &'static str, args: Value) -> (Value, Value, Value) {
     }
 }
 
+fn unpack5(fn_name: &'static str, args: Value) -> (Value, Value, Value, Value, Value) {
+    match args {
+        Value::Tuple(es) if es.len() == 5 => {
+            let mut it = es.into_iter();
+            (
+                it.next().unwrap(),
+                it.next().unwrap(),
+                it.next().unwrap(),
+                it.next().unwrap(),
+                it.next().unwrap(),
+            )
+        }
+        other => panic!("{}: expected a 5-Tuple, got {:?}", fn_name, other),
+    }
+}
+
 fn as_int(fn_name: &'static str, arg_ix: usize, v: Value) -> i64 {
     match v {
         Value::Int(n) => n,
@@ -248,6 +264,85 @@ pub fn mem_free_raw(args: Value) -> Value {
         dealloc(ptr as *mut u8, layout);
     }
     Value::Unit
+}
+
+// ── mem_copy_raw / mem_write_int_raw / mem_read_int_raw ────────────────────
+// AXVERITY_WRITE_PATH_SLICE_V1 (axVerity-working2): three narrowly-scoped
+// additions, each justified by one specific, already-identified need in
+// that project's write path — NOT a general "reinterpret raw memory as any
+// type" capability. mem_copy_raw moves opaque bytes between two raw
+// addresses; mem_write_int_raw/mem_read_int_raw convert exactly one known
+// type (Int) at exactly one known width (8 bytes), nothing generic. Same
+// unchecked-primitive contract as the four fns above: no bounds checking,
+// caller's responsibility, checked wrappers belong in M1, not here.
+
+/// `mem_copy_raw(dst_ptr: Int, dst_offset: Int, src_ptr: Int, src_offset: Int, len: Int) -> Unit`
+///
+/// Copy `len` bytes from `[src_ptr+src_offset, ...)` to `[dst_ptr+dst_offset, ...)`,
+/// entirely within raw memory — no `Value::Bytes` is ever materialized. Source
+/// and destination ranges must not overlap (same contract as
+/// `ptr::copy_nonoverlapping` / `mem_write_raw`'s own copy). Panics if either
+/// offset or `len` is negative.
+#[track_caller]
+pub fn mem_copy_raw(args: Value) -> Value {
+    let (dst_ptr_v, dst_offset_v, src_ptr_v, src_offset_v, len_v) = unpack5("mem_copy_raw", args);
+    let dst_ptr = as_int("mem_copy_raw", 0, dst_ptr_v);
+    let dst_offset = as_int("mem_copy_raw", 1, dst_offset_v);
+    let src_ptr = as_int("mem_copy_raw", 2, src_ptr_v);
+    let src_offset = as_int("mem_copy_raw", 3, src_offset_v);
+    let len = as_int("mem_copy_raw", 4, len_v);
+    if dst_offset < 0 || src_offset < 0 || len < 0 {
+        panic!(
+            "mem_copy_raw: offsets and len must be >= 0, got dst_offset={}, src_offset={}, len={}",
+            dst_offset, src_offset, len
+        );
+    }
+    unsafe {
+        let src = (src_ptr as *const u8).add(src_offset as usize);
+        let dst = (dst_ptr as *mut u8).add(dst_offset as usize);
+        ptr::copy_nonoverlapping(src, dst, len as usize);
+    }
+    Value::Unit
+}
+
+/// `mem_write_int_raw(ptr: Int, offset: Int, value: Int) -> Unit`
+///
+/// Write `value` as 8 raw bytes (native-endian i64) at `[ptr+offset,
+/// ptr+offset+8)` — a direct binary write, not a text encoding. Panics if
+/// `offset < 0`.
+#[track_caller]
+pub fn mem_write_int_raw(args: Value) -> Value {
+    let (ptr_v, offset_v, value_v) = unpack3("mem_write_int_raw", args);
+    let ptr = as_int("mem_write_int_raw", 0, ptr_v);
+    let offset = as_int("mem_write_int_raw", 1, offset_v);
+    let value = as_int("mem_write_int_raw", 2, value_v);
+    if offset < 0 {
+        panic!("mem_write_int_raw: offset must be >= 0, got {}", offset);
+    }
+    unsafe {
+        let dst = (ptr as *mut u8).add(offset as usize) as *mut i64;
+        ptr::write_unaligned(dst, value);
+    }
+    Value::Unit
+}
+
+/// `mem_read_int_raw(ptr: Int, offset: Int) -> Int`
+///
+/// Read 8 raw bytes (native-endian i64) at `[ptr+offset, ptr+offset+8)` back
+/// as an `Int` — the inverse of `mem_write_int_raw`. Panics if `offset < 0`.
+#[track_caller]
+pub fn mem_read_int_raw(args: Value) -> Value {
+    let (ptr_v, offset_v) = unpack2("mem_read_int_raw", args);
+    let ptr = as_int("mem_read_int_raw", 0, ptr_v);
+    let offset = as_int("mem_read_int_raw", 1, offset_v);
+    if offset < 0 {
+        panic!("mem_read_int_raw: offset must be >= 0, got {}", offset);
+    }
+    let value = unsafe {
+        let src = (ptr as *const u8).add(offset as usize) as *const i64;
+        ptr::read_unaligned(src)
+    };
+    Value::Int(value)
 }
 
 #[cfg(test)]
