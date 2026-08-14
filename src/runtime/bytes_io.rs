@@ -85,6 +85,12 @@ pub fn fs_write_bytes(args: Value) -> Value {
 // materializing a Value::Bytes copy first. Narrowly scoped to this one
 // need: move opaque bytes from a known address to a file, no type
 // interpretation involved.
+//
+// AXVERITY_RAWMEM_CALL_CONVENTION_V1: native params (Arc<str>, i64, i64,
+// i64) instead of a boxed Value::Tuple — see rawmem.rs's matching note.
+// This fn is fsync-bound (microseconds+), so the boxing cost here was
+// already noise; migrated anyway to keep the write-path-slice family on one
+// convention rather than leaving one of four fns as a special case.
 
 /// `fs_write_raw(path: Text, ptr: Int, offset: Int, len: Int) -> Unit`
 ///
@@ -92,35 +98,7 @@ pub fn fs_write_bytes(args: Value) -> Value {
 /// through `ptr+offset+len` being a valid, initialized range — same
 /// unchecked contract as `mem_read_raw`.
 #[track_caller]
-pub fn fs_write_raw(args: Value) -> Value {
-    let (path_v, ptr_v, offset_v, len_v) = match args {
-        Value::Tuple(es) if es.len() == 4 => {
-            let mut it = es.into_iter();
-            (
-                it.next().unwrap(),
-                it.next().unwrap(),
-                it.next().unwrap(),
-                it.next().unwrap(),
-            )
-        }
-        other => panic!("fs_write_raw: expected Tuple(Text, Int, Int, Int), got {:?}", other),
-    };
-    let path = match path_v {
-        Value::Str(h) => get_str(h),
-        other => panic!("fs_write_raw: arg 0 expected Text, got {:?}", other),
-    };
-    let ptr = match ptr_v {
-        Value::Int(n) => n,
-        other => panic!("fs_write_raw: arg 1 expected Int, got {:?}", other),
-    };
-    let offset = match offset_v {
-        Value::Int(n) => n,
-        other => panic!("fs_write_raw: arg 2 expected Int, got {:?}", other),
-    };
-    let len = match len_v {
-        Value::Int(n) => n,
-        other => panic!("fs_write_raw: arg 3 expected Int, got {:?}", other),
-    };
+pub fn fs_write_raw(path: std::sync::Arc<str>, ptr: i64, offset: i64, len: i64) -> Value {
     if offset < 0 || len < 0 {
         panic!(
             "fs_write_raw: offset and len must be >= 0, got offset={}, len={}",

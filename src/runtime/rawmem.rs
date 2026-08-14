@@ -275,6 +275,13 @@ pub fn mem_free_raw(args: Value) -> Value {
 // type (Int) at exactly one known width (8 bytes), nothing generic. Same
 // unchecked-primitive contract as the four fns above: no bounds checking,
 // caller's responsibility, checked wrappers belong in M1, not here.
+//
+// AXVERITY_RAWMEM_CALL_CONVENTION_V1: these three take native `i64` params
+// instead of a boxed `Value::Tuple`. Measured (rawmem_call_bench):
+// Value::Tuple's Vec alloc/dealloc cost ~30-40ns/call, 7-9x the cost of the
+// fn body itself at small `len` — the majority of the call's cost was the
+// box, not the work. The emitter's calling convention (native_call_fn_arg_types
+// in rust_05.rs) already knows to call these three positionally.
 
 /// `mem_copy_raw(dst_ptr: Int, dst_offset: Int, src_ptr: Int, src_offset: Int, len: Int) -> Unit`
 ///
@@ -284,13 +291,7 @@ pub fn mem_free_raw(args: Value) -> Value {
 /// `ptr::copy_nonoverlapping` / `mem_write_raw`'s own copy). Panics if either
 /// offset or `len` is negative.
 #[track_caller]
-pub fn mem_copy_raw(args: Value) -> Value {
-    let (dst_ptr_v, dst_offset_v, src_ptr_v, src_offset_v, len_v) = unpack5("mem_copy_raw", args);
-    let dst_ptr = as_int("mem_copy_raw", 0, dst_ptr_v);
-    let dst_offset = as_int("mem_copy_raw", 1, dst_offset_v);
-    let src_ptr = as_int("mem_copy_raw", 2, src_ptr_v);
-    let src_offset = as_int("mem_copy_raw", 3, src_offset_v);
-    let len = as_int("mem_copy_raw", 4, len_v);
+pub fn mem_copy_raw(dst_ptr: i64, dst_offset: i64, src_ptr: i64, src_offset: i64, len: i64) -> Value {
     if dst_offset < 0 || src_offset < 0 || len < 0 {
         panic!(
             "mem_copy_raw: offsets and len must be >= 0, got dst_offset={}, src_offset={}, len={}",
@@ -311,11 +312,7 @@ pub fn mem_copy_raw(args: Value) -> Value {
 /// ptr+offset+8)` — a direct binary write, not a text encoding. Panics if
 /// `offset < 0`.
 #[track_caller]
-pub fn mem_write_int_raw(args: Value) -> Value {
-    let (ptr_v, offset_v, value_v) = unpack3("mem_write_int_raw", args);
-    let ptr = as_int("mem_write_int_raw", 0, ptr_v);
-    let offset = as_int("mem_write_int_raw", 1, offset_v);
-    let value = as_int("mem_write_int_raw", 2, value_v);
+pub fn mem_write_int_raw(ptr: i64, offset: i64, value: i64) -> Value {
     if offset < 0 {
         panic!("mem_write_int_raw: offset must be >= 0, got {}", offset);
     }
@@ -331,10 +328,7 @@ pub fn mem_write_int_raw(args: Value) -> Value {
 /// Read 8 raw bytes (native-endian i64) at `[ptr+offset, ptr+offset+8)` back
 /// as an `Int` — the inverse of `mem_write_int_raw`. Panics if `offset < 0`.
 #[track_caller]
-pub fn mem_read_int_raw(args: Value) -> Value {
-    let (ptr_v, offset_v) = unpack2("mem_read_int_raw", args);
-    let ptr = as_int("mem_read_int_raw", 0, ptr_v);
-    let offset = as_int("mem_read_int_raw", 1, offset_v);
+pub fn mem_read_int_raw(ptr: i64, offset: i64) -> Value {
     if offset < 0 {
         panic!("mem_read_int_raw: offset must be >= 0, got {}", offset);
     }

@@ -839,6 +839,47 @@ fn fn_arg_kinds() -> HashMap<&'static str, Vec<ArgKind>> {
     m
 }
 
+/// Native Rust parameter type for one arg position of a
+/// [`native_call_fn_arg_types`] fn — determines which `Value::as_*` accessor
+/// the call site applies to that arg's expression.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NativeArgType {
+    Int,
+    Text,
+}
+
+impl NativeArgType {
+    fn accessor(self) -> &'static str {
+        match self {
+            NativeArgType::Int => "as_int",
+            NativeArgType::Text => "as_text",
+        }
+    }
+}
+
+/// Fns using a native positional-arg Rust calling convention (`f(a, b, c)`
+/// with each `a`/`b`/`c` a native Rust value) instead of the
+/// `Value::Tuple`-packed call otherwise used for data-only multi-arg fns.
+///
+/// AXVERITY_RAWMEM_CALL_CONVENTION_V1: `bridge_builtin_map` resolves CCall
+/// targets to a direct, statically-resolved Rust call at codegen time — there
+/// is no runtime dispatch table here for `Value::Tuple` to preserve ABI
+/// uniformity for. Measured (rawmem_call_bench, 2026-08-14): the
+/// `Value::Tuple` Vec alloc/dealloc costs ~30-40ns/call, 7-9x the cost of
+/// `mem_copy_raw`'s own body at small `len` — pure boxing tax with no offsetting
+/// benefit. Opt a fn into this table only once its Rust body is migrated to
+/// match (native params, no `unpackN`/`as_int`/`as_bytes` helpers) — the two
+/// must move together or the generated call site won't type-check.
+fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
+    use NativeArgType::*;
+    let mut m: HashMap<&'static str, Vec<NativeArgType>> = HashMap::new();
+    m.insert("mem_copy_raw",      vec![Int, Int, Int, Int, Int]);
+    m.insert("mem_write_int_raw", vec![Int, Int, Int]);
+    m.insert("mem_read_int_raw",  vec![Int, Int]);
+    m.insert("fs_write_raw",      vec![Text, Int, Int, Int]);
+    m
+}
+
 // ── Pool constant classification ─────────────────────────────────────────────
 
 /// What a pool entry resolves to under Core IR 0.5.
@@ -1213,6 +1254,7 @@ fn render_scope(
     bundle: &CoreBundle,
     pool_kinds: &[PoolKind],
     arg_kind_table: &HashMap<&'static str, Vec<ArgKind>>,
+    native_call_table: &HashMap<&'static str, Vec<NativeArgType>>,
     builtin: &HashMap<Hash256, &'static str>,
     registry: &HashMap<Hash256, String>,
     name_to_path: &HashMap<&'static str, &'static str>,
@@ -1240,11 +1282,11 @@ fn render_scope(
                 }
                 let then_body = render_scope(
                     Some((i as u32, Branch::Then)), groups, bundle, pool_kinds,
-                    arg_kind_table, builtin, registry, name_to_path, xbundle,
+                    arg_kind_table, native_call_table, builtin, registry, name_to_path, xbundle,
                 )?;
                 let else_body = render_scope(
                     Some((i as u32, Branch::Else)), groups, bundle, pool_kinds,
-                    arg_kind_table, builtin, registry, name_to_path, xbundle,
+                    arg_kind_table, native_call_table, builtin, registry, name_to_path, xbundle,
                 )?;
                 out.push_str(&format!(
                     "    let node_{i}: Value = if axis_codegen_bridge::runtime::value::truthy(&{cond}) {{\n\
@@ -1260,7 +1302,8 @@ fn render_scope(
             }
             other => {
                 let expr = emit_node(
-                    other, pool_kinds, arg_kind_table, builtin, registry, name_to_path, xbundle,
+                    other, pool_kinds, arg_kind_table, native_call_table,
+                    builtin, registry, name_to_path, xbundle,
                 )
                 .map_err(|e| format!("node[{}]: {}", i, e))?;
                 out.push_str(&format!("    let node_{}: Value = {};\n", i, expr));
@@ -1276,6 +1319,7 @@ fn emit_node(
     node: &Node,
     pool_kinds: &[PoolKind],
     arg_kind_table: &HashMap<&'static str, Vec<ArgKind>>,
+    native_call_table: &HashMap<&'static str, Vec<NativeArgType>>,
     builtin: &HashMap<Hash256, &'static str>,
     registry: &HashMap<Hash256, String>,
     name_to_path: &HashMap<&'static str, &'static str>,
@@ -1330,6 +1374,19 @@ fn emit_node(
             let kinds_owned: Vec<ArgKind> =
                 declared.cloned().unwrap_or_else(|| vec![ArgKind::Data; args.len()]);
 
+            // Native calling convention (AXVERITY_RAWMEM_CALL_CONVENTION_V1):
+            // a fn here gets each Data arg's expression converted with the
+            // matching Value::as_* accessor instead of boxed into a Tuple.
+            let native_types = native_call_table.get(name.as_str());
+            if let Some(types) = native_types {
+                if types.len() != args.len() {
+                    return Err(format!(
+                        "CCall '{}' arg count mismatch: declared {} native arg-types, got {} args",
+                        name, types.len(), args.len()
+                    ));
+                }
+            }
+
             // Type gate + per-arg expression.
             let mut arg_exprs: Vec<String> = Vec::with_capacity(args.len());
             let mut any_fn_ref = false;
@@ -1377,15 +1434,19 @@ fn emit_node(
                                 ));
                             }
                         }
-                        arg_exprs.push(ref_clone(arg));
+                        arg_exprs.push(match native_types.and_then(|t| t.get(i)) {
+                            Some(t) => format!("{}.{}()", ref_expr(arg), t.accessor()),
+                            None => ref_clone(arg),
+                        });
                     }
                 }
             }
 
             // Calling convention:
-            //   any FnRef arg → native multi-arg Rust call (`f(a, b, c)`)
-            //   else          → existing Value::Tuple-packed call (data UNARY_INVARIANT)
-            let body = if any_fn_ref {
+            //   any FnRef arg, or fn opted into native_call_fn_arg_types →
+            //     native multi-arg Rust call (`f(a, b, c)`)
+            //   else → existing Value::Tuple-packed call (data UNARY_INVARIANT)
+            let body = if any_fn_ref || native_types.is_some() {
                 format!("{}({})", path, arg_exprs.join(", "))
             } else {
                 match arg_exprs.len() {
@@ -1734,6 +1795,7 @@ pub fn emit_rust_lib_from_bundle(
     // any `CIf`) stay hoisted at the unconditional top level, exactly as
     // before.
     let arg_kind_table = fn_arg_kinds();
+    let native_call_table = native_call_fn_arg_types();
     let branch_paths = compute_branch_paths(bundle, pure_det)?;
     let scope_groups = group_by_scope(bundle.nodes.len(), &branch_paths);
     out.push_str(&render_scope(
@@ -1742,6 +1804,7 @@ pub fn emit_rust_lib_from_bundle(
         bundle,
         &pool_kinds,
         &arg_kind_table,
+        &native_call_table,
         &builtin,
         registry_identity_map,
         &name_to_path,

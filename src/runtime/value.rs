@@ -49,6 +49,18 @@ impl Value {
         }
     }
 
+    /// Native-calling-convention accessor (AXVERITY_RAWMEM_CALL_CONVENTION_V1):
+    /// clones the inner `Arc<str>` (atomic refcount bump, no string copy) for
+    /// bridge fns whose emitted call site passes a native `Arc<str>` param
+    /// instead of boxing into `Value::Tuple`.
+    #[track_caller]
+    pub fn as_text(&self) -> Arc<str> {
+        match self {
+            Value::Str(s) => s.clone(),
+            _ => panic!("expected Text, got {:?}", self),
+        }
+    }
+
     #[track_caller]
     pub fn as_bool(&self) -> bool {
         match self {
