@@ -784,11 +784,11 @@ mod tests {
         let bound = tcp_listen(Value::Int(0));
         // Destructure through tuple_field — the multi-value-return precedent.
         let listener = as_int(
-            tuple_field(Value::Tuple(vec![bound.clone(), Value::Int(0)])),
+            tuple_field(bound.clone(), 0),
             "handle",
         );
         let port = as_int(
-            tuple_field(Value::Tuple(vec![bound.clone(), Value::Int(1)])),
+            tuple_field(bound.clone(), 1),
             "port",
         );
         assert!(port > 0, "ephemeral bind must yield a nonzero port, got {}", port);
@@ -847,11 +847,11 @@ mod tests {
     fn tcp_connect_all_bridge_loopback() {
         let bound = tcp_listen(Value::Int(0));
         let listener = as_int(
-            tuple_field(Value::Tuple(vec![bound.clone(), Value::Int(0)])),
+            tuple_field(bound.clone(), 0),
             "handle",
         );
         let port = as_int(
-            tuple_field(Value::Tuple(vec![bound.clone(), Value::Int(1)])),
+            tuple_field(bound.clone(), 1),
             "port",
         );
 

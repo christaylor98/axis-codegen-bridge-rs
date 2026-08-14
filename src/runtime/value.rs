@@ -68,6 +68,18 @@ impl Value {
             _ => panic!("expected Bool, got {:?}", self),
         }
     }
+
+    /// Native-calling-convention accessor: clones the inner `Vec<u8>`. No
+    /// new cost versus the boxed convention — every call-site arg is already
+    /// unconditionally cloned before being packed into a `Value::Tuple`
+    /// (`ref_clone` in rust_05.rs), so this just relocates the same clone.
+    #[track_caller]
+    pub fn as_bytes(&self) -> Vec<u8> {
+        match self {
+            Value::Bytes(b) => b.clone(),
+            _ => panic!("expected Bytes, got {:?}", self),
+        }
+    }
 }
 
 impl std::fmt::Display for Value {

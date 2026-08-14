@@ -99,11 +99,8 @@ pub fn bytes_concat(args: Value) -> Value {
 // ── bytes_len ────────────────────────────────────────────────────────────────
 
 #[track_caller]
-pub fn bytes_len(v: Value) -> Value {
-    match v {
-        Value::Bytes(b) => Value::Int(b.len() as i64),
-        other => panic!("bytes_len: expected Bytes, got {:?}", other),
-    }
+pub fn bytes_len(v: Vec<u8>) -> Value {
+    Value::Int(v.len() as i64)
 }
 
 // ── bytes_slice ──────────────────────────────────────────────────────────────
@@ -405,7 +402,7 @@ mod tests {
         msg = bytes_concat(Value::Tuple(vec![msg, int16_be_encode(Value::Int(0))]));   // format
 
         // name(3) + 4 + 2 + 4 + 2 + 4 + 2 = 21 bytes.
-        assert_eq!(int(bytes_len(msg.clone())), 21);
+        assert_eq!(int(bytes_len(bytes(msg.clone()))), 21);
 
         // Byte-for-byte expected assembly.
         assert_eq!(

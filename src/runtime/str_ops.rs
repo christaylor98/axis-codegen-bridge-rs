@@ -9,16 +9,8 @@ pub fn str_len(s: Value) -> Value {
 }
 
 #[track_caller]
-pub fn str_concat(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-            (Value::Str(a), Value::Str(b)) => {
-                Value::Str(intern_str(&format!("{}{}", get_str(a), get_str(b))))
-            }
-            _ => panic!("str_concat: expected two Str values"),
-        },
-        _ => panic!("str_concat: expected Tuple(Str, Str)"),
-    }
+pub fn str_concat(a: std::sync::Arc<str>, b: std::sync::Arc<str>) -> Value {
+    Value::Str(intern_str(&format!("{}{}", a, b)))
 }
 
 /// Checked character access. Returns Option(Str).

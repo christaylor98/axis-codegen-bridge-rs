@@ -53,10 +53,9 @@ pub fn foreach(list: Value, callee: fn(Value) -> Value) -> Value {
 /// `loop_count(n, init, step) -> Value` — apply `step(acc)` `n` times,
 /// starting from `init`. `n` is an `Int`; `step: fn(Value) -> Value`.
 #[track_caller]
-pub fn loop_count(n: Value, init: Value, step: fn(Value) -> Value) -> Value {
-    let count = n.as_int();
+pub fn loop_count(n: i64, init: Value, step: fn(Value) -> Value) -> Value {
     let mut acc = init;
-    let iters = if count > 0 { count as u64 } else { 0 };
+    let iters = if n > 0 { n as u64 } else { 0 };
     for _ in 0..iters {
         acc = step(acc);
     }

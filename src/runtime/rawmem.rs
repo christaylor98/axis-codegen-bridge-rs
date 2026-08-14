@@ -131,8 +131,7 @@ fn as_bytes(fn_name: &'static str, arg_ix: usize, v: Value) -> Vec<u8> {
 /// AXVERITY_MEM_FOREIGN_FNS_BUILD_V1. If a reclaim path is ever needed,
 /// that is new scope for a future intent, not a silent addition here.
 #[track_caller]
-pub fn cell_new_raw(args: Value) -> Value {
-    let initial = as_int("cell_new_raw", 0, args);
+pub fn cell_new_raw(initial: i64) -> Value {
     let leaked: &'static AtomicI64 = Box::leak(Box::new(AtomicI64::new(initial)));
     Value::Int(leaked as *const AtomicI64 as i64)
 }
@@ -158,11 +157,7 @@ pub fn cell_load_raw(args: Value) -> Value {
 /// equals `expected`, store `new` and return `true`; otherwise leave it
 /// unchanged and return `false`.
 #[track_caller]
-pub fn cell_cas_raw(args: Value) -> Value {
-    let (addr, expected, new) = unpack3("cell_cas_raw", args);
-    let addr = as_int("cell_cas_raw", 0, addr);
-    let expected = as_int("cell_cas_raw", 1, expected);
-    let new = as_int("cell_cas_raw", 2, new);
+pub fn cell_cas_raw(addr: i64, expected: i64, new: i64) -> Value {
     let cell = unsafe { &*(addr as *const AtomicI64) };
     let ok = cell
         .compare_exchange(expected, new, Ordering::SeqCst, Ordering::SeqCst)
@@ -183,8 +178,7 @@ pub fn cell_cas_raw(args: Value) -> Value {
 /// API contract — this is argument-shape validation, not bounds-checking)
 /// or if the allocator returns null (OOM).
 #[track_caller]
-pub fn mem_reserve_raw(args: Value) -> Value {
-    let capacity = as_int("mem_reserve_raw", 0, args);
+pub fn mem_reserve_raw(capacity: i64) -> Value {
     if capacity <= 0 {
         panic!("mem_reserve_raw: capacity must be > 0, got {}", capacity);
     }
@@ -206,11 +200,7 @@ pub fn mem_reserve_raw(args: Value) -> Value {
 /// (argument-shape validation: a negative offset cast to `usize` would wrap
 /// to a huge value and turn into out-of-bounds pointer arithmetic).
 #[track_caller]
-pub fn mem_write_raw(args: Value) -> Value {
-    let (ptr_v, offset_v, data_v) = unpack3("mem_write_raw", args);
-    let ptr = as_int("mem_write_raw", 0, ptr_v);
-    let offset = as_int("mem_write_raw", 1, offset_v);
-    let data = as_bytes("mem_write_raw", 2, data_v);
+pub fn mem_write_raw(ptr: i64, offset: i64, data: Vec<u8>) -> Value {
     if offset < 0 {
         panic!("mem_write_raw: offset must be >= 0, got {}", offset);
     }
@@ -370,7 +360,7 @@ mod tests {
     #[test]
     #[ignore = "deliberately triggers real UB (mismatched dealloc Layout) — run only under Miri"]
     fn mem_free_raw_mismatched_capacity_is_ub() {
-        let reserved = mem_reserve_raw(i(16));
+        let reserved = mem_reserve_raw(16);
         let ptr_n = match reserved {
             Value::Tuple(es) => match es[0] {
                 Value::Int(n) => n,
@@ -384,7 +374,7 @@ mod tests {
 
     #[test]
     fn mem_reserve_write_read_free_roundtrip() {
-        let reserved = mem_reserve_raw(i(16));
+        let reserved = mem_reserve_raw(16);
         let (ptr, capacity) = match reserved {
             Value::Tuple(es) if es.len() == 2 => (es[0].clone(), es[1].clone()),
             other => panic!("expected Tuple(Int, Int), got {:?}", other),
@@ -398,7 +388,7 @@ mod tests {
 
         let payload = Value::Bytes(vec![1, 2, 3, 4, 5]);
         assert_eq!(
-            mem_write_raw(tup(vec![i(ptr_n), i(0), payload.clone()])),
+            mem_write_raw(ptr_n, 0, payload.as_bytes()),
             Value::Unit
         );
 
@@ -410,7 +400,7 @@ mod tests {
 
     #[test]
     fn mem_write_read_at_nonzero_offset() {
-        let reserved = mem_reserve_raw(i(32));
+        let reserved = mem_reserve_raw(32);
         let ptr_n = match reserved {
             Value::Tuple(es) => match es[0] {
                 Value::Int(n) => n,
@@ -419,7 +409,7 @@ mod tests {
             _ => unreachable!(),
         };
         let payload = Value::Bytes(vec![9, 9, 9]);
-        mem_write_raw(tup(vec![i(ptr_n), i(10), payload.clone()]));
+        mem_write_raw(ptr_n, 10, payload.as_bytes());
         assert_eq!(mem_read_raw(tup(vec![i(ptr_n), i(10), i(3)])), payload);
         mem_free_raw(tup(vec![i(ptr_n), i(32)]));
     }
@@ -427,19 +417,19 @@ mod tests {
     #[test]
     #[should_panic(expected = "capacity must be > 0")]
     fn mem_reserve_raw_rejects_zero_capacity() {
-        mem_reserve_raw(i(0));
+        mem_reserve_raw(0);
     }
 
     #[test]
     #[should_panic(expected = "capacity must be > 0")]
     fn mem_reserve_raw_rejects_negative_capacity() {
-        mem_reserve_raw(i(-1));
+        mem_reserve_raw(-1);
     }
 
     #[test]
     #[should_panic(expected = "offset must be >= 0")]
     fn mem_write_raw_rejects_negative_offset() {
-        let reserved = mem_reserve_raw(i(8));
+        let reserved = mem_reserve_raw(8);
         let ptr_n = match reserved {
             Value::Tuple(es) => match es[0] {
                 Value::Int(n) => n,
@@ -447,13 +437,13 @@ mod tests {
             },
             _ => unreachable!(),
         };
-        mem_write_raw(tup(vec![i(ptr_n), i(-1), Value::Bytes(vec![1])]));
+        mem_write_raw(ptr_n, -1, vec![1]);
     }
 
     #[test]
     #[should_panic(expected = "offset and length must be >= 0")]
     fn mem_read_raw_rejects_negative_length() {
-        let reserved = mem_reserve_raw(i(8));
+        let reserved = mem_reserve_raw(8);
         let ptr_n = match reserved {
             Value::Tuple(es) => match es[0] {
                 Value::Int(n) => n,
@@ -466,18 +456,18 @@ mod tests {
 
     #[test]
     fn cell_new_load_cas_roundtrip() {
-        let addr = match cell_new_raw(i(42)) {
+        let addr = match cell_new_raw(42) {
             Value::Int(n) => n,
             other => panic!("expected Int, got {:?}", other),
         };
         assert_eq!(cell_load_raw(i(addr)), i(42));
 
         // CAS success: current value (42) matches expected.
-        assert_eq!(cell_cas_raw(tup(vec![i(addr), i(42), i(100)])), Value::Bool(true));
+        assert_eq!(cell_cas_raw(addr, 42, 100), Value::Bool(true));
         assert_eq!(cell_load_raw(i(addr)), i(100));
 
         // CAS failure: current value (100) does not match stale expected (42).
-        assert_eq!(cell_cas_raw(tup(vec![i(addr), i(42), i(999)])), Value::Bool(false));
+        assert_eq!(cell_cas_raw(addr, 42, 999), Value::Bool(false));
         assert_eq!(cell_load_raw(i(addr)), i(100));
     }
 
@@ -492,7 +482,7 @@ mod tests {
         let handles: Vec<_> = (0..64)
             .map(|_| {
                 thread::spawn(|| {
-                    let reserved = mem_reserve_raw(i(8));
+                    let reserved = mem_reserve_raw(8);
                     let ptr_n = match reserved {
                         Value::Tuple(es) => match es[0] {
                             Value::Int(n) => n,
@@ -500,7 +490,7 @@ mod tests {
                         },
                         _ => unreachable!(),
                     };
-                    let cell_addr = match cell_new_raw(i(0)) {
+                    let cell_addr = match cell_new_raw(0) {
                         Value::Int(n) => n,
                         _ => unreachable!(),
                     };

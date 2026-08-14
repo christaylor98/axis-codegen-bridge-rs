@@ -35,10 +35,21 @@ macro_rules! cmp_op {
     };
 }
 
-int_bin_op!(int_add, +);
-int_bin_op!(int_sub, -);
-int_bin_op!(int_mul, *);
-cmp_op!(int_lt,  Int, "Int", <);
+// int_add/int_sub/int_mul/int_lt are hand-written below with native params
+// (AXVERITY_RAWMEM_CALL_CONVENTION_V1 convergence) instead of macro-generated
+// — everything else in this family (int_lte/gt/gte, dec_*, float_*) stays on
+// the macro/boxed convention, untouched. Same `+`/`-`/`*`/`<` operators as
+// the macro would have generated — no semantic change, only calling
+// convention.
+#[track_caller]
+pub fn int_add(x: i64, y: i64) -> Value { Value::Int(x + y) }
+#[track_caller]
+pub fn int_sub(x: i64, y: i64) -> Value { Value::Int(x - y) }
+#[track_caller]
+pub fn int_mul(x: i64, y: i64) -> Value { Value::Int(x * y) }
+#[track_caller]
+pub fn int_lt(x: i64, y: i64) -> Value { Value::Bool(x < y) }
+
 cmp_op!(int_lte, Int, "Int", <=);
 cmp_op!(int_gt,  Int, "Int", >);
 cmp_op!(int_gte, Int, "Int", >=);
@@ -105,22 +116,13 @@ pub fn value_eq(args: Value) -> Value {
 }
 
 #[track_caller]
-pub fn int_to_str(n: Value) -> Value {
-    match n {
-        Value::Int(i) => Value::Str(super::value::intern_str(&i.to_string())),
-        _ => panic!("int_to_str: expected Int"),
-    }
+pub fn int_to_str(n: i64) -> Value {
+    Value::Str(super::value::intern_str(&n.to_string()))
 }
 
 #[track_caller]
-pub fn str_to_int(s: Value) -> Value {
-    match s {
-        Value::Str(h) => {
-            let text = super::value::get_str(h);
-            Value::Int(text.parse().unwrap_or(0))
-        }
-        _ => panic!("str_to_int: expected Str"),
-    }
+pub fn str_to_int(s: std::sync::Arc<str>) -> Value {
+    Value::Int(s.parse().unwrap_or(0))
 }
 
 #[track_caller]

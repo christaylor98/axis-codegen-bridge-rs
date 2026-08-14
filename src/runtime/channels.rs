@@ -375,8 +375,8 @@ pub(crate) fn bounded_take_blocking(name: &str) -> Value {
 
 /// `bchan_take(name: Text) -> Value`. Blocks until one item is available.
 #[track_caller]
-pub fn bchan_take(name: Value) -> Value {
-    bounded_take_blocking(&name_of(&name))
+pub fn bchan_take(name: std::sync::Arc<str>) -> Value {
+    bounded_take_blocking(&name)
 }
 
 /// `bchan_len(name: Text) -> Int`. Current queue depth.
@@ -442,18 +442,10 @@ pub(crate) fn bounded_drain_batch(name: &str, max: usize, window_ms: u64) -> Vec
 
 /// `bchan_send(name: Text, item: Value) -> Unit`. Blocking on full.
 ///
-/// Calling convention: unary `Value::Tuple([name, item])` (the 2-arg data-fn
-/// convention, same as `channel_send`).
+/// AXVERITY_RAWMEM_CALL_CONVENTION_V1: native positional params, no
+/// `Value::Tuple` boxing.
 #[track_caller]
-pub fn bchan_send(args: Value) -> Value {
-    let (name, item) = match args {
-        Value::Tuple(mut es) if es.len() == 2 => {
-            let item = es.pop().unwrap();
-            let name = es.pop().unwrap();
-            (name_of(&name), item)
-        }
-        other => panic!("bchan_send: expected Tuple(Text, Value), got {:?}", other),
-    };
+pub fn bchan_send(name: std::sync::Arc<str>, item: Value) -> Value {
     bounded_send_blocking(&name, item);
     Value::Unit
 }

@@ -51,7 +51,7 @@ fn concurrent_distinct_regions_write_read_free_never_corrupt() {
             thread::spawn(move || {
                 for round in 0..ROUNDS {
                     let cap = 64i64;
-                    let reserved = mem_reserve_raw(i(cap));
+                    let reserved = mem_reserve_raw(cap);
                     let ptr = match reserved {
                         Value::Tuple(ref es) => int_of(es[0].clone()),
                         _ => unreachable!(),
@@ -59,7 +59,7 @@ fn concurrent_distinct_regions_write_read_free_never_corrupt() {
                     let payload: Vec<u8> = (0..32)
                         .map(|k| ((tid * 7 + round * 13 + k) % 256) as u8)
                         .collect();
-                    mem_write_raw(tup(vec![i(ptr), i(0), Value::Bytes(payload.clone())]));
+                    mem_write_raw(ptr, 0, payload.clone());
                     let read_back = mem_read_raw(tup(vec![i(ptr), i(0), i(32)]));
                     assert_eq!(
                         read_back,
@@ -97,19 +97,19 @@ fn concurrent_distinct_cells_new_load_cas_never_corrupt() {
             thread::spawn(move || {
                 for round in 0..ROUNDS {
                     let init = (tid * 1000 + round) as i64;
-                    let addr = int_of(cell_new_raw(i(init)));
+                    let addr = int_of(cell_new_raw(init));
                     assert_eq!(int_of(cell_load_raw(i(addr))), init);
 
                     let new_val = init + 1;
                     assert_eq!(
-                        cell_cas_raw(tup(vec![i(addr), i(init), i(new_val)])),
+                        cell_cas_raw(addr, init, new_val),
                         Value::Bool(true)
                     );
                     assert_eq!(int_of(cell_load_raw(i(addr))), new_val);
 
                     // Stale CAS against this thread's OWN now-superseded value must fail.
                     assert_eq!(
-                        cell_cas_raw(tup(vec![i(addr), i(init), i(9999)])),
+                        cell_cas_raw(addr, init, 9999),
                         Value::Bool(false)
                     );
                 }
@@ -137,7 +137,7 @@ fn concurrent_same_cell_cas_increment_loses_no_updates() {
     #[cfg(not(miri))]
     const INCREMENTS_PER_THREAD: i64 = 2_000;
 
-    let addr = int_of(cell_new_raw(i(0)));
+    let addr = int_of(cell_new_raw(0));
 
     let handles: Vec<_> = (0..THREADS)
         .map(|_| {
@@ -145,7 +145,7 @@ fn concurrent_same_cell_cas_increment_loses_no_updates() {
                 for _ in 0..INCREMENTS_PER_THREAD {
                     loop {
                         let current = int_of(cell_load_raw(i(addr)));
-                        if cell_cas_raw(tup(vec![i(addr), i(current), i(current + 1)]))
+                        if cell_cas_raw(addr, current, current + 1)
                             == Value::Bool(true)
                         {
                             break;
@@ -181,11 +181,11 @@ fn concurrent_minting_never_aliases() {
     let handles: Vec<_> = (0..THREADS)
         .map(|_| {
             thread::spawn(|| {
-                let ptr = match mem_reserve_raw(i(16)) {
+                let ptr = match mem_reserve_raw(16) {
                     Value::Tuple(es) => int_of(es[0].clone()),
                     _ => unreachable!(),
                 };
-                let cell_addr = int_of(cell_new_raw(i(0)));
+                let cell_addr = int_of(cell_new_raw(0));
                 (ptr, cell_addr)
             })
         })

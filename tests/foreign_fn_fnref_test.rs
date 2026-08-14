@@ -76,14 +76,14 @@ fn inc1(v: Value) -> Value {
 #[test]
 fn loop_count_applies_step_n_times() {
     setup();
-    let result = iter::loop_count(Value::Int(5), Value::Int(0), inc1);
+    let result = iter::loop_count(5, Value::Int(0), inc1);
     assert_eq!(result, Value::Int(5));
 }
 
 #[test]
 fn loop_count_zero_returns_init() {
     setup();
-    let result = iter::loop_count(Value::Int(0), Value::Int(42), inc1);
+    let result = iter::loop_count(0, Value::Int(42), inc1);
     assert_eq!(result, Value::Int(42));
 }
 

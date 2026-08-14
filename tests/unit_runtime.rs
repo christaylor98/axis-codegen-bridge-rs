@@ -346,7 +346,7 @@ fn test_chr_tab_is_0x09() {
 fn test_chr_newline_concat_roundtrip() {
     setup();
     let nl  = str_ops::chr(Value::Int(10));
-    let ab  = str_ops::str_concat(Value::Tuple(vec![s("a"), nl]));
+    let ab  = str_ops::str_concat(s("a").as_text(), nl.as_text());
     match &ab {
         Value::Str(h) => {
             let text = axis_codegen_bridge::runtime::value::get_str(h);

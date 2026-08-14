@@ -324,7 +324,7 @@ fn commit_job(job: Job) {
             // block is DONE being written to regardless of whether a
             // checkpoint already covered all of it.
             if !shard.is_empty() {
-                let cell = as_int("fresh cell", rawmem::cell_new_raw(Value::Int(1)));
+                let cell = as_int("fresh cell", rawmem::cell_new_raw(1));
                 hotblk_pool::pool_return(&shard, ptr, cell);
             }
         }
@@ -557,7 +557,7 @@ mod tests {
         // exercise mem_read_raw since they hand bytes straight through).
         let full = format!("checkpoint-then-seal-payload-{}\n", std::process::id());
         let full = full.as_bytes();
-        let cap = rawmem::mem_reserve_raw(Value::Int(full.len() as i64 + 16));
+        let cap = rawmem::mem_reserve_raw(full.len() as i64 + 16);
         let ptr = match &cap {
             Value::Tuple(es) => match &es[0] {
                 Value::Int(p) => *p,
@@ -565,11 +565,7 @@ mod tests {
             },
             other => panic!("expected Tuple, got {:?}", other),
         };
-        rawmem::mem_write_raw(Value::Tuple(vec![
-            Value::Int(ptr),
-            Value::Int(0),
-            Value::Bytes(full.to_vec()),
-        ]));
+        rawmem::mem_write_raw(ptr, 0, full.to_vec());
 
         let generation = 900_000_000 + std::process::id() as i64;
         let split = full.len() as i64 / 2;

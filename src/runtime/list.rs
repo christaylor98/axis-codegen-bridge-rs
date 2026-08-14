@@ -36,16 +36,10 @@ pub fn list_len(list: Value) -> Value {
 }
 
 #[track_caller]
-pub fn list_get(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => {
-            let idx = match &es[1] { Value::Int(n) => *n as usize, _ => panic!("list_get: expected Int index") };
-            match &es[0] {
-                Value::List(elems) => elems[idx].clone(),
-                _ => panic!("list_get: expected List"),
-            }
-        }
-        _ => panic!("list_get: expected Tuple(List, Int)"),
+pub fn list_get(list: Value, idx: i64) -> Value {
+    match list {
+        Value::List(elems) => elems[idx as usize].clone(),
+        _ => panic!("list_get: expected List"),
     }
 }
 
@@ -68,17 +62,18 @@ pub fn list_get_at(args: Value) -> Value {
 }
 
 #[track_caller]
-pub fn list_append(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => match &es[0] {
-            Value::List(elems) => {
-                let mut v = elems.clone();
-                v.push(es[1].clone());
-                Value::List(v)
-            }
-            _ => panic!("list_append: expected List as first element"),
-        },
-        _ => panic!("list_append: expected Tuple(List, elem)"),
+pub fn list_append(list: Value, elem: Value) -> Value {
+    match list {
+        // `list` already arrived as an owned clone (native call site's
+        // `.clone()` accessor) — push in place, no second clone needed
+        // (the old boxed path cloned once to unwrap the Tuple arg, then
+        // cloned `elems` again here; this is strictly cheaper, not just
+        // relocated).
+        Value::List(mut elems) => {
+            elems.push(elem);
+            Value::List(elems)
+        }
+        _ => panic!("list_append: expected List as first element"),
     }
 }
 
@@ -137,19 +132,13 @@ pub fn list_of_1(v: Value) -> Value {
 }
 
 #[track_caller]
-pub fn list_of_2(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => Value::List(vec![es[0].clone(), es[1].clone()]),
-        _ => panic!("list_of_2: expected Tuple(a, b)"),
-    }
+pub fn list_of_2(a: Value, b: Value) -> Value {
+    Value::List(vec![a, b])
 }
 
 #[track_caller]
-pub fn list_of_3(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 3 => Value::List(vec![es[0].clone(), es[1].clone(), es[2].clone()]),
-        _ => panic!("list_of_3: expected Tuple(a, b, c)"),
-    }
+pub fn list_of_3(a: Value, b: Value, c: Value) -> Value {
+    Value::List(vec![a, b, c])
 }
 
 /// Returns 1 if list[index] exists and str_len(list[index]) ≤ max_len, else 0. OOB-safe.

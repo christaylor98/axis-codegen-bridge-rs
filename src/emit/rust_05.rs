@@ -841,11 +841,18 @@ fn fn_arg_kinds() -> HashMap<&'static str, Vec<ArgKind>> {
 
 /// Native Rust parameter type for one arg position of a
 /// [`native_call_fn_arg_types`] fn — determines which `Value::as_*` accessor
-/// the call site applies to that arg's expression.
+/// the call site applies to that arg's expression. `Value` is the passthrough
+/// case (arg stays generic/dynamic, e.g. loop_count's accumulator or
+/// list_get's list) — accessor is plain `.clone()`, same cost as the boxed
+/// convention's `ref_clone`, just relocated to a positional param instead of
+/// a `Value::Tuple` slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NativeArgType {
     Int,
     Text,
+    Bytes,
+    Bool,
+    Value,
 }
 
 impl NativeArgType {
@@ -853,6 +860,9 @@ impl NativeArgType {
         match self {
             NativeArgType::Int => "as_int",
             NativeArgType::Text => "as_text",
+            NativeArgType::Bytes => "as_bytes",
+            NativeArgType::Bool => "as_bool",
+            NativeArgType::Value => "clone",
         }
     }
 }
@@ -870,6 +880,11 @@ impl NativeArgType {
 /// benefit. Opt a fn into this table only once its Rust body is migrated to
 /// match (native params, no `unpackN`/`as_int`/`as_bytes` helpers) — the two
 /// must move together or the generated call site won't type-check.
+///
+/// AXVERITY_WRITE_PATH_SLICE_V1 (2026-08-14): converged onto this convention
+/// for the full set of bridge fns axVerity-working2 depends on (Chris:
+/// "we want one way ... limit bridge fns" — scoped to this project's
+/// dependency set, not the whole ~400-fn shared registry other projects use).
 fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     use NativeArgType::*;
     let mut m: HashMap<&'static str, Vec<NativeArgType>> = HashMap::new();
@@ -877,6 +892,32 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("mem_write_int_raw", vec![Int, Int, Int]);
     m.insert("mem_read_int_raw",  vec![Int, Int]);
     m.insert("fs_write_raw",      vec![Text, Int, Int, Int]);
+    m.insert("argv_get",          vec![Int]);
+    m.insert("bytes_len",         vec![Bytes]);
+    m.insert("fs_mkdir_p",        vec![Text]);
+    m.insert("fs_read_bytes",     vec![Text]);
+    m.insert("str_to_int",        vec![Text]);
+    m.insert("int_to_str",        vec![Int]);
+    m.insert("str_concat",        vec![Text, Text]);
+    m.insert("int_add",           vec![Int, Int]);
+    m.insert("int_sub",           vec![Int, Int]);
+    m.insert("int_mul",           vec![Int, Int]);
+    m.insert("int_lt",            vec![Int, Int]);
+    m.insert("cell_new_raw",      vec![Int]);
+    m.insert("cell_cas_raw",      vec![Int, Int, Int]);
+    m.insert("mem_reserve_raw",   vec![Int]);
+    m.insert("mem_write_raw",     vec![Int, Int, Bytes]);
+    m.insert("bchan_send",        vec![Text, Value]);
+    m.insert("bchan_take",        vec![Text]);
+    m.insert("tuple_field",       vec![Value, Int]);
+    m.insert("list_get",          vec![Value, Int]);
+    m.insert("list_append",       vec![Value, Value]);
+    m.insert("list_of_2",         vec![Value, Value]);
+    m.insert("list_of_3",         vec![Value, Value, Value]);
+    // 3rd slot is the FnRef arg (step) — its accessor is never used (FnRef
+    // args are resolved via pool_kinds, not native_types), but the entry
+    // still needs one placeholder per arg so the arg-count check matches.
+    m.insert("loop_count",        vec![Int, Value, Value]);
     m
 }
 

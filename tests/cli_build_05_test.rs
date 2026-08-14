@@ -6,7 +6,7 @@
 
 use axis_codegen_bridge::core_ir_05::{
     serialiser::{create_core_bundle_05, make_bool_bundle, make_int_bundle, make_unit_bundle,
-                 make_ccall_bundle},
+                 make_ccall_bundle, make_ccall_bundle_named},
     ConstantPoolEntry, CoreBundle, Node, NodeRef,
     bool_type_hash, int_type_hash, unit_type_hash, sha256_bytes,
     encode_bool_payload, encode_int_payload,
@@ -130,8 +130,9 @@ fn test_05_build_ccall_bool_not() {
 fn test_05_build_ccall_int_add() {
     let dir = TempDir::new().unwrap();
     // pool[0]=Int(10), pool[1]=Int(32), node[0]=CCall(int_add, [pool[0], pool[1]])
-    let bundle = make_ccall_bundle(
+    let bundle = make_ccall_bundle_named(
         sha256_bytes(b"int_add"),
+        "int_add",
         vec![
             ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(10) },
             ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(32) },

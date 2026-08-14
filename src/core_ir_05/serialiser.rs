@@ -145,10 +145,26 @@ pub fn make_ccall_bundle(
     pool: Vec<ConstantPoolEntry>,
     args: Vec<NodeRef>,
 ) -> CoreBundle {
+    make_ccall_bundle_named(target_identity, "", pool, args)
+}
+
+/// Same as [`make_ccall_bundle`], but sets `target_name` explicitly. Builtin
+/// resolution keys `native_call_fn_arg_types`/`fn_arg_kinds` lookups off
+/// `target_name` (not the resolved symbol path), so a CCall targeting a
+/// builtin that has opted into the native calling convention (e.g.
+/// `int_add`) MUST carry its real name here or codegen falls back to the
+/// stale boxed `Value::Tuple` convention and the generated Rust fails to
+/// compile against the native signature.
+pub fn make_ccall_bundle_named(
+    target_identity: [u8; 32],
+    target_name: &str,
+    pool: Vec<ConstantPoolEntry>,
+    args: Vec<NodeRef>,
+) -> CoreBundle {
     CoreBundle {
         version: "0.5".to_string(),
         constant_pool: pool,
-        nodes: vec![Node::CCall { target_identity, args, target_name: String::new() }],
+        nodes: vec![Node::CCall { target_identity, args, target_name: target_name.to_string() }],
         result: NodeRef::Node(0),
     }
 }

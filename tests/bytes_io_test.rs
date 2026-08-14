@@ -59,7 +59,7 @@ fn t5_round_trip_ascii() {
     let w = fs_write_bytes(Value::Tuple(vec![s(&path), Value::Bytes(payload.clone())]));
     assert_eq!(w, Value::Unit);
 
-    let r = fs_read_bytes(s(&path));
+    let r = fs_read_bytes(intern_str(&path));
     assert_eq!(r, Value::Bytes(payload));
 
     let _ = std::fs::remove_file(&path);
@@ -73,7 +73,7 @@ fn t6_round_trip_binary_with_nulls_and_high_bytes() {
     let w = fs_write_bytes(Value::Tuple(vec![s(&path), Value::Bytes(payload.clone())]));
     assert_eq!(w, Value::Unit);
 
-    let r = fs_read_bytes(s(&path));
+    let r = fs_read_bytes(intern_str(&path));
     assert_eq!(r, Value::Bytes(payload));
 
     let _ = std::fs::remove_file(&path);
@@ -85,7 +85,7 @@ fn t7_round_trip_empty() {
     let w = fs_write_bytes(Value::Tuple(vec![s(&path), Value::Bytes(vec![])]));
     assert_eq!(w, Value::Unit);
 
-    let r = fs_read_bytes(s(&path));
+    let r = fs_read_bytes(intern_str(&path));
     assert_eq!(r, Value::Bytes(vec![]));
 
     let _ = std::fs::remove_file(&path);
@@ -105,7 +105,7 @@ fn t8_write_is_atomic_no_partial_file_visible_after_second_write() {
     let w2 = fs_write_bytes(Value::Tuple(vec![s(&path), Value::Bytes(v2.clone())]));
     assert_eq!(w2, Value::Unit);
 
-    let r = fs_read_bytes(s(&path));
+    let r = fs_read_bytes(intern_str(&path));
     assert_eq!(r, Value::Bytes(v2));
 
     let _ = std::fs::remove_file(&path);
@@ -118,7 +118,7 @@ fn t9_text_to_bytes_round_trips_via_filesystem() {
 
     let w = fs_write_bytes(Value::Tuple(vec![s(&path), payload.clone()]));
     assert_eq!(w, Value::Unit);
-    let r = fs_read_bytes(s(&path));
+    let r = fs_read_bytes(intern_str(&path));
     assert_eq!(r, payload);
 
     let _ = std::fs::remove_file(&path);
@@ -130,7 +130,7 @@ fn t9_text_to_bytes_round_trips_via_filesystem() {
 #[should_panic(expected = "fs_read_bytes(")]
 fn t10_fs_read_bytes_missing_file_panics() {
     let path = unique_tmp_path("nope");
-    fs_read_bytes(s(&path));
+    fs_read_bytes(intern_str(&path));
 }
 
 #[test]

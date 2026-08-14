@@ -118,14 +118,10 @@ pub fn fs_write_raw(path: std::sync::Arc<str>, ptr: i64, offset: i64, len: i64) 
 // ── fs_read_bytes ────────────────────────────────────────────────────────────
 
 #[track_caller]
-pub fn fs_read_bytes(path: Value) -> Value {
-    let path_str = match path {
-        Value::Str(h) => get_str(h),
-        other => panic!("fs_read_bytes: expected Text, got {:?}", other),
-    };
-    match std::fs::read(&path_str) {
+pub fn fs_read_bytes(path: std::sync::Arc<str>) -> Value {
+    match std::fs::read(&*path) {
         Ok(bs) => Value::Bytes(bs),
-        Err(e) => panic!("fs_read_bytes({}): {}", path_str, e),
+        Err(e) => panic!("fs_read_bytes({}): {}", path, e),
     }
 }
 
@@ -224,12 +220,8 @@ pub fn bytes_hash(v: Value) -> Value {
 /// Recursive idempotent directory create (`std::fs::create_dir_all`). Panics
 /// on any OS error.
 #[track_caller]
-pub fn fs_mkdir_p(v: Value) -> Value {
-    let path = match v {
-        Value::Str(h) => get_str(h),
-        other => panic!("fs_mkdir_p: expected Text path, got {:?}", other),
-    };
-    if let Err(e) = std::fs::create_dir_all(&path) {
+pub fn fs_mkdir_p(path: std::sync::Arc<str>) -> Value {
+    if let Err(e) = std::fs::create_dir_all(&*path) {
         panic!("fs_mkdir_p({}): {}", path, e);
     }
     Value::Unit

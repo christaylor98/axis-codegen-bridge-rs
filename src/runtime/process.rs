@@ -69,8 +69,8 @@ pub fn argv(idx: Value) -> Value {
 }
 
 #[track_caller]
-pub fn argv_get(idx: Value) -> Value {
-    let i = match idx { Value::Int(n) => n as usize, _ => 0 };
+pub fn argv_get(idx: i64) -> Value {
+    let i = idx as usize;
     let args = get_process_args();
     match args.get(i) {
         Some(s) => Value::Str(intern_str(s)),

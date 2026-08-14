@@ -14,21 +14,116 @@ use std::sync::OnceLock;
 
 type PrimFn = fn(Value) -> Value;
 
+// AXVERITY_RAWMEM_CALL_CONVENTION_V1: this dispatch table needs a uniform
+// `fn(Value) -> Value` per PrimFn, but the underlying fns below were
+// converted to native positional params (for the emit/rust_05.rs codegen
+// path this module's own doc comment says it's independent of). These
+// thin wrappers unpack the same `Value::Tuple`/single-`Value` shape the
+// originals matched and delegate to the native fn — this evaluator's own
+// calling convention is unaffected either way.
+fn int_add_w(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Int(x), Value::Int(y)) => super::arith::int_add(*x, *y),
+            _ => panic!("int_add: expected two Int values"),
+        },
+        _ => panic!("int_add: expected Tuple(Int, Int)"),
+    }
+}
+fn int_sub_w(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Int(x), Value::Int(y)) => super::arith::int_sub(*x, *y),
+            _ => panic!("int_sub: expected two Int values"),
+        },
+        _ => panic!("int_sub: expected Tuple(Int, Int)"),
+    }
+}
+fn int_mul_w(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Int(x), Value::Int(y)) => super::arith::int_mul(*x, *y),
+            _ => panic!("int_mul: expected two Int values"),
+        },
+        _ => panic!("int_mul: expected Tuple(Int, Int)"),
+    }
+}
+fn int_lt_w(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Int(x), Value::Int(y)) => super::arith::int_lt(*x, *y),
+            _ => panic!("int_lt: expected two Int values"),
+        },
+        _ => panic!("int_lt: expected Tuple(Int, Int)"),
+    }
+}
+fn int_to_str_w(n: Value) -> Value {
+    match n {
+        Value::Int(i) => super::arith::int_to_str(i),
+        _ => panic!("int_to_str: expected Int"),
+    }
+}
+fn str_to_int_w(s: Value) -> Value {
+    match s {
+        Value::Str(h) => super::arith::str_to_int(h),
+        _ => panic!("str_to_int: expected Str"),
+    }
+}
+fn str_concat_w(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Str(a), Value::Str(b)) => super::str_ops::str_concat(a.clone(), b.clone()),
+            _ => panic!("str_concat: expected two Str values"),
+        },
+        _ => panic!("str_concat: expected Tuple(Str, Str)"),
+    }
+}
+fn list_get_w(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => {
+            let idx = match &es[1] { Value::Int(n) => *n, _ => panic!("list_get: expected Int index") };
+            super::list::list_get(es[0].clone(), idx)
+        }
+        _ => panic!("list_get: expected Tuple(List, Int)"),
+    }
+}
+fn list_append_w(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => super::list::list_append(es[0].clone(), es[1].clone()),
+        _ => panic!("list_append: expected Tuple(List, elem)"),
+    }
+}
+fn tuple_field_w(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => {
+            let idx = match &es[1] { Value::Int(n) => *n, other => panic!("tuple_field: arg 1 expected Int, got {:?}", other) };
+            super::tuple::tuple_field(es[0].clone(), idx)
+        }
+        other => panic!("tuple_field: expected Tuple(Value, Int), got {:?}", other),
+    }
+}
+fn argv_get_w(idx: Value) -> Value {
+    match idx {
+        Value::Int(n) => super::process::argv_get(n),
+        _ => super::process::argv_get(0),
+    }
+}
+
 fn dispatch_table() -> &'static HashMap<&'static str, PrimFn> {
     static TABLE: OnceLock<HashMap<&'static str, PrimFn>> = OnceLock::new();
     TABLE.get_or_init(|| {
         let mut m: HashMap<&'static str, PrimFn> = HashMap::new();
 
         // Arithmetic
-        m.insert("int_add",         super::arith::int_add);
-        m.insert("int_sub",         super::arith::int_sub);
-        m.insert("int_mul",         super::arith::int_mul);
+        m.insert("int_add",         int_add_w);
+        m.insert("int_sub",         int_sub_w);
+        m.insert("int_mul",         int_mul_w);
         m.insert("int_div",         super::arith::int_div);
         m.insert("int_div_checked", super::arith::int_div_checked);
         m.insert("int_mod",         super::arith::int_mod);
-        m.insert("int_to_str",      super::arith::int_to_str);
-        m.insert("str_to_int",      super::arith::str_to_int);
-        m.insert("int_lt",          super::arith::int_lt);
+        m.insert("int_to_str",      int_to_str_w);
+        m.insert("str_to_int",      str_to_int_w);
+        m.insert("int_lt",          int_lt_w);
         m.insert("int_lte",         super::arith::int_lte);
         m.insert("int_gt",          super::arith::int_gt);
         m.insert("int_gte",         super::arith::int_gte);
@@ -41,7 +136,7 @@ fn dispatch_table() -> &'static HashMap<&'static str, PrimFn> {
 
         // String
         m.insert("str_len",         super::str_ops::str_len);
-        m.insert("str_concat",      super::str_ops::str_concat);
+        m.insert("str_concat",      str_concat_w);
         m.insert("str_char",        super::str_ops::str_char);
         m.insert("str_char_at",     super::str_ops::str_char_at);
         m.insert("str_char_code",   super::str_ops::str_char_code);
@@ -58,11 +153,11 @@ fn dispatch_table() -> &'static HashMap<&'static str, PrimFn> {
         m.insert("list_nil",        super::list::list_nil);
         m.insert("list_cons",       super::list::list_cons);
         m.insert("list_len",        super::list::list_len);
-        m.insert("list_get",        super::list::list_get);
+        m.insert("list_get",        list_get_w);
         m.insert("list_get_at",             super::list::list_get_at);
         m.insert("list_get_println_if_some",   super::list::list_get_println_if_some);
         m.insert("list_str_len_lte_if_some",   super::list::list_str_len_lte_if_some);
-        m.insert("list_append",             super::list::list_append);
+        m.insert("list_append",             list_append_w);
         m.insert("list_concat",     super::list::list_concat);
         m.insert("list_reverse",    super::list::list_reverse);
         m.insert("list_head",       super::list::list_head);
@@ -70,7 +165,7 @@ fn dispatch_table() -> &'static HashMap<&'static str, PrimFn> {
         m.insert("list_is_empty",   super::list::list_is_empty);
 
         // Tuple / Ctor
-        m.insert("tuple_field",     super::tuple::tuple_field);
+        m.insert("tuple_field",     tuple_field_w);
         m.insert("ctor_field",      super::tuple::ctor_field);
 
         // Option
@@ -108,7 +203,7 @@ fn dispatch_table() -> &'static HashMap<&'static str, PrimFn> {
         m.insert("hotwrite_batch_run_c", super::hotwrite_batch::hotwrite_batch_run_c);
         m.insert("hotwrite_batch_run_c_durable", super::hotwrite_batch::hotwrite_batch_run_c_durable);
         m.insert("argv",            super::process::argv);
-        m.insert("argv_get",        super::process::argv_get);
+        m.insert("argv_get",        argv_get_w);
         m.insert("argv_int",        super::process::argv_int);
         m.insert("argv_count",      super::process::argv_count);
         m.insert("argv_or",         super::process::argv_or);

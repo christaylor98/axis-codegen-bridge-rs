@@ -164,10 +164,10 @@ fn test_list_append_10k() {
     setup();
     let mut acc = Value::List(vec![]);
     for i in 0..10_000 {
-        acc = list::list_append(t2(acc, Value::Int(i)));
+        acc = list::list_append(acc, Value::Int(i));
     }
     assert_eq!(list::list_len(acc.clone()), Value::Int(10_000));
-    assert_eq!(list::list_get(t2(acc, Value::Int(9_999))), Value::Int(9_999));
+    assert_eq!(list::list_get(acc, 9_999), Value::Int(9_999));
 }
 
 #[test]
@@ -178,7 +178,7 @@ fn test_list_concat_large() {
     let c = list::list_concat(t2(a, b));
     assert_eq!(list::list_len(c.clone()), Value::Int(10_000));
     assert_eq!(list::list_head(c.clone()), Value::Int(0));
-    assert_eq!(list::list_get(t2(c, Value::Int(9_999))), Value::Int(9_999));
+    assert_eq!(list::list_get(c, 9_999), Value::Int(9_999));
 }
 
 #[test]
@@ -187,7 +187,7 @@ fn test_list_reverse_large() {
     let lst = Value::List((0..10_000).map(Value::Int).collect());
     let rev = list::list_reverse(lst);
     assert_eq!(list::list_head(rev.clone()), Value::Int(9_999));
-    assert_eq!(list::list_get(t2(rev, Value::Int(9_999))), Value::Int(0));
+    assert_eq!(list::list_get(rev, 9_999), Value::Int(0));
 }
 
 #[test]
@@ -229,7 +229,7 @@ fn test_str_concat_chain_large() {
     setup();
     let mut acc = s("start");
     for i in 0..500 {
-        acc = str_ops::str_concat(t2(acc, s(&format!("_{}", i))));
+        acc = str_ops::str_concat(acc.as_text(), s(&format!("_{}", i)).as_text());
     }
     // Verify at least the length grew
     assert!(matches!(str_ops::str_len(acc), Value::Int(n) if n > 500));
@@ -492,7 +492,7 @@ fn test_concurrent_list_ops_independent_threads() {
         thread::spawn(move || {
             let mut lst = Value::List(vec![]);
             for i in 0..500i64 {
-                lst = list::list_append(t2(lst, Value::Int(tid * 1000 + i)));
+                lst = list::list_append(lst, Value::Int(tid * 1000 + i));
             }
             assert_eq!(list::list_len(lst.clone()), Value::Int(500));
             let rev = list::list_reverse(lst.clone());
@@ -509,7 +509,7 @@ fn test_concurrent_str_concat_independent_threads() {
         thread::spawn(move || {
             let mut acc = s(&format!("t{}", tid));
             for i in 0..100 {
-                acc = str_ops::str_concat(t2(acc, s(&format!("_{}", i))));
+                acc = str_ops::str_concat(acc.as_text(), s(&format!("_{}", i)).as_text());
             }
             assert!(matches!(str_ops::str_len(acc), Value::Int(n) if n > 100));
         })
@@ -540,15 +540,15 @@ fn test_value_equality_under_clone_stress() {
 fn test_arith_saturating_extremes() {
     setup();
     assert_eq!(
-        arith::int_add(t2(Value::Int(i64::MAX), Value::Int(0))),
+        arith::int_add(i64::MAX, 0),
         Value::Int(i64::MAX)
     );
     assert_eq!(
-        arith::int_sub(t2(Value::Int(i64::MIN), Value::Int(0))),
+        arith::int_sub(i64::MIN, 0),
         Value::Int(i64::MIN)
     );
     assert_eq!(
-        arith::int_mul(t2(Value::Int(0), Value::Int(i64::MAX))),
+        arith::int_mul(0, i64::MAX),
         Value::Int(0)
     );
 }
