@@ -71,8 +71,8 @@
 //! ~13%, because most matched rows get evicted and fall back to the disk tiers.
 //! Sizing rule of thumb:
 //!
-//!     AXVERITY_QHM_CAP  ≳  peak number of DISTINCT rows touched by a single
-//!                          aggregate/JOIN/SELECT * query (its working set)
+//! AXVERITY_QHM_CAP ≳ peak number of DISTINCT rows touched by a single
+//! aggregate/JOIN/SELECT * query (its working set)
 //!
 //! The default (65536) comfortably covers the low-thousands-row regime these
 //! shapes run at today; raise it for larger working sets, and keep headroom (the
@@ -406,35 +406,16 @@ fn lf_flush() {
 /// its content hash into the selected variant's index. Insert-if-absent (content
 /// immutable). No fsync, no disk I/O. `off` no-ops.
 #[track_caller]
-pub fn qhm_put(args: Value) -> Value {
-    let (hash, bytes) = match args {
-        Value::Tuple(es) if es.len() == 2 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("qhm_put: expected Tuple(Text, Bytes), got {:?}", other),
-    };
-    let hash = match hash {
-        Value::Str(h) => get_str(&h),
-        other => panic!("qhm_put: arg 0 expected Text hash, got {:?}", other),
-    };
-    let bytes = match bytes {
-        Value::Bytes(b) => b,
-        other => panic!("qhm_put: arg 1 expected Bytes, got {:?}", other),
-    };
-    lf_put(hash, bytes);
+pub fn qhm_put(hash: std::sync::Arc<str>, bytes: Vec<u8>) -> Value {
+    lf_put(hash.to_string(), bytes);
     Value::Unit
 }
 
 /// `qhm_get(hash: Text) -> Bytes` — the record's bytes, or empty Bytes on a miss
 /// (caller falls through to the existing durable tiers).
 #[track_caller]
-pub fn qhm_get(arg: Value) -> Value {
-    let bytes = match arg {
-        Value::Str(h) => lf_get(&get_str(&h)),
-        other => panic!("qhm_get: expected Text hash, got {:?}", other),
-    };
-    Value::Bytes(bytes)
+pub fn qhm_get(hash: std::sync::Arc<str>) -> Value {
+    Value::Bytes(lf_get(&hash))
 }
 
 /// `qhm_flush(_: Unit) -> Unit` — seal every shard's pending batch so the whole

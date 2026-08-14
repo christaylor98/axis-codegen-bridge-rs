@@ -33,14 +33,14 @@
 //!         `b` with one byte appended; `n` must be `0..=255` or it panics (no
 //!         silent `mod 256`).
 //!
-//!         These two are the `Bytes <-> Int` atoms. Before them, the ONLY way to
-//!         cross that boundary was one of the four width-named codecs below —
-//!         a memory-layout fact (16 vs 32 bit) leaking into the bridge identity
-//!         surface. With them, BE-width codecs are M1 compositions
-//!         (`be16_decode`, `be16_encode`, `be32_decode`, `be32_encode` in
-//!         axVerity's lib/), and a future int8/int64 needs no new bridge fn and
-//!         no new registry entry. Both are width-agnostic by construction:
-//!         neither name nor body mentions a width.
+//! These two are the `Bytes <-> Int` atoms. Before them, the ONLY way to
+//! cross that boundary was one of the four width-named codecs below —
+//! a memory-layout fact (16 vs 32 bit) leaking into the bridge identity
+//! surface. With them, BE-width codecs are M1 compositions
+//! (`be16_decode`, `be16_encode`, `be32_decode`, `be32_encode` in
+//! axVerity's lib/), and a future int8/int64 needs no new bridge fn and
+//! no new registry entry. Both are width-agnostic by construction:
+//! neither name nor body mentions a width.
 //!
 //!   * `int16_be_encode(Int) -> Bytes`
 //!   * `int32_be_encode(Int) -> Bytes`
@@ -55,16 +55,16 @@
 //!         `Int`; the *bytes on the wire* are always correct, which is what the
 //!         protocol cares about.
 //!
-//!         These two are SUPERSEDED but not yet retired. BYTE_INT_CODEC_COLLAPSE_V1
-//!         replaced them with `be16_encode` / `be32_encode` in axVerity's lib/,
-//!         composed over `bytes_push`; they remain here only because they are on
-//!         the hot path (`int16_be_encode` hot=select, `int32_be_encode` hot=both)
-//!         and their cutover is gated on that intent's Phase 6 measurement
-//!         decision. Do NOT add a new width-named codec alongside them.
+//! These two are SUPERSEDED but not yet retired. BYTE_INT_CODEC_COLLAPSE_V1
+//! replaced them with `be16_encode` / `be32_encode` in axVerity's lib/,
+//! composed over `bytes_push`; they remain here only because they are on
+//! the hot path (`int16_be_encode` hot=select, `int32_be_encode` hot=both)
+//! and their cutover is gated on that intent's Phase 6 measurement
+//! decision. Do NOT add a new width-named codec alongside them.
 //!
-//!         Their decode counterparts `int16_be_decode` / `int32_be_decode` were
-//!         RETIRED by that intent's Phase 7 at verified zero live callers,
-//!         replaced by `be16_decode` / `be32_decode` over `bytes_get`.
+//! Their decode counterparts `int16_be_decode` / `int32_be_decode` were
+//! RETIRED by that intent's Phase 7 at verified zero live callers,
+//! replaced by `be16_decode` / `be32_decode` over `bytes_get`.
 //!
 //! All fns are panic-only leaf fns — no `Result` wrapper — matching net.rs and
 //! the plain-return-type convention. These are pure (no I/O, no handle state):
@@ -76,22 +76,7 @@ use super::value::Value;
 // ── bytes_concat ─────────────────────────────────────────────────────────────
 
 #[track_caller]
-pub fn bytes_concat(args: Value) -> Value {
-    let (a, b) = match args {
-        Value::Tuple(es) if es.len() == 2 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("bytes_concat: expected Tuple(Bytes, Bytes), got {:?}", other),
-    };
-    let mut a = match a {
-        Value::Bytes(b) => b,
-        other => panic!("bytes_concat: arg 0 expected Bytes, got {:?}", other),
-    };
-    let b = match b {
-        Value::Bytes(b) => b,
-        other => panic!("bytes_concat: arg 1 expected Bytes, got {:?}", other),
-    };
+pub fn bytes_concat(mut a: Vec<u8>, b: Vec<u8>) -> Value {
     a.extend_from_slice(&b);
     Value::Bytes(a)
 }
@@ -106,26 +91,7 @@ pub fn bytes_len(v: Vec<u8>) -> Value {
 // ── bytes_slice ──────────────────────────────────────────────────────────────
 
 #[track_caller]
-pub fn bytes_slice(args: Value) -> Value {
-    let (bytes, start, end) = match args {
-        Value::Tuple(es) if es.len() == 3 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("bytes_slice: expected Tuple(Bytes, Int, Int), got {:?}", other),
-    };
-    let bytes = match bytes {
-        Value::Bytes(b) => b,
-        other => panic!("bytes_slice: arg 0 expected Bytes, got {:?}", other),
-    };
-    let start = match start {
-        Value::Int(n) => n,
-        other => panic!("bytes_slice: arg 1 expected Int start, got {:?}", other),
-    };
-    let end = match end {
-        Value::Int(n) => n,
-        other => panic!("bytes_slice: arg 2 expected Int end, got {:?}", other),
-    };
+pub fn bytes_slice(bytes: Vec<u8>, start: i64, end: i64) -> Value {
     if start < 0 || end < 0 {
         panic!("bytes_slice: negative bound(s) start={} end={}", start, end);
     }
@@ -151,14 +117,7 @@ pub fn bytes_slice(args: Value) -> Value {
 /// fields, so BE-width decoding becomes M1 composition (see `be16_decode` /
 /// `be32_decode`) instead of a width-named bridge fn.
 #[track_caller]
-pub fn bytes_get(args: Value) -> Value {
-    let (bytes, idx) = match args {
-        Value::Tuple(ref es) if es.len() == 2 => match (&es[0], &es[1]) {
-            (Value::Bytes(b), Value::Int(i)) => (b, *i),
-            _ => panic!("bytes_get: expected (Bytes, Int), got {:?}", args),
-        },
-        other => panic!("bytes_get: expected Tuple(Bytes, Int), got {:?}", other),
-    };
+pub fn bytes_get(bytes: Vec<u8>, idx: i64) -> Value {
     if idx < 0 || idx as usize >= bytes.len() {
         panic!("bytes_get: index {} out of range for Bytes of len {}", idx, bytes.len());
     }
@@ -183,17 +142,7 @@ pub fn bytes_get(args: Value) -> Value {
 /// fold it in M1 over `text_to_bytes(Text(""))`, the same "composition over
 /// speculative arity" discipline that keeps `bytes_concat` binary.
 #[track_caller]
-pub fn bytes_push(args: Value) -> Value {
-    let (mut bytes, byte) = match args {
-        Value::Tuple(es) if es.len() == 2 => {
-            let mut it = es.into_iter();
-            match (it.next().unwrap(), it.next().unwrap()) {
-                (Value::Bytes(b), Value::Int(n)) => (b, n),
-                (x, y) => panic!("bytes_push: expected (Bytes, Int), got ({:?}, {:?})", x, y),
-            }
-        }
-        other => panic!("bytes_push: expected Tuple(Bytes, Int), got {:?}", other),
-    };
+pub fn bytes_push(mut bytes: Vec<u8>, byte: i64) -> Value {
     if !(0..=255).contains(&byte) { panic!("bytes_push: {} is not a byte value (0..=255)", byte) }
     bytes.push(byte as u8);
     Value::Bytes(bytes)
@@ -202,11 +151,7 @@ pub fn bytes_push(args: Value) -> Value {
 // ── int16_be_encode ──────────────────────────────────────────────────────────
 
 #[track_caller]
-pub fn int16_be_encode(v: Value) -> Value {
-    let n = match v {
-        Value::Int(n) => n,
-        other => panic!("int16_be_encode: expected Int, got {:?}", other),
-    };
+pub fn int16_be_encode(n: i64) -> Value {
     // Accept either the signed (i16) or unsigned (u16) range of a 16-bit field.
     if !(-32768..=65535).contains(&n) {
         panic!("int16_be_encode: {} out of range for a 16-bit field (-32768..=65535)", n);
@@ -223,11 +168,7 @@ pub fn int16_be_encode(v: Value) -> Value {
 // ── int32_be_encode ──────────────────────────────────────────────────────────
 
 #[track_caller]
-pub fn int32_be_encode(v: Value) -> Value {
-    let n = match v {
-        Value::Int(n) => n,
-        other => panic!("int32_be_encode: expected Int, got {:?}", other),
-    };
+pub fn int32_be_encode(n: i64) -> Value {
     // Accept either the signed (i32) or unsigned (u32) range of a 32-bit field.
     if !(-2_147_483_648..=4_294_967_295).contains(&n) {
         panic!("int32_be_encode: {} out of range for a 32-bit field (-2147483648..=4294967295)", n);
@@ -259,10 +200,10 @@ mod tests {
     }
 
     fn get(b: &[u8], i: i64) -> i64 {
-        int(bytes_get(Value::Tuple(vec![Value::Bytes(b.to_vec()), Value::Int(i)])))
+        int(bytes_get(b.to_vec(), i))
     }
     fn push(b: Vec<u8>, n: i64) -> Vec<u8> {
-        bytes(bytes_push(Value::Tuple(vec![Value::Bytes(b), Value::Int(n)])))
+        bytes(bytes_push(b, n))
     }
 
     // ── Rust mirrors of the M1 BE codec compositions ──────────────────────────
@@ -306,56 +247,56 @@ mod tests {
     #[test]
     fn int32_be_matches_real_postgres_wire_values() {
         // AuthenticationOk body length prefix is int32 = 8 -> 00 00 00 08.
-        assert_eq!(bytes(int32_be_encode(Value::Int(8))), vec![0x00, 0x00, 0x00, 0x08]);
+        assert_eq!(bytes(int32_be_encode(8)), vec![0x00, 0x00, 0x00, 0x08]);
         assert_eq!(be32_dec(&[0x00, 0x00, 0x00, 0x08]), 8);
 
         // A no-modifier column reports typmod = -1 in RowDescription:
         // FF FF FF FF, and MUST decode back to -1 (not 4294967295).
-        assert_eq!(bytes(int32_be_encode(Value::Int(-1))), vec![0xFF, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(bytes(int32_be_encode(-1)), vec![0xFF, 0xFF, 0xFF, 0xFF]);
         assert_eq!(be32_dec(&[0xFF, 0xFF, 0xFF, 0xFF]), -1);
 
         // int4 type OID = 23 -> 00 00 00 17.
-        assert_eq!(bytes(int32_be_encode(Value::Int(23))), vec![0x00, 0x00, 0x00, 0x17]);
+        assert_eq!(bytes(int32_be_encode(23)), vec![0x00, 0x00, 0x00, 0x17]);
         assert_eq!(be32_dec(&[0x00, 0x00, 0x00, 0x17]), 23);
 
         // Startup-message protocol version 196608 (3.0) -> 00 03 00 00.
-        assert_eq!(bytes(int32_be_encode(Value::Int(196608))), vec![0x00, 0x03, 0x00, 0x00]);
+        assert_eq!(bytes(int32_be_encode(196608)), vec![0x00, 0x03, 0x00, 0x00]);
         assert_eq!(be32_dec(&[0x00, 0x03, 0x00, 0x00]), 196608);
     }
 
     #[test]
     fn int16_be_matches_real_postgres_wire_values() {
         // Format code 0 (text) / 1 (binary) are int16 fields.
-        assert_eq!(bytes(int16_be_encode(Value::Int(0))), vec![0x00, 0x00]);
-        assert_eq!(bytes(int16_be_encode(Value::Int(1))), vec![0x00, 0x01]);
+        assert_eq!(bytes(int16_be_encode(0)), vec![0x00, 0x00]);
+        assert_eq!(bytes(int16_be_encode(1)), vec![0x00, 0x01]);
         // A column/parameter count of 3 -> 00 03.
-        assert_eq!(bytes(int16_be_encode(Value::Int(3))), vec![0x00, 0x03]);
+        assert_eq!(bytes(int16_be_encode(3)), vec![0x00, 0x03]);
         assert_eq!(be16_dec(&[0x00, 0x03]), 3);
         // int2 type size for int4 columns is 4 -> 00 04.
-        assert_eq!(bytes(int16_be_encode(Value::Int(4))), vec![0x00, 0x04]);
+        assert_eq!(bytes(int16_be_encode(4)), vec![0x00, 0x04]);
         // Two's-complement: -1 -> FF FF, decodes back to -1.
-        assert_eq!(bytes(int16_be_encode(Value::Int(-1))), vec![0xFF, 0xFF]);
+        assert_eq!(bytes(int16_be_encode(-1)), vec![0xFF, 0xFF]);
         assert_eq!(be16_dec(&[0xFF, 0xFF]), -1);
     }
 
     #[test]
     fn encode_accepts_unsigned_range_low_bits() {
         // 40000 is above i16::MAX but a valid u16; bytes are 0x9C40.
-        assert_eq!(bytes(int16_be_encode(Value::Int(40000))), vec![0x9C, 0x40]);
+        assert_eq!(bytes(int16_be_encode(40000)), vec![0x9C, 0x40]);
         // 3000000000 is above i32::MAX but a valid u32; bytes are 0xB2D05E00.
-        assert_eq!(bytes(int32_be_encode(Value::Int(3_000_000_000))), vec![0xB2, 0xD0, 0x5E, 0x00]);
+        assert_eq!(bytes(int32_be_encode(3_000_000_000)), vec![0xB2, 0xD0, 0x5E, 0x00]);
     }
 
     #[test]
     #[should_panic(expected = "out of range")]
     fn int16_encode_rejects_over_u16_max() {
-        int16_be_encode(Value::Int(65536));
+        int16_be_encode(65536);
     }
 
     #[test]
     #[should_panic(expected = "out of range")]
     fn int16_encode_rejects_under_i16_min() {
-        int16_be_encode(Value::Int(-32769));
+        int16_be_encode(-32769);
     }
 
     /// The retired `int32_be_decode` panicked unless the input was EXACTLY 4
@@ -390,23 +331,23 @@ mod tests {
         // One RowDescription field for column "id" int4:
         //   name "id\0" | tableOID=0 | attnum=0 | typeOID=23 | typeSize=4 |
         //   typmod=-1 | format=0
-        let name = bytes(text_to_bytes(Value::Str(intern_str("id"))));
-        let mut msg = Value::Bytes(name);
-        let nul = Value::Bytes(vec![0x00]);
-        msg = bytes_concat(Value::Tuple(vec![msg, nul]));                       // "id\0"
-        msg = bytes_concat(Value::Tuple(vec![msg, int32_be_encode(Value::Int(0))]));   // tableOID
-        msg = bytes_concat(Value::Tuple(vec![msg, int16_be_encode(Value::Int(0))]));   // attnum
-        msg = bytes_concat(Value::Tuple(vec![msg, int32_be_encode(Value::Int(23))]));  // typeOID
-        msg = bytes_concat(Value::Tuple(vec![msg, int16_be_encode(Value::Int(4))]));   // typeSize
-        msg = bytes_concat(Value::Tuple(vec![msg, int32_be_encode(Value::Int(-1))]));  // typmod
-        msg = bytes_concat(Value::Tuple(vec![msg, int16_be_encode(Value::Int(0))]));   // format
+        let name = bytes(text_to_bytes(intern_str("id")));
+        let mut msg = name;
+        let nul = vec![0x00];
+        msg = bytes(bytes_concat(msg, nul));                          // "id\0"
+        msg = bytes(bytes_concat(msg, bytes(int32_be_encode(0))));     // tableOID
+        msg = bytes(bytes_concat(msg, bytes(int16_be_encode(0))));     // attnum
+        msg = bytes(bytes_concat(msg, bytes(int32_be_encode(23))));    // typeOID
+        msg = bytes(bytes_concat(msg, bytes(int16_be_encode(4))));     // typeSize
+        msg = bytes(bytes_concat(msg, bytes(int32_be_encode(-1))));    // typmod
+        msg = bytes(bytes_concat(msg, bytes(int16_be_encode(0))));     // format
 
         // name(3) + 4 + 2 + 4 + 2 + 4 + 2 = 21 bytes.
-        assert_eq!(int(bytes_len(bytes(msg.clone()))), 21);
+        assert_eq!(int(bytes_len(msg.clone())), 21);
 
         // Byte-for-byte expected assembly.
         assert_eq!(
-            bytes(msg.clone()),
+            msg.clone(),
             vec![
                 0x69, 0x64, 0x00,             // "id\0"
                 0x00, 0x00, 0x00, 0x00,       // tableOID = 0
@@ -419,15 +360,15 @@ mod tests {
         );
 
         // Slice fields back out (hand-computed offsets) and decode them.
-        let type_oid = bytes_slice(Value::Tuple(vec![msg.clone(), Value::Int(9), Value::Int(13)]));
+        let type_oid = bytes_slice(msg.clone(), 9, 13);
         assert_eq!(be32_dec(&bytes(type_oid)), 23);
-        let typmod = bytes_slice(Value::Tuple(vec![msg.clone(), Value::Int(15), Value::Int(19)]));
+        let typmod = bytes_slice(msg.clone(), 15, 19);
         assert_eq!(be32_dec(&bytes(typmod)), -1);
-        let format = bytes_slice(Value::Tuple(vec![msg.clone(), Value::Int(19), Value::Int(21)]));
+        let format = bytes_slice(msg.clone(), 19, 21);
         assert_eq!(be16_dec(&bytes(format)), 0);
 
         // byte_at composes as bytes_slice(b, i, i+1): first byte is 'i' = 0x69.
-        let first = bytes_slice(Value::Tuple(vec![msg, Value::Int(0), Value::Int(1)]));
+        let first = bytes_slice(msg, 0, 1);
         assert_eq!(bytes(first), vec![0x69]);
     }
 
@@ -502,12 +443,12 @@ mod tests {
         // Every value here is asserted against a real Postgres wire vector
         // elsewhere in this module, plus both width boundaries.
         for n in [0i64, 1, 3, 4, 23, 40000, 65535, 32767, -1, -32768] {
-            assert_eq!(be16_enc(n), bytes(int16_be_encode(Value::Int(n))),
+            assert_eq!(be16_enc(n), bytes(int16_be_encode(n)),
                        "be16 encode composition diverged at {}", n);
         }
         for n in [0i64, 8, 23, 196608, 3_000_000_000, 4_294_967_295, 2_147_483_647,
                   -1, -2_147_483_648] {
-            assert_eq!(be32_enc(n), bytes(int32_be_encode(Value::Int(n))),
+            assert_eq!(be32_enc(n), bytes(int32_be_encode(n)),
                        "be32 encode composition diverged at {}", n);
         }
 
@@ -546,20 +487,20 @@ mod tests {
 
     #[test]
     fn bytes_slice_empty_and_full_ranges() {
-        let b = Value::Bytes(vec![1, 2, 3, 4]);
-        assert_eq!(bytes(bytes_slice(Value::Tuple(vec![b.clone(), Value::Int(2), Value::Int(2)]))), Vec::<u8>::new());
-        assert_eq!(bytes(bytes_slice(Value::Tuple(vec![b, Value::Int(0), Value::Int(4)]))), vec![1, 2, 3, 4]);
+        let b = vec![1, 2, 3, 4];
+        assert_eq!(bytes(bytes_slice(b.clone(), 2, 2)), Vec::<u8>::new());
+        assert_eq!(bytes(bytes_slice(b, 0, 4)), vec![1, 2, 3, 4]);
     }
 
     #[test]
     #[should_panic(expected = "out of range")]
     fn bytes_slice_end_past_len_panics() {
-        bytes_slice(Value::Tuple(vec![Value::Bytes(vec![1, 2]), Value::Int(0), Value::Int(3)]));
+        bytes_slice(vec![1, 2], 0, 3);
     }
 
     #[test]
     #[should_panic(expected = "start 3 > end 1")]
     fn bytes_slice_start_after_end_panics() {
-        bytes_slice(Value::Tuple(vec![Value::Bytes(vec![1, 2, 3, 4]), Value::Int(3), Value::Int(1)]));
+        bytes_slice(vec![1, 2, 3, 4], 3, 1);
     }
 }
