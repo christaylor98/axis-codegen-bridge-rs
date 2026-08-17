@@ -1,1 +1,28 @@
+# Cargo
 /target
+
+# Runtime data dirs created when a bridge binary/test runs from the repo root.
+# .gcore is the default AXVERITY_GCORE_DATA_DIR (objseg segment files, pg_store
+# spillover); .axverity holds the enumeration ledger.
+/.gcore/
+/.axverity/
+
+# CLI `build` outputs when emitted into the repo root instead of a temp dir
+# (see compute_lib_path / out_dir in src/main.rs).
+/a.out
+/lib*.a
+/*.rlib
+/generated_lib.rs
+/generated_main.rs
+/generated_*_xb.rs
+
+# Test / bench debris
+*.profraw
+perf.data
+perf.data.old
+
+# Bake-off probe artifacts (M1_VALUE_ALLOCATION_STRATEGY_BAKEOFF_V1).
+# The compiled probes and their build logs are regenerable from the harness
+# scripts; the CSVs next to them are the measurements and ARE tracked.
+/bakeoff-results/bin-*/
+/bakeoff-results/*.log
