@@ -1,0 +1,33 @@
+# M1_VALUE_ALLOCATION_STRATEGY_BAKEOFF_V1 -- writepath.p0.sha256
+#
+# LIVE_WRITE_PATH_UNTOUCHED baseline. Established 2026-08-17 during P0.
+#
+# NOTE: the record referenced by the superseded intent
+# (M1_VALUE_LIST_STRUCTURAL_SHARING_V1) does not exist on disk -- searched both
+# repos and every session scratchpad. These hashes are therefore an ESTABLISHED
+# baseline, not a re-verification against a prior record. See the P0 report.
+#
+# Repo:  /home/chris/dev/axVerity-working2
+# HEAD:  367cd6296ad291360765783a3fbda94e97ead1cb
+# Paths are relative to that repo root.
+#
+# Verify with: ./M1_VALUE_ALLOC_BAKEOFF_V1_verify_writepath.sh
+493f319a3bc55240f6240cd09cd1ae902e0fce1a5b363655828a7f1a0c05334d  src/mem_controller.m1
+ffacee2901ac73e3a148ef5a012d22091a1d27b6146bea2aaac0ce8828223797  src/flusher.m1
+390cd55daa67eafbb1dec01f018b2d442f053a444f7783ab5a24022bfed7f9ea  lib/wp_ack_bench_step.m1
+e362b1c4e0ab888ed29a7d9526223590853218ad72a8312326add5623ae4dfd1  lib/wp_block_capacity.m1
+8e7db074fcb8b1adc8c79cdd252d9ef338bccf282bd7d2165d463e88d4c1b3d0  lib/wp_disk_controller_step.m1
+762a1b7ec236608720056c156ed724717dae01962de40b511b1d3261b45145e7  lib/wp_flusher_step.m1
+87a5d9d8fa3054ebe60987471adf09a1800cde173d7c2275c1e27521a4e5ebb9  lib/wp_footer_size.m1
+0cd1e44f643ffd41572fe1d4cfb63618f4f2c3c9a94565f948f7063b4a25e161  lib/wp_mem_controller_step.m1
+8f9da480ae62296e504c744b483a38e601f987203f4e521a0e48fa95bdba662f  lib/wp_wait_durable.m1
+7923916232668638bddcd3be0be2d6662888c697a9a7d2ed6cb9bf2d29a1b950  lib/wp_wait_durable_more.m1
+ffff7183bc8d9adcb2221b2c5a68209289df4f2773cf53de47f6f727c06f855e  lib/wp_wait_durable_step.m1
+374a8f94d4ecc872d1b70af55b8fb04f658bafb4b83cafcae53daf89386ffc5d  lib/wp_write_step.m1
+# PROMOTED into the enforced set by the Lead Architect at the P0 gate.
+# LIVE_WRITE_PATH_UNTOUCHED named only "wp_*.m1, mem_controller.m1, flusher.m1";
+# these three are the same shipping write path (scripts/build.sh:58 --entries)
+# and the constraint's list was incomplete. All 15 verify at every gate.
+6bbfeb82caee21d91bc57c4aa5e317ce9d9b40f3b27c031a94c74d8c1e53f899  src/disk_controller.m1
+5f9ae293671716a6a39ecc0c583bdef710a1eca3803c5a7a14904fca9666d048  src/hot_mem_write.m1
+51dbcadac85c7661de3360202e57a830db1ffd970a32abcdce1708c0c11e9877  src/ack_bench.m1
