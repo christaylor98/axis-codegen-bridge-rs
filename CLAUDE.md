@@ -108,3 +108,69 @@ identity payload to a bare Rust fn path at translation time. The illegal state
 3. Do not invent an identity hash.
 4. If the correct type cannot be determined from the Rust source,
    leave the entry without `in`/`out` and report it as a gap.
+
+## `Value::List` clone cost — the O(N²) fold, and what is load-bearing
+
+Recorded by `M1_LIST_FOLD_FINDING_CLOSEOUT_V1` (2026-08-17), closing
+`M1_VALUE_ALLOCATION_STRATEGY_BAKEOFF_V1`. Nothing below was changed by
+that intent — these are the sites a future change must not break.
+
+### The mechanism
+
+`ref_clone` (`src/emit/rust_05.rs:1314`) emits a `.clone()` at **every**
+call site that names a list. `Value::List` is `Vec<Value>` with no
+structural sharing (`src/runtime/value.rs:19`), so each of those clones
+is O(N) in the list length.
+
+An M1 fold written as `loop_count` + channel-peek names the list **twice
+per iteration** — hence 2N deep copies, hence O(N²). The clone-count
+model predicted a 2× ratio between the two-clone and one-clone probes;
+the measurement came in at **1.85× at both 10k and 100k**. That
+agreement is what makes the call-site argument clone the single root
+cause rather than one contributing factor.
+
+`list_get` is **not** the cause: it indexes directly
+(`src/runtime/list.rs:36-41`, `elems[idx].clone()` — O(1) plus one
+element clone). An earlier claim that it was O(i) was retracted.
+
+`foreach` (`src/runtime/iter.rs:41-48`) is the remedy and is already
+correct: it destructures `Value::List(items)` and moves each element out
+of the owned `Vec`, so the list is never named inside the loop body. No
+runtime change is needed to get linear behaviour.
+
+### `VALUE_MUST_STAY_SEND_SYNC` is load-bearing (`value.rs:38-41`)
+
+The `assert_send_sync::<Value>()` compile-time gate is not decorative and
+not merely satisfied by accident. On the axVerity write path a
+**4-element `Value::List` crosses three OS threads per iteration** —
+built on `mem_controller`, received on `disk_controller`, received again
+on `flusher`, each a separate thread spawned per `--entries` name. It is
+also structurally required at `src/runtime/channels.rs:266` and `:68`.
+
+Consequence: swapping the payload for `Rc<Vec<Value>>` to make cloning
+cheap is **undefined behaviour here, not merely slower**. Any shared
+payload must be atomically refcounted.
+
+### In-place mutation on owned move — deliberate, three sites
+
+- `src/runtime/list.rs:63` — `list_append`, `Value::List(mut elems)`
+- `src/runtime/list.rs:74` — `list_concat`, `(Value::List(mut a), ...)`
+- `src/runtime/list.rs:85` — `list_reverse`, `Value::List(mut es)`
+
+These take the payload by owned move and mutate it in place, on purpose:
+the native call site already handed over an owned clone, so pushing /
+extending / reversing directly avoids a second copy. Any future move to
+a **shared** payload representation must address all three — writing
+through a shared buffer would be observable by other holders of the same
+allocation, which is a semantic change, not an optimisation.
+
+### Rejected: the cheap-to-clone payload
+
+A shared, root-owned, never-freed `Value::List` buffer was built and
+measured. It removes the quadratic (**1,902× at 100k**, flat to 1M on
+unchanged M1 source) but disqualified itself on the shape the write path
+actually uses: **+70.1% at 4 elements, +108.2% at 8**, and **250.5 bytes
+leaked per list construction**, unbounded in construction count. It has
+been reverted out of this tree. Do not re-propose a shared-payload
+candidate without addressing the small-list construction regression, the
+three mutation sites above, and the `Send + Sync` requirement.
