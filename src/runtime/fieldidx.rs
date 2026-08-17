@@ -88,26 +88,9 @@ fn next_handle() -> i64 {
     })
 }
 
-fn arg_int(v: &Value, who: &str, i: usize) -> i64 {
-    match v {
-        Value::Int(n) => *n,
-        other => panic!("{}: arg {} expected Int, got {:?}", who, i, other),
-    }
-}
-fn arg_str(v: &Value, who: &str, i: usize) -> String {
-    match v {
-        Value::Str(h) => get_str(h),
-        other => panic!("{}: arg {} expected Text, got {:?}", who, i, other),
-    }
-}
-
 /// `fieldidx_open(shard: Text) -> Int`
 #[track_caller]
-pub fn fieldidx_open(arg: Value) -> Value {
-    let _shard = match arg {
-        Value::Str(h) => get_str(h),
-        other => panic!("fieldidx_open: expected Text shard, got {:?}", other),
-    };
+pub fn fieldidx_open(_shard: std::sync::Arc<str>) -> Value {
     let h = next_handle();
     FIDX.with(|idx| {
         idx.borrow_mut()
@@ -119,15 +102,10 @@ pub fn fieldidx_open(arg: Value) -> Value {
 /// `fieldidx_insert(h: Int, field: Text, value: Text, hash: Text) -> Unit`
 /// Synchronous in-memory insert (append, de-duplicated) — no syscall, no lock.
 #[track_caller]
-pub fn fieldidx_insert(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 4 => es,
-        other => panic!("fieldidx_insert: expected Tuple(Int, Text, Text, Text), got {:?}", other),
-    };
-    let h = arg_int(&es[0], "fieldidx_insert", 0);
-    let field = arg_str(&es[1], "fieldidx_insert", 1);
-    let value = arg_str(&es[2], "fieldidx_insert", 2);
-    let hash = arg_str(&es[3], "fieldidx_insert", 3);
+pub fn fieldidx_insert(h: i64, field: std::sync::Arc<str>, value: std::sync::Arc<str>, hash: std::sync::Arc<str>) -> Value {
+    let field = get_str(field);
+    let value = get_str(value);
+    let hash = get_str(hash);
     FIDX.with(|idx| {
         let mut idx = idx.borrow_mut();
         let sh = idx
@@ -143,14 +121,9 @@ pub fn fieldidx_insert(args: Value) -> Value {
 /// Returns the posting list as LF-joined hashes (append order), or "" if the
 /// key was never seen by this shard.
 #[track_caller]
-pub fn fieldidx_get(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 3 => es,
-        other => panic!("fieldidx_get: expected Tuple(Int, Text, Text), got {:?}", other),
-    };
-    let h = arg_int(&es[0], "fieldidx_get", 0);
-    let field = arg_str(&es[1], "fieldidx_get", 1);
-    let value = arg_str(&es[2], "fieldidx_get", 2);
+pub fn fieldidx_get(h: i64, field: std::sync::Arc<str>, value: std::sync::Arc<str>) -> Value {
+    let field = get_str(field);
+    let value = get_str(value);
     FIDX.with(|idx| {
         let idx = idx.borrow();
         let sh = idx
@@ -189,13 +162,8 @@ fn write_durable(path: &str, bytes: &[u8]) {
 ///   `FIELDIDX1\t<wm_seg>\t<wm_off>\t<count>\n` then `count` lines
 ///   `<field>\t<value>\t<hash>\n` (one line per POSTING ENTRY).
 #[track_caller]
-pub fn fieldidx_snapshot(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 2 => es,
-        other => panic!("fieldidx_snapshot: expected Tuple(Int, Text), got {:?}", other),
-    };
-    let h = arg_int(&es[0], "fieldidx_snapshot", 0);
-    let path = arg_str(&es[1], "fieldidx_snapshot", 1);
+pub fn fieldidx_snapshot(h: i64, path: std::sync::Arc<str>) -> Value {
+    let path = get_str(path);
     let body = FIDX.with(|idx| {
         let idx = idx.borrow();
         let sh = idx
@@ -395,14 +363,9 @@ fn do_replay(sh: &mut FieldShard, prefix: &str) -> i64 {
 /// lockstep with the content-hash and pk indexes (hard-limit
 /// FRAME_PARSERS_UPDATED_LOCKSTEP). Returns frames scanned (diagnostics).
 #[track_caller]
-pub fn fieldidx_rebuild(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 3 => es,
-        other => panic!("fieldidx_rebuild: expected Tuple(Int, Text, Text), got {:?}", other),
-    };
-    let h = arg_int(&es[0], "fieldidx_rebuild", 0);
-    let prefix = arg_str(&es[1], "fieldidx_rebuild", 1);
-    let snap_path = arg_str(&es[2], "fieldidx_rebuild", 2);
+pub fn fieldidx_rebuild(h: i64, prefix: std::sync::Arc<str>, snap_path: std::sync::Arc<str>) -> Value {
+    let prefix = get_str(prefix);
+    let snap_path = get_str(snap_path);
 
     let scanned = FIDX.with(|idx| {
         let mut idx = idx.borrow_mut();
@@ -425,13 +388,8 @@ pub fn fieldidx_rebuild(args: Value) -> Value {
 /// VERIFY_GENUINE_INCREMENTALITY): after appending K frames it returns K, not
 /// base+K; with no new frames it returns 0.
 #[track_caller]
-pub fn fieldidx_replay(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 2 => es,
-        other => panic!("fieldidx_replay: expected Tuple(Int, Text), got {:?}", other),
-    };
-    let h = arg_int(&es[0], "fieldidx_replay", 0);
-    let prefix = arg_str(&es[1], "fieldidx_replay", 1);
+pub fn fieldidx_replay(h: i64, prefix: std::sync::Arc<str>) -> Value {
+    let prefix = get_str(prefix);
     let scanned = FIDX.with(|idx| {
         let mut idx = idx.borrow_mut();
         let sh = idx
@@ -494,19 +452,18 @@ fn residency_mode() -> &'static str {
 /// own frontier); return the (field,value) posting list LF-JOINED — byte-identical
 /// to what `fieldidx_get` returns on a freshly-rebuilt handle (`"" if absent`).
 #[track_caller]
-pub fn fieldidx_res_get(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 5 => es,
-        other => panic!(
-            "fieldidx_res_get: expected Tuple(shard, prefix, snap, field, value), got {:?}",
-            other
-        ),
-    };
-    let shard = arg_str(&es[0], "fieldidx_res_get", 0);
-    let prefix = arg_str(&es[1], "fieldidx_res_get", 1);
-    let snap = arg_str(&es[2], "fieldidx_res_get", 2);
-    let field = arg_str(&es[3], "fieldidx_res_get", 3);
-    let value = arg_str(&es[4], "fieldidx_res_get", 4);
+pub fn fieldidx_res_get(
+    shard: std::sync::Arc<str>,
+    prefix: std::sync::Arc<str>,
+    snap: std::sync::Arc<str>,
+    field: std::sync::Arc<str>,
+    value: std::sync::Arc<str>,
+) -> Value {
+    let shard = get_str(shard);
+    let prefix = get_str(prefix);
+    let snap = get_str(snap);
+    let field = get_str(field);
+    let value = get_str(value);
 
     let existing = RESIDENT.with(|r| r.borrow().get(&shard).copied());
     let h = match existing {
@@ -552,11 +509,8 @@ pub fn fieldidx_res_get(args: Value) -> Value {
 /// matches, so handles persist for the worker's life; under `off` nothing is
 /// resident so it is always a no-op.
 #[track_caller]
-pub fn fieldidx_res_scope(arg: Value) -> Value {
-    let which = match arg {
-        Value::Str(h) => get_str(h),
-        other => panic!("fieldidx_res_scope: expected Text, got {:?}", other),
-    };
+pub fn fieldidx_res_scope(which: std::sync::Arc<str>) -> Value {
+    let which = get_str(which);
     if residency_mode() == which {
         RESIDENT.with(|r| {
             let mut r = r.borrow_mut();

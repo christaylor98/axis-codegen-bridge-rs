@@ -53,11 +53,11 @@ fn heterogeneous_sources_one_wait_point() {
             let batch = uwait_deadline(take_list, Instant::now() + Duration::from_secs(1));
             let Value::List(es) = batch else { panic!("wait must deliver a List") };
             assert!(!es.is_empty(), "WAIT_ALWAYS_LIST: list is never empty");
-            for e in es {
-                let t = tag_of(&e);
+            for e in es.iter() {
+                let t = tag_of(e);
                 if t != "Tick" {
                     kinds_seen.insert(t);
-                    events.push(e);
+                    events.push(e.clone());
                 }
             }
         }
@@ -151,7 +151,7 @@ fn burst_drains_as_single_batch() {
         let mut seen: Vec<i64> = Vec::new();
         while seen.len() < 5 {
             let Value::List(es) = uwait(take_list) else { panic!("expected List") };
-            for e in es {
+            for e in es.iter() {
                 if let Value::Ctor { fields, .. } = e {
                     if let Value::Int(n) = fields[1] {
                         seen.push(n);

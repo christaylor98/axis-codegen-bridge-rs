@@ -40,7 +40,7 @@ fn accept_str_join_ab_comma_is_a_comma_b() {
     setup();
     // ValueList(Text)("a", "b")
     let list = Value::List(vec![s("a"), s("b")]);
-    let result = str_ops::str_join(Value::Tuple(vec![list, s(",")]));
+    let result = str_ops::str_join(list, s(",").as_text());
     assert_eq!(result, s("a,b"));
 }
 
@@ -193,35 +193,31 @@ fn flatten_concats_inner_lists() {
 #[test]
 fn str_replace_substitutes_all_occurrences() {
     setup();
-    let r = str_ops::str_replace(Value::Tuple(vec![
-        s("a_b_c"),
-        s("_"),
-        s("-"),
-    ]));
+    let r = str_ops::str_replace(s("a_b_c").as_text(), s("_").as_text(), s("-").as_text());
     assert_eq!(r, s("a-b-c"));
 }
 
 #[test]
 fn str_to_upper_and_lower_are_idempotent() {
     setup();
-    let u = str_ops::str_to_upper(s("Hello"));
+    let u = str_ops::str_to_upper(s("Hello").as_text());
     assert_eq!(u, s("HELLO"));
-    assert_eq!(str_ops::str_to_upper(u.clone()), u);
+    assert_eq!(str_ops::str_to_upper(u.as_text()), u);
 
-    let l = str_ops::str_to_lower(s("Hello"));
+    let l = str_ops::str_to_lower(s("Hello").as_text());
     assert_eq!(l, s("hello"));
-    assert_eq!(str_ops::str_to_lower(l.clone()), l);
+    assert_eq!(str_ops::str_to_lower(l.as_text()), l);
 }
 
 #[test]
 fn str_pad_left_and_right_match_width() {
     setup();
     assert_eq!(
-        str_ops::str_pad_left(Value::Tuple(vec![s("7"), Value::Int(3), s("0")])),
+        str_ops::str_pad_left(s("7").as_text(), 3, s("0").as_text()),
         s("007")
     );
     assert_eq!(
-        str_ops::str_pad_right(Value::Tuple(vec![s("7"), Value::Int(3), s("0")])),
+        str_ops::str_pad_right(s("7").as_text(), 3, s("0").as_text()),
         s("700")
     );
 }

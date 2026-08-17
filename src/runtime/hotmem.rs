@@ -68,7 +68,7 @@ use std::cell::{Cell as StdCell, RefCell};
 use std::sync::{Arc, OnceLock};
 
 use super::non_blocking_memory::{BridgedCell, ReaderHandle, ReaderRegistry, Writer};
-use super::value::Value;
+use super::value::{Value};
 
 /// The arena payload: a shared reference to the exact byte buffer the WAL
 /// write already built. Moving an `Arc` into `write_lazy` is a refcount
@@ -203,11 +203,8 @@ pub fn hotmem_reader_start(_arg: Value) -> Value {
 /// first, so callers who only ever read from one thread can skip the
 /// explicit start call. Returns empty `Bytes` if the cell has never been
 /// written.
-pub fn hotmem_read(arg: Value) -> Value {
-    let last_epoch = match arg {
-        Value::Int(n) => n.max(0) as u64,
-        other => panic!("hotmem_read: expected Int, got {:?}", other),
-    };
+pub fn hotmem_read(last_epoch: i64) -> Value {
+    let last_epoch = last_epoch.max(0) as u64;
     // Shared `&BridgedCell` — never `&mut`, never `UnsafeCell`. `None` means no
     // writer has published yet (arena empty).
     let cell = match ARENA_SHARED.get() {
@@ -310,7 +307,7 @@ mod uaf_isolation_probe {
         let reader = thread::spawn(move || {
             let mut last_epoch: i64 = 0;
             while !r_stop.load(AtoOrd::Relaxed) {
-                let v = hotmem_read(Value::Int(last_epoch));
+                let v = hotmem_read(last_epoch);
                 r_reads.fetch_add(1, AtoOrd::Relaxed);
                 if let Value::Bytes(b) = v {
                     if !b.is_empty() {
@@ -377,7 +374,7 @@ mod uaf_isolation_probe {
         let reader = thread::spawn(move || {
             let mut last_epoch: i64 = 0;
             loop {
-                let v = hotmem_read(Value::Int(last_epoch));
+                let v = hotmem_read(last_epoch);
                 if let Value::Bytes(b) = v {
                     if !b.is_empty() {
                         let ok = match String::from_utf8(b) {

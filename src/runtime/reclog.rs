@@ -107,30 +107,9 @@ fn window_ms_env() -> u64 {
 /// bounded channel — BLOCKING the caller only if the channel is full
 /// (backpressure). Returns the oneshot id; the caller then `oneshot_wait`s it.
 #[track_caller]
-pub fn reclog_submit(args: Value) -> Value {
-    let (frame, logp, bind_line) = match args {
-        Value::Tuple(es) if es.len() == 3 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("reclog_submit: expected Tuple(Bytes, Text, Bytes), got {:?}", other),
-    };
-    // Validate shapes up front so a malformed submit fails at the producer, not
-    // deep in the janitor.
-    match &frame {
-        Value::Bytes(_) => {}
-        other => panic!("reclog_submit: arg 0 (frame) expected Bytes, got {:?}", other),
-    }
-    match &logp {
-        Value::Str(_) => {}
-        other => panic!("reclog_submit: arg 1 (name_log_path) expected Text, got {:?}", other),
-    }
-    match &bind_line {
-        Value::Bytes(_) => {}
-        other => panic!("reclog_submit: arg 2 (bind_line) expected Bytes, got {:?}", other),
-    }
+pub fn reclog_submit(frame: Vec<u8>, logp: std::sync::Arc<str>, bind_line: Vec<u8>) -> Value {
     let id = new_oneshot();
-    let item = Value::Tuple(vec![Value::Int(id), frame, logp, bind_line]);
+    let item = Value::Tuple(vec![Value::Int(id), Value::Bytes(frame), Value::Str(logp), Value::Bytes(bind_line)]);
     stream_submit(STREAM_FUSED, item);
     Value::Int(id)
 }
@@ -275,10 +254,7 @@ fn write_batch_fused(batch: Vec<Value>) -> Vec<i64> {
     };
     let prefix = format!(".axverity/wal/{}-", shard);
     let total: i64 = frames.iter().map(|f| f.len() as i64).sum();
-    let seq = match super::prealloc::wal_write_seg(Value::Tuple(vec![
-        Value::Str(intern_str(&prefix)),
-        Value::Int(total),
-    ])) {
+    let seq = match super::prealloc::wal_write_seg(intern_str(&prefix), total) {
         Value::Int(n) => n,
         other => panic!("reclog_flush_once: wal_write_seg returned {:?}", other),
     };

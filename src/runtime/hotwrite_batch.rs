@@ -61,17 +61,7 @@ fn gen_medium(i: i64, payload: &mut Vec<u8>, out: &mut Vec<u8>) {
 /// `hotwrite_batch_run(n: Int, block_size: Int, do_key: Int) -> Int`
 /// Returns total bytes written (also defeats dead-code elimination of the loop).
 #[track_caller]
-pub fn hotwrite_batch_run(args: Value) -> Value {
-    let (n, block_size, do_key) = match args {
-        Value::Tuple(ref es) if es.len() == 3 => {
-            let g = |k: usize| match &es[k] {
-                Value::Int(v) => *v,
-                other => panic!("hotwrite_batch_run: arg {} must be Int, got {:?}", k, other),
-            };
-            (g(0), g(1), g(2))
-        }
-        other => panic!("hotwrite_batch_run: expected 3-tuple (Int,Int,Int), got {:?}", other),
-    };
+pub fn hotwrite_batch_run(n: i64, block_size: i64, do_key: i64) -> Value {
     let bs = block_size as usize;
     let mut blocks: Vec<Vec<u8>> = Vec::new();   // kept => real no-flush RAM accumulation
     let mut arena: Vec<u8> = vec![0u8; bs];
@@ -112,22 +102,8 @@ extern "C" {
 /// Phase A: durable full-cycle collapse — writes block-<seq>.bin + manifest.log
 /// with real per-block fsync (passes hotwrite-workload-verify.py).
 #[track_caller]
-pub fn hotwrite_batch_run_c_durable(args: Value) -> Value {
-    let (dir, n, block_size, do_key) = match args {
-        Value::Tuple(ref es) if es.len() == 4 => {
-            let dir = match &es[0] {
-                Value::Str(s) => s.to_string(),
-                other => panic!("hotwrite_batch_run_c_durable: arg 0 (dir) must be Text, got {:?}", other),
-            };
-            let g = |k: usize| match &es[k] {
-                Value::Int(v) => *v,
-                other => panic!("hotwrite_batch_run_c_durable: arg {} must be Int, got {:?}", k, other),
-            };
-            (dir, g(1), g(2), g(3))
-        }
-        other => panic!("hotwrite_batch_run_c_durable: expected 4-tuple (Text,Int,Int,Int), got {:?}", other),
-    };
-    let cdir = std::ffi::CString::new(dir).expect("hotwrite_batch_run_c_durable: dir has interior NUL");
+pub fn hotwrite_batch_run_c_durable(dir: std::sync::Arc<str>, n: i64, block_size: i64, do_key: i64) -> Value {
+    let cdir = std::ffi::CString::new(dir.to_string()).expect("hotwrite_batch_run_c_durable: dir has interior NUL");
     let total = unsafe { hotwrite_batch_c_durable(cdir.as_ptr(), n, block_size, do_key) };
     Value::Int(total)
 }
@@ -135,17 +111,7 @@ pub fn hotwrite_batch_run_c_durable(args: Value) -> Value {
 /// `hotwrite_batch_run_c(n: Int, block_size: Int, do_key: Int) -> Int`
 /// Thin Rust->C FFI shim; all per-record work happens inside the C TU.
 #[track_caller]
-pub fn hotwrite_batch_run_c(args: Value) -> Value {
-    let (n, block_size, do_key) = match args {
-        Value::Tuple(ref es) if es.len() == 3 => {
-            let g = |k: usize| match &es[k] {
-                Value::Int(v) => *v,
-                other => panic!("hotwrite_batch_run_c: arg {} must be Int, got {:?}", k, other),
-            };
-            (g(0), g(1), g(2))
-        }
-        other => panic!("hotwrite_batch_run_c: expected 3-tuple (Int,Int,Int), got {:?}", other),
-    };
+pub fn hotwrite_batch_run_c(n: i64, block_size: i64, do_key: i64) -> Value {
     let total = unsafe { hotwrite_batch_c_run(n, block_size, do_key) };
     Value::Int(total)
 }

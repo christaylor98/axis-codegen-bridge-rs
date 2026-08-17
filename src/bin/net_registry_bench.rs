@@ -52,7 +52,7 @@ fn payload(cid: usize, iter: usize) -> Vec<u8> {
 
 fn run(mode: &str, clients: usize) -> f64 {
     // Shared listener on an ephemeral port.
-    let (listener, port) = tuple_ints(tcp_listen_shared(Value::Int(0)));
+    let (listener, port) = tuple_ints(tcp_listen_shared(0));
     let start = Arc::new(Barrier::new(clients * 2 + 1));
     let accepted = Arc::new(AtomicUsize::new(0));
 
@@ -63,14 +63,14 @@ fn run(mode: &str, clients: usize) -> f64 {
         let accepted = Arc::clone(&accepted);
         workers.push(thread::spawn(move || {
             start.wait();
-            let conn = as_int(tcp_accept(Value::Int(listener)), "accept");
+            let conn = as_int(tcp_accept(listener), "accept");
             accepted.fetch_add(1, Ordering::Relaxed);
             for _ in 0..M {
-                let req = bytes(tcp_read(Value::Int(conn)), "wread");
+                let req = bytes(tcp_read(conn), "wread");
                 // echo exactly what was read back to the client
-                tcp_write(Value::Tuple(vec![Value::Int(conn), Value::Bytes(req)]));
+                tcp_write(conn, req);
             }
-            tcp_close(Value::Int(conn));
+            tcp_close(conn);
         }));
     }
 
@@ -80,16 +80,14 @@ fn run(mode: &str, clients: usize) -> f64 {
         let start = Arc::clone(&start);
         clients_h.push(thread::spawn(move || {
             start.wait();
-            let conn = as_int(tcp_connect(Value::Tuple(vec![
-                Value::Str(intern_str("127.0.0.1")), Value::Int(port),
-            ])), "connect");
+            let conn = as_int(tcp_connect(intern_str("127.0.0.1"), port), "connect");
             for it in 0..M {
                 let p = payload(cid, it);
-                tcp_write(Value::Tuple(vec![Value::Int(conn), Value::Bytes(p.clone())]));
-                let echo = bytes(tcp_read(Value::Int(conn)), "cread");
+                tcp_write(conn, p.clone());
+                let echo = bytes(tcp_read(conn), "cread");
                 assert_eq!(echo, p, "echo mismatch cid={cid} it={it} — mis-routed handle?");
             }
-            tcp_close(Value::Int(conn));
+            tcp_close(conn);
         }));
     }
 

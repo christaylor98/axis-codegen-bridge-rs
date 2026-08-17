@@ -52,22 +52,14 @@ pub fn tuple_field(bundle: Value, idx: i64) -> Value {
 }
 
 #[track_caller]
-pub fn ctor_field(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => {
-            let idx = match &es[1] {
-                Value::Int(n) => *n as usize,
-                other => panic!("ctor_field: arg 1 expected Int, got {:?}", other),
-            };
-            match &es[0] {
-                Value::Ctor { fields, .. } => fields.get(idx).cloned().unwrap_or(Value::Unit),
-                other => panic!(
-                    "ctor_field: expected Ctor, got {:?} (use tuple_field for a raw Tuple/List)",
-                    other
-                ),
-            }
-        }
-        other => panic!("ctor_field: expected Tuple(Value, Int), got {:?}", other),
+pub fn ctor_field(bundle: Value, idx: i64) -> Value {
+    let idx = idx as usize;
+    match bundle {
+        Value::Ctor { fields, .. } => fields.get(idx).cloned().unwrap_or(Value::Unit),
+        other => panic!(
+            "ctor_field: expected Ctor, got {:?} (use tuple_field for a raw Tuple/List)",
+            other
+        ),
     }
 }
 
@@ -78,8 +70,8 @@ mod tests {
     #[test]
     fn ctor_field_reads_value_make_output() {
         let v = value_make(Value::Tuple(vec![Value::Int(0), Value::Int(0), Value::Int(9)]));
-        assert_eq!(ctor_field(Value::Tuple(vec![v.clone(), Value::Int(0)])), Value::Int(0));
-        assert_eq!(ctor_field(Value::Tuple(vec![v, Value::Int(2)])), Value::Int(9));
+        assert_eq!(ctor_field(v.clone(), 0), Value::Int(0));
+        assert_eq!(ctor_field(v, 2), Value::Int(9));
     }
 
     #[test]
@@ -93,7 +85,7 @@ mod tests {
     #[should_panic(expected = "ctor_field: expected Ctor, got Tuple")]
     fn ctor_field_panics_on_tuple() {
         let t = Value::Tuple(vec![Value::Int(1), Value::Int(2)]);
-        ctor_field(Value::Tuple(vec![t, Value::Int(0)]));
+        ctor_field(t, 0);
     }
 
     #[test]

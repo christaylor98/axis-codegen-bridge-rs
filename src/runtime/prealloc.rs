@@ -66,22 +66,7 @@ pub(crate) fn prealloc_file(path: &str, size: i64) -> bool {
 /// (re-reserving an existing segment is harmless). Panics on a genuine OS error;
 /// a filesystem that lacks `fallocate` is a tolerated no-op.
 #[track_caller]
-pub fn fs_prealloc(args: Value) -> Value {
-    let (path, size) = match args {
-        Value::Tuple(es) if es.len() == 2 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("fs_prealloc: expected Tuple(Text, Int), got {:?}", other),
-    };
-    let path = match path {
-        Value::Str(h) => get_str(h),
-        other => panic!("fs_prealloc: arg 0 expected Text, got {:?}", other),
-    };
-    let size = match size {
-        Value::Int(n) => n,
-        other => panic!("fs_prealloc: arg 1 expected Int, got {:?}", other),
-    };
+pub fn fs_prealloc(path: std::sync::Arc<str>, size: i64) -> Value {
     prealloc_file(&path, size);
     Value::Unit
 }
@@ -111,22 +96,8 @@ fn seg_path(prefix: &str, seq: i64) -> String {
 /// overflow — so each frame is wholly within one segment. The returned segment
 /// is always pre-allocated (KEEP_SIZE) before return. Returns the sequence Int.
 #[track_caller]
-pub fn wal_write_seg(args: Value) -> Value {
-    let (prefix, frame_size) = match args {
-        Value::Tuple(es) if es.len() == 2 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("wal_write_seg: expected Tuple(Text, Int), got {:?}", other),
-    };
-    let prefix = match prefix {
-        Value::Str(h) => get_str(h),
-        other => panic!("wal_write_seg: arg 0 expected Text, got {:?}", other),
-    };
-    let frame_size = match frame_size {
-        Value::Int(n) => n,
-        other => panic!("wal_write_seg: arg 1 expected Int, got {:?}", other),
-    };
+pub fn wal_write_seg(prefix: std::sync::Arc<str>, frame_size: i64) -> Value {
+    let prefix = prefix.to_string();
     let seg_size = seg_size_env();
 
     // Highest existing segment sequence (or -1 if none yet).

@@ -63,7 +63,7 @@ use std::collections::HashMap;
 use super::rawblk::{
     append_shape_durable, decode_params, load_shapes, shape_id,
 };
-use super::value::{get_str, intern_str, Value};
+use super::value::{intern_str, Value};
 
 thread_local! {
     /// (shape id, table, cols) for this thread's currently-parsed statement.
@@ -82,29 +82,14 @@ fn raw_root() -> String {
     ".axverity/rawblocks".to_string()
 }
 
-fn as_text(field: &'static str, v: &Value) -> String {
-    match v {
-        Value::Str(h) => get_str(h),
-        other => panic!("pgbshape: {} expected Text, got {:?}", field, other),
-    }
-}
-
-fn as_bytes(field: &'static str, v: &Value) -> Vec<u8> {
-    match v {
-        Value::Bytes(b) => b.clone(),
-        Value::Str(h) => get_str(h).into_bytes(),
-        other => panic!("pgbshape: {} expected Bytes, got {:?}", field, other),
-    }
-}
-
 /// `pgb_parse_shape(sql: Text) -> Int`
 ///
 /// Register the shape of an `INSERT INTO <t> (c1, ...) VALUES (...)` statement.
 /// Returns the shape id, or 0 if the statement is not an INSERT of that shape
 /// (in which case the caller leaves the connection on its normal path).
 #[track_caller]
-pub fn pgb_parse_shape(arg: Value) -> Value {
-    let sql = as_text("sql", &arg);
+pub fn pgb_parse_shape(sql: std::sync::Arc<str>) -> Value {
+    let sql = sql.to_string();
     let u = sql.trim_start().to_uppercase();
     if !u.starts_with("INSERT") {
         SHAPE.with(|s| *s.borrow_mut() = None);
@@ -208,8 +193,7 @@ fn param_section(msg: &[u8]) -> Option<(usize, usize, bool)> {
 /// an ARM-B row, use the normal path" — when there is no registered shape, the
 /// message will not parse, or any parameter is in binary format.
 #[track_caller]
-pub fn pgb_bind_capture(arg: Value) -> Value {
-    let msg = as_bytes("msg", &arg);
+pub fn pgb_bind_capture(msg: Vec<u8>) -> Value {
     let Some((id, _, _)) = SHAPE.with(|s| s.borrow().clone()) else {
         return Value::Int(0);
     };
@@ -246,8 +230,7 @@ pub fn pgb_payload(_: Value) -> Value {
 /// The pool-side derivation for ARM B. Returns `""` when the shape id is not
 /// resolvable, which the caller reports rather than silently dropping.
 #[track_caller]
-pub fn pgb_record(arg: Value) -> Value {
-    let payload = as_bytes("payload", &arg);
+pub fn pgb_record(payload: Vec<u8>) -> Value {
     if payload.len() < 20 {
         return Value::Str(intern_str(""));
     }

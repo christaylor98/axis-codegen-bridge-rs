@@ -24,10 +24,7 @@ fn as_int(v: Value) -> i64 {
 }
 
 fn open(path: &str, cap: i64) -> i64 {
-    as_int(mmapseg_open(Value::Tuple(vec![
-        Value::Str(intern_str(path)),
-        Value::Int(cap),
-    ])))
+    as_int(mmapseg_open(intern_str(path), cap))
 }
 
 fn main() {
@@ -41,10 +38,7 @@ fn main() {
             let n: usize = a[4].parse().unwrap();
             for i in 0..n {
                 let rec = format!("rec-{}", i).into_bytes();
-                let off = as_int(mmapseg_append(Value::Tuple(vec![
-                    Value::Int(h),
-                    Value::Bytes(rec),
-                ])));
+                let off = as_int(mmapseg_append(h, rec));
                 assert!(off >= 0, "segment full at record {}", i);
             }
             println!("APPENDED {} (no msync); holding for SIGKILL", n);
@@ -56,14 +50,11 @@ fn main() {
         }
         "count" => {
             // open recovered the frontier; walk frames up to it and count.
-            let frontier = as_int(mmapseg_frontier(Value::Int(h))) as usize;
+            let frontier = as_int(mmapseg_frontier(h)) as usize;
             let mut off = 0usize;
             let mut count = 0usize;
             while off < frontier {
-                let payload = match mmapseg_read(Value::Tuple(vec![
-                    Value::Int(h),
-                    Value::Int(off as i64),
-                ])) {
+                let payload = match mmapseg_read(h, off as i64) {
                     Value::Bytes(b) => b,
                     _ => break,
                 };

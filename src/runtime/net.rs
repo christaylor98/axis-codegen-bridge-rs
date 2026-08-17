@@ -56,7 +56,7 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use super::value::{get_str, Value};
+use super::value::Value;
 
 /// One registered socket: either a listener or an accepted/connected stream.
 enum Sock {
@@ -228,14 +228,6 @@ fn remove_sock(handle: i64) -> Option<Arc<Sock>> {
     }
 }
 
-/// Extract an `Int` handle from the single-arg calling convention.
-fn handle_arg(v: &Value, who: &str) -> i64 {
-    match v {
-        Value::Int(n) => *n,
-        other => panic!("{}: expected Int handle, got {:?}", who, other),
-    }
-}
-
 // ── AXVERITY_SLAB_TO_WIRE_BUILD_V1 — paired response batching + slab-to-wire ──
 //
 // One flag, `AXVERITY_SLAB_TO_WIRE` (off by default), gates BOTH halves of the
@@ -391,22 +383,8 @@ fn flush_conn(handle: i64) {
 /// Byte-identical to what pg_data_row_1(val) produces. Falls back to an immediate
 /// raw write when the flag is off, so a stray caller is always well-behaved.
 #[track_caller]
-pub fn pg_emit_datarow1(args: Value) -> Value {
-    let (conn, val) = match args {
-        Value::Tuple(es) if es.len() == 2 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("pg_emit_datarow1: expected Tuple(Int, Text), got {:?}", other),
-    };
-    let conn = match conn {
-        Value::Int(n) => n,
-        other => panic!("pg_emit_datarow1: arg 0 expected Int conn, got {:?}", other),
-    };
-    let vb: &[u8] = match &val {
-        Value::Str(s) => s.as_bytes(),
-        other => panic!("pg_emit_datarow1: arg 1 expected Text, got {:?}", other),
-    };
+pub fn pg_emit_datarow1(conn: i64, val: std::sync::Arc<str>) -> Value {
+    let vb: &[u8] = val.as_bytes();
     // 'D' | int32(2+4+len+4) | int16(1) | int32(len) | val
     let total = (2 + 4 + vb.len() + 4) as u32;
     let mut frame = Vec::with_capacity(11 + vb.len());
@@ -440,22 +418,8 @@ pub fn pg_emit_datarow1(args: Value) -> Value {
 /// returning 0 (the "SELECT 0" case). The M1 caller writes RowDescription before
 /// and CommandComplete+ReadyForQuery after (from this returned count).
 #[track_caller]
-pub fn pg_stream_rows(args: Value) -> Value {
-    let (conn, posting) = match args {
-        Value::Tuple(es) if es.len() == 2 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("pg_stream_rows: expected Tuple(Int, Text), got {:?}", other),
-    };
-    let conn = match conn {
-        Value::Int(n) => n,
-        other => panic!("pg_stream_rows: arg 0 expected Int conn, got {:?}", other),
-    };
-    let s: &str = match &posting {
-        Value::Str(p) => p.as_ref(),
-        other => panic!("pg_stream_rows: arg 1 expected Text posting, got {:?}", other),
-    };
+pub fn pg_stream_rows(conn: i64, posting: std::sync::Arc<str>) -> Value {
+    let s: &str = posting.as_ref();
     let on = slab_to_wire_on();
     let mut count: i64 = 0;
     let mut frame: Vec<u8> = Vec::with_capacity(96);
@@ -492,11 +456,9 @@ pub fn slab_to_wire_enabled(_arg: Value) -> Value {
 // ── tcp_listen ───────────────────────────────────────────────────────────────
 
 #[track_caller]
-pub fn tcp_listen(v: Value) -> Value {
-    let port = match v {
-        Value::Int(n) if (0..=65535).contains(&n) => n as u16,
-        Value::Int(n) => panic!("tcp_listen: port {} out of range 0..=65535", n),
-        other => panic!("tcp_listen: expected Int port, got {:?}", other),
+pub fn tcp_listen(n: i64) -> Value {
+    let port = if (0..=65535).contains(&n) { n as u16 } else {
+        panic!("tcp_listen: port {} out of range 0..=65535", n)
     };
     let listener = TcpListener::bind(("0.0.0.0", port))
         .unwrap_or_else(|e| panic!("tcp_listen({}): {}", port, e));
@@ -538,11 +500,9 @@ fn shared_listeners() -> &'static Mutex<HashMap<u16, (i64, i64)>> {
 }
 
 #[track_caller]
-pub fn tcp_listen_shared(v: Value) -> Value {
-    let port = match v {
-        Value::Int(n) if (0..=65535).contains(&n) => n as u16,
-        Value::Int(n) => panic!("tcp_listen_shared: port {} out of range 0..=65535", n),
-        other => panic!("tcp_listen_shared: expected Int port, got {:?}", other),
+pub fn tcp_listen_shared(n: i64) -> Value {
+    let port = if (0..=65535).contains(&n) { n as u16 } else {
+        panic!("tcp_listen_shared: port {} out of range 0..=65535", n)
     };
     // Serialize registration so exactly one thread binds; the rest reuse it.
     // Poison-tolerant for the same reason as `reg_lock`: a bind panic in one
@@ -568,29 +528,16 @@ pub fn tcp_listen_shared(v: Value) -> Value {
 // ── tcp_connect ──────────────────────────────────────────────────────────────
 
 #[track_caller]
-pub fn tcp_connect(args: Value) -> Value {
-    let (host, port) = match args {
-        Value::Tuple(es) if es.len() == 2 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("tcp_connect: expected Tuple(Text, Int), got {:?}", other),
-    };
-    let host = match host {
-        Value::Str(h) => get_str(h),
-        other => panic!("tcp_connect: arg 0 expected Text host, got {:?}", other),
-    };
-    let port = match port {
-        Value::Int(n) if (0..=65535).contains(&n) => n as u16,
-        Value::Int(n) => panic!("tcp_connect: port {} out of range 0..=65535", n),
-        other => panic!("tcp_connect: arg 1 expected Int port, got {:?}", other),
+pub fn tcp_connect(host: std::sync::Arc<str>, port_arg: i64) -> Value {
+    let port = if (0..=65535).contains(&port_arg) { port_arg as u16 } else {
+        panic!("tcp_connect: port {} out of range 0..=65535", port_arg)
     };
     // AXVERITY_GC_CLIENT_V1: a connect failure (refused, unreachable, etc.) is
     // an ordinary down-path outcome for a client probe, not a bridge-level
     // fault — return Int(-1) instead of panicking so M1 callers can answer it
     // in-band (matches tcp_read's own EOF-as-0-bytes precedent for a
     // different class of "the peer isn't there").
-    let stream = match TcpStream::connect((host.as_str(), port)) {
+    let stream = match TcpStream::connect((host.as_ref(), port)) {
         Ok(s) => s,
         Err(_) => return Value::Int(-1),
     };
@@ -604,8 +551,7 @@ pub fn tcp_connect(args: Value) -> Value {
 // ── tcp_accept ───────────────────────────────────────────────────────────────
 
 #[track_caller]
-pub fn tcp_accept(v: Value) -> Value {
-    let handle = handle_arg(&v, "tcp_accept");
+pub fn tcp_accept(handle: i64) -> Value {
     let sock = get_sock(handle, "tcp_accept");
     let listener = match &*sock {
         Sock::Listener(l) => l,
@@ -646,21 +592,7 @@ pub fn tcp_accept(v: Value) -> Value {
 ///
 /// millis <= 0 clears the timeout (blocking, the platform default).
 #[track_caller]
-pub fn tcp_set_read_timeout(args: Value) -> Value {
-    let (handle, millis) = match args {
-        Value::Tuple(es) if es.len() == 2 => {
-            let h = match &es[0] {
-                Value::Int(i) => *i,
-                o => panic!("tcp_set_read_timeout: arg 0 expected Int, got {:?}", o),
-            };
-            let m = match &es[1] {
-                Value::Int(i) => *i,
-                o => panic!("tcp_set_read_timeout: arg 1 expected Int, got {:?}", o),
-            };
-            (h, m)
-        }
-        o => panic!("tcp_set_read_timeout: expected Tuple(Int, Int), got {:?}", o),
-    };
+pub fn tcp_set_read_timeout(handle: i64, millis: i64) -> Value {
     let sock = get_sock(handle, "tcp_set_read_timeout");
     let stream: &TcpStream = match &*sock {
         Sock::Stream(s) => s,
@@ -679,8 +611,7 @@ pub fn tcp_set_read_timeout(args: Value) -> Value {
     Value::Unit
 }
 
-pub fn tcp_read(v: Value) -> Value {
-    let handle = handle_arg(&v, "tcp_read");
+pub fn tcp_read(handle: i64) -> Value {
     // AXVERITY_SLAB_TO_WIRE_BUILD_V1: never block on a read with unsent buffered
     // output (PostgreSQL's pq_flush-before-wait). Drains this conn's coalescing
     // buffer so the peer has the full prior response before we wait for its next
@@ -720,22 +651,7 @@ pub fn tcp_read(v: Value) -> Value {
 // ── tcp_write ────────────────────────────────────────────────────────────────
 
 #[track_caller]
-pub fn tcp_write(args: Value) -> Value {
-    let (handle, data) = match args {
-        Value::Tuple(es) if es.len() == 2 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("tcp_write: expected Tuple(Int, Bytes), got {:?}", other),
-    };
-    let handle = match handle {
-        Value::Int(n) => n,
-        other => panic!("tcp_write: arg 0 expected Int handle, got {:?}", other),
-    };
-    let data = match data {
-        Value::Bytes(b) => b,
-        other => panic!("tcp_write: arg 1 expected Bytes, got {:?}", other),
-    };
+pub fn tcp_write(handle: i64, data: Vec<u8>) -> Value {
     // AXVERITY_SLAB_TO_WIRE_BUILD_V1: coalesce into the per-conn buffer when the
     // flag is on (drained before the next tcp_read / on close / at the cap).
     // Off => the original immediate write+flush (preserved fallback).
@@ -750,8 +666,7 @@ pub fn tcp_write(args: Value) -> Value {
 // ── tcp_close ────────────────────────────────────────────────────────────────
 
 #[track_caller]
-pub fn tcp_close(v: Value) -> Value {
-    let handle = handle_arg(&v, "tcp_close");
+pub fn tcp_close(handle: i64) -> Value {
     // AXVERITY_SLAB_TO_WIRE_BUILD_V1: drain any tail before closing so a response
     // that did not end at a read boundary is never lost. Then drop the buffer.
     if slab_to_wire_on() {
@@ -781,7 +696,7 @@ mod tests {
     /// round trip on 127.0.0.1. Exercises all five primitives.
     #[test]
     fn tcp_listen_accept_read_write_close_roundtrip() {
-        let bound = tcp_listen(Value::Int(0));
+        let bound = tcp_listen(0);
         // Destructure through tuple_field — the multi-value-return precedent.
         let listener = as_int(
             tuple_field(bound.clone(), 0),
@@ -797,23 +712,20 @@ mod tests {
         let expected = payload.clone();
 
         let server = std::thread::spawn(move || {
-            let conn = as_int(tcp_accept(Value::Int(listener)), "conn");
+            let conn = as_int(tcp_accept(listener), "conn");
             // Read until we have the whole payload (loopback rarely segments,
             // but be robust); empty Bytes means EOF.
             let mut got = Vec::new();
             while got.len() < expected.len() {
-                match tcp_read(Value::Int(conn)) {
+                match tcp_read(conn) {
                     Value::Bytes(b) if b.is_empty() => break,
                     Value::Bytes(b) => got.extend_from_slice(&b),
                     other => panic!("tcp_read returned {:?}", other),
                 }
             }
             // Reply, to exercise tcp_write from the bridge side.
-            tcp_write(Value::Tuple(vec![
-                Value::Int(conn),
-                Value::Bytes(b"ack".to_vec()),
-            ]));
-            tcp_close(Value::Int(conn));
+            tcp_write(conn, b"ack".to_vec());
+            tcp_close(conn);
             got
         });
 
@@ -838,14 +750,14 @@ mod tests {
         assert_eq!(got, payload, "server did not receive the sent payload");
         assert_eq!(reply, b"ack", "client did not receive the tcp_write reply");
 
-        tcp_close(Value::Int(listener));
+        tcp_close(listener);
     }
 
     /// All-bridge loopback: the client half is now `tcp_connect` + `tcp_write` +
     /// `tcp_read` (no `std::net`), proving both endpoints via the bridge fns.
     #[test]
     fn tcp_connect_all_bridge_loopback() {
-        let bound = tcp_listen(Value::Int(0));
+        let bound = tcp_listen(0);
         let listener = as_int(
             tuple_field(bound.clone(), 0),
             "handle",
@@ -859,47 +771,41 @@ mod tests {
         let expected = payload.clone();
 
         let server = std::thread::spawn(move || {
-            let conn = as_int(tcp_accept(Value::Int(listener)), "conn");
+            let conn = as_int(tcp_accept(listener), "conn");
             let mut got = Vec::new();
             while got.len() < expected.len() {
-                match tcp_read(Value::Int(conn)) {
+                match tcp_read(conn) {
                     Value::Bytes(b) if b.is_empty() => break,
                     Value::Bytes(b) => got.extend_from_slice(&b),
                     other => panic!("tcp_read returned {:?}", other),
                 }
             }
-            tcp_write(Value::Tuple(vec![Value::Int(conn), Value::Bytes(b"ok".to_vec())]));
-            tcp_close(Value::Int(conn));
+            tcp_write(conn, b"ok".to_vec());
+            tcp_close(conn);
             got
         });
 
         // Client half: entirely bridge fns.
         let client = as_int(
-            tcp_connect(Value::Tuple(vec![
-                Value::Str(intern_str("127.0.0.1")),
-                Value::Int(port),
-            ])),
+            tcp_connect(intern_str("127.0.0.1"), port),
             "client",
         );
-        tcp_write(Value::Tuple(vec![
-            Value::Int(client),
-            Value::Bytes(payload.clone()),
-        ]));
+        tcp_write(client, payload.clone());
 
         let mut reply = Vec::new();
         loop {
-            match tcp_read(Value::Int(client)) {
+            match tcp_read(client) {
                 Value::Bytes(b) if b.is_empty() => break,
                 Value::Bytes(b) => reply.extend_from_slice(&b),
                 other => panic!("tcp_read returned {:?}", other),
             }
         }
-        tcp_close(Value::Int(client));
+        tcp_close(client);
 
         let got = server.join().expect("server thread panicked");
         assert_eq!(got, payload, "server did not receive client payload");
         assert_eq!(reply, b"ok", "client did not receive reply");
-        tcp_close(Value::Int(listener));
+        tcp_close(listener);
     }
 
     /// N concurrent tcp_listen(0) calls must yield N distinct ephemeral ports
@@ -909,7 +815,7 @@ mod tests {
         const N: usize = 16;
         let threads: Vec<_> = (0..N)
             .map(|_| {
-                std::thread::spawn(|| match tcp_listen(Value::Int(0)) {
+                std::thread::spawn(|| match tcp_listen(0) {
                     Value::Tuple(es) => (as_int(es[0].clone(), "handle"), as_int(es[1].clone(), "port")),
                     other => panic!("tcp_listen returned {:?}", other),
                 })
@@ -925,7 +831,7 @@ mod tests {
         assert_eq!(ports.len(), N, "expected {} distinct ports, got {}", N, ports.len());
 
         for (h, _) in &results {
-            tcp_close(Value::Int(*h));
+            tcp_close(*h);
         }
     }
 
@@ -935,27 +841,27 @@ mod tests {
     // flush must deliver exactly the concatenation, in order.
     #[test]
     fn batch_coalesces_byte_identical() {
-        let bound = tcp_listen(Value::Int(0));
+        let bound = tcp_listen(0);
         let (listener, port) = match bound {
             Value::Tuple(es) => (as_int(es[0].clone(), "h"), as_int(es[1].clone(), "p")),
             _ => unreachable!(),
         };
         let server = std::thread::spawn(move || {
-            let conn = as_int(tcp_accept(Value::Int(listener)), "conn");
+            let conn = as_int(tcp_accept(listener), "conn");
             // nothing on the wire yet after two buffered appends
             buffered_append(conn, b"RowDescription...");
             buffered_append(conn, b"DataRow...");
             flush_conn(conn); // now the peer gets exactly the concatenation
             // a second flush is a no-op (buffer emptied)
             flush_conn(conn);
-            tcp_close(Value::Int(conn));
+            tcp_close(conn);
         });
         let mut client = std::net::TcpStream::connect(("127.0.0.1", port as u16)).unwrap();
         let mut got = Vec::new();
         client.read_to_end(&mut got).unwrap();
         server.join().unwrap();
         assert_eq!(got, b"RowDescription...DataRow...");
-        tcp_close(Value::Int(listener));
+        tcp_close(listener);
     }
 
     // pg_emit_datarow1 frames a 1-column DataRow byte-identically to
@@ -964,15 +870,15 @@ mod tests {
     // including a multi-byte UTF-8 value (TAB-free boundaries).
     #[test]
     fn pg_emit_datarow1_frames_correctly() {
-        let bound = tcp_listen(Value::Int(0));
+        let bound = tcp_listen(0);
         let (listener, port) = match bound {
             Value::Tuple(es) => (as_int(es[0].clone(), "h"), as_int(es[1].clone(), "p")),
             _ => unreachable!(),
         };
         let server = std::thread::spawn(move || {
-            let conn = as_int(tcp_accept(Value::Int(listener)), "conn");
-            pg_emit_datarow1(Value::Tuple(vec![Value::Int(conn), Value::Str(intern_str("café"))]));
-            tcp_close(Value::Int(conn));
+            let conn = as_int(tcp_accept(listener), "conn");
+            pg_emit_datarow1(conn, intern_str("café"));
+            tcp_close(conn);
         });
         let mut client = std::net::TcpStream::connect(("127.0.0.1", port as u16)).unwrap();
         let mut got = Vec::new();
@@ -987,6 +893,6 @@ mod tests {
         expect.extend_from_slice(&(vb.len() as u32).to_be_bytes());
         expect.extend_from_slice(vb);
         assert_eq!(got, expect);
-        tcp_close(Value::Int(listener));
+        tcp_close(listener);
     }
 }

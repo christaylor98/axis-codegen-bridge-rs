@@ -166,11 +166,8 @@ fn put_cached(addr: &str, bytes: Arc<Vec<u8>>) {
 /// of `gr_get` for its own artifact fetch — everything else in graphcore
 /// keeps using `gr_get`/contentidx exactly as before, untouched.
 #[track_caller]
-pub fn gcidx_get(arg: Value) -> Value {
-    let addr = match arg {
-        Value::Str(h) => get_str(&h),
-        other => panic!("gcidx_get: expected Text addr, got {:?}", other),
-    };
+pub fn gcidx_get(addr: std::sync::Arc<str>) -> Value {
+    let addr = addr.to_string();
     let gs = "\u{1d}";
 
     if let Some(bytes) = get_cached(&addr) {
@@ -191,14 +188,14 @@ pub fn gcidx_get(arg: Value) -> Value {
     // briefly (and reproducibly) invisible: caught by tests/run.sh's own
     // P3 section going from 107/107 to 100/107 the first time this
     // landed, "lookup all: 3 postings, got 0" straight after `index`.
-    let from_contentidx = match super::contentidx::contentidx_get(Value::Str(intern_str(&addr))) {
+    let from_contentidx = match super::contentidx::contentidx_get(intern_str(&addr)) {
         Value::Bytes(b) => b,
         other => panic!("gcidx_get: contentidx_get returned non-Bytes: {:?}", other),
     };
     let content = if !from_contentidx.is_empty() {
         from_contentidx
     } else {
-        match pg_store::pg_bytes_get(Value::Str(intern_str(&addr))) {
+        match pg_store::pg_bytes_get(intern_str(&addr)) {
             Value::Bytes(b) => b,
             other => panic!("gcidx_get: pg_bytes_get returned non-Bytes: {:?}", other),
         }
@@ -225,13 +222,10 @@ mod tests {
     fn miss_then_hit_skips_the_second_postgres_round_trip() {
         let a = addr("mth");
         let content = b"gcidx round-trip test content".to_vec();
-        pg_store::pg_bytes_put(Value::Tuple(vec![
-            Value::Str(intern_str(&a)),
-            Value::Bytes(content.clone()),
-        ]));
+        pg_store::pg_bytes_put(intern_str(&a), content.clone());
 
         // First call: cache miss, must hit postgres and return the right bytes.
-        let r1 = gcidx_get(Value::Str(intern_str(&a)));
+        let r1 = gcidx_get(intern_str(&a));
         let text1 = match &r1 {
             Value::Str(h) => get_str(h),
             other => panic!("expected Text, got {:?}", other),
@@ -248,10 +242,10 @@ mod tests {
             c.execute("DELETE FROM gcore_objects WHERE addr = $1", &[&a])
                 .unwrap_or_else(|e| panic!("test setup: DELETE failed: {}", e));
         }
-        let gone = pg_store::pg_bytes_get(Value::Str(intern_str(&a)));
+        let gone = pg_store::pg_bytes_get(intern_str(&a));
         assert_eq!(gone, Value::Bytes(Vec::new()), "row must be genuinely absent from postgres now");
 
-        let r2 = gcidx_get(Value::Str(intern_str(&a)));
+        let r2 = gcidx_get(intern_str(&a));
         assert_eq!(r1, r2, "cache-served hit must be identical even though postgres no longer has the row");
     }
 

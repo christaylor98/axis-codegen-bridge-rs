@@ -61,37 +61,13 @@ pub(crate) fn signal_block(flush_dir: &str, block_seq: i64) -> usize {
 
 /// `ack_register(flush_dir: Text, block_seq: Int) -> Int`
 #[track_caller]
-pub fn ack_register(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 2 => es,
-        other => panic!("ack_register: expected Tuple(Text, Int), got {:?}", other),
-    };
-    let flush_dir = match &es[0] {
-        Value::Str(s) => get_str(s),
-        other => panic!("ack_register: arg 0 expected Text, got {:?}", other),
-    };
-    let block_seq = match &es[1] {
-        Value::Int(n) => *n,
-        other => panic!("ack_register: arg 1 expected Int, got {:?}", other),
-    };
+pub fn ack_register(flush_dir: std::sync::Arc<str>, block_seq: i64) -> Value {
     Value::Int(register(&flush_dir, block_seq))
 }
 
 /// `ack_signal_block(flush_dir: Text, block_seq: Int) -> Int` (count signaled)
 #[track_caller]
-pub fn ack_signal_block(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 2 => es,
-        other => panic!("ack_signal_block: expected Tuple(Text, Int), got {:?}", other),
-    };
-    let flush_dir = match &es[0] {
-        Value::Str(s) => get_str(s),
-        other => panic!("ack_signal_block: arg 0 expected Text, got {:?}", other),
-    };
-    let block_seq = match &es[1] {
-        Value::Int(n) => *n,
-        other => panic!("ack_signal_block: arg 1 expected Int, got {:?}", other),
-    };
+pub fn ack_signal_block(flush_dir: std::sync::Arc<str>, block_seq: i64) -> Value {
     Value::Int(signal_block(&flush_dir, block_seq) as i64)
 }
 

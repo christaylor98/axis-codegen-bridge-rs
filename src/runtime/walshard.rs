@@ -33,7 +33,7 @@
 
 use std::cell::RefCell;
 
-use super::value::{get_str, intern_str, Value};
+use super::value::{intern_str, Value};
 
 thread_local! {
     /// This thread's WAL shard id (as the string used in segment paths, e.g.
@@ -45,12 +45,8 @@ thread_local! {
 /// `wal_shard_set(shard: Text) -> Unit` — bind THIS thread's WAL shard. Called
 /// once per worker thread at startup, before its accept loop.
 #[track_caller]
-pub fn wal_shard_set(v: Value) -> Value {
-    let s = match v {
-        Value::Str(h) => get_str(h),
-        other => panic!("wal_shard_set: expected Text shard, got {:?}", other),
-    };
-    SHARD.with(|c| *c.borrow_mut() = s);
+pub fn wal_shard_set(shard: std::sync::Arc<str>) -> Value {
+    SHARD.with(|c| *c.borrow_mut() = shard.to_string());
     Value::Unit
 }
 
@@ -82,7 +78,7 @@ mod tests {
     fn shard_defaults_to_zero_then_settable() {
         // A fresh thread sees the default.
         assert_eq!(wal_shard_get(Value::Unit), Value::Str(intern_str("0")));
-        wal_shard_set(Value::Str(intern_str("3")));
+        wal_shard_set(intern_str("3"));
         assert_eq!(wal_shard_get(Value::Unit), Value::Str(intern_str("3")));
     }
 

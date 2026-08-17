@@ -16,23 +16,15 @@ pub fn proc_exit(code: Value) -> Value {
 }
 
 #[track_caller]
-pub fn proc_sleep(v: Value) -> Value {
-    let secs = match v {
-        Value::Int(n) if n >= 0 => n as u64,
-        Value::Int(_) => 0,
-        _ => panic!("proc_sleep: expected Int, got {:?}", v),
-    };
+pub fn proc_sleep(n: i64) -> Value {
+    let secs = if n >= 0 { n as u64 } else { 0 };
     std::thread::sleep(std::time::Duration::from_secs(secs));
     Value::Unit
 }
 
 #[track_caller]
-pub fn sleep(v: Value) -> Value {
-    let ms = match v {
-        Value::Int(n) if n >= 0 => n as u64,
-        Value::Int(_) => 0,
-        _ => panic!("sleep: expected Int, got {:?}", v),
-    };
+pub fn sleep(n: i64) -> Value {
+    let ms = if n >= 0 { n as u64 } else { 0 };
     std::thread::sleep(std::time::Duration::from_millis(ms));
     Value::Unit
 }

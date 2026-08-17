@@ -27,7 +27,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 
-use super::value::{get_str, intern_str, Value};
+use super::value::{intern_str, Value};
 use super::walindex::walk_frames;
 
 /// One open contradicts-adjacency shard: from-addr -> {to-addr}.
@@ -56,29 +56,13 @@ fn next_handle() -> i64 {
     })
 }
 
-fn arg_int(v: &Value, who: &str, i: usize) -> i64 {
-    match v {
-        Value::Int(n) => *n,
-        other => panic!("{}: arg {} expected Int, got {:?}", who, i, other),
-    }
-}
-fn arg_str(v: &Value, who: &str, i: usize) -> String {
-    match v {
-        Value::Str(h) => get_str(h),
-        other => panic!("{}: arg {} expected Text, got {:?}", who, i, other),
-    }
-}
-
 /// `contradicts_open(shard: Text) -> Int`
 ///
 /// Register a fresh EMPTY, NOT-yet-rebuilt adjacency shard in THIS thread; return
 /// its handle. A lookup before contradicts_rebuild panics (AC-1).
 #[track_caller]
-pub fn contradicts_open(arg: Value) -> Value {
-    let shard = match arg {
-        Value::Str(h) => get_str(h),
-        other => panic!("contradicts_open: expected Text shard, got {:?}", other),
-    };
+pub fn contradicts_open(shard: std::sync::Arc<str>) -> Value {
+    let shard = shard.to_string();
     let h = next_handle();
     CIDX.with(|idx| {
         idx.borrow_mut()
@@ -110,14 +94,8 @@ fn env_pair(env: &[u8]) -> Option<(String, String)> {
 /// (NO snapshot — rebuildable-only). Every valid CONTRADICTS frame inserts BOTH
 /// `A->B` and `B->A`. Sets `rebuilt = true`. Returns the number of frames scanned.
 #[track_caller]
-pub fn contradicts_rebuild(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 2 => es,
-        other => panic!("contradicts_rebuild: expected Tuple(Int, Text), got {:?}", other),
-    };
-    let h = arg_int(&es[0], "contradicts_rebuild", 0);
-    let prefix = arg_str(&es[1], "contradicts_rebuild", 1);
-
+pub fn contradicts_rebuild(h: i64, prefix: std::sync::Arc<str>) -> Value {
+    let prefix = prefix.to_string();
     let scanned = CIDX.with(|idx| {
         let mut idx = idx.borrow_mut();
         let sh = idx
@@ -155,14 +133,9 @@ fn assert_rebuilt(sh: &AdjShard, h: i64) {
 ///
 /// Is `from` recorded as contradicting `to`? PANICS if the shard was never rebuilt.
 #[track_caller]
-pub fn contradicts_has(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 3 => es,
-        other => panic!("contradicts_has: expected Tuple(Int, Text, Text), got {:?}", other),
-    };
-    let h = arg_int(&es[0], "contradicts_has", 0);
-    let from = arg_str(&es[1], "contradicts_has", 1);
-    let to = arg_str(&es[2], "contradicts_has", 2);
+pub fn contradicts_has(h: i64, from: std::sync::Arc<str>, to: std::sync::Arc<str>) -> Value {
+    let from = from.to_string();
+    let to = to.to_string();
     CIDX.with(|idx| {
         let idx = idx.borrow();
         let sh = idx
@@ -179,13 +152,8 @@ pub fn contradicts_has(args: Value) -> Value {
 /// bounded traversal the promote gate consumes)? PANICS if the shard was never
 /// rebuilt.
 #[track_caller]
-pub fn contradicts_any(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 2 => es,
-        other => panic!("contradicts_any: expected Tuple(Int, Text), got {:?}", other),
-    };
-    let h = arg_int(&es[0], "contradicts_any", 0);
-    let from = arg_str(&es[1], "contradicts_any", 1);
+pub fn contradicts_any(h: i64, from: std::sync::Arc<str>) -> Value {
+    let from = from.to_string();
     CIDX.with(|idx| {
         let idx = idx.borrow();
         let sh = idx
@@ -211,11 +179,8 @@ thread_local! {
 /// singleton by a full forward WAL replay; returns frames scanned. Call once at
 /// daemon-worker startup, before serving requests.
 #[track_caller]
-pub fn contradicts_warm(arg: Value) -> Value {
-    let prefix = match arg {
-        Value::Str(h) => get_str(h),
-        other => panic!("contradicts_warm: expected Text seg_prefix, got {:?}", other),
-    };
+pub fn contradicts_warm(prefix: std::sync::Arc<str>) -> Value {
+    let prefix = prefix.to_string();
     let mut adj: HashMap<String, HashSet<String>> = HashMap::new();
     let (_fs, _fo, scanned) =
         walk_frames(&prefix, 0, 0, |_seg, _off, _len, env, _payload, _hexh| {
@@ -233,11 +198,8 @@ pub fn contradicts_warm(arg: Value) -> Value {
 /// `contradicts_any_warm(from: Text) -> Bool` — depth-1 out-edge existence check
 /// against THIS thread's WARM singleton. PANICS if the thread never warmed (AC-1).
 #[track_caller]
-pub fn contradicts_any_warm(arg: Value) -> Value {
-    let from = match arg {
-        Value::Str(h) => get_str(h),
-        other => panic!("contradicts_any_warm: expected Text from-addr, got {:?}", other),
-    };
+pub fn contradicts_any_warm(from: std::sync::Arc<str>) -> Value {
+    let from = from.to_string();
     WARM.with(|w| {
         let w = w.borrow();
         match w.as_ref() {
@@ -285,26 +247,22 @@ mod tests {
     }
 
     fn open() -> i64 {
-        match contradicts_open(Value::Str(intern_str("0"))) {
+        match contradicts_open(intern_str("0")) {
             Value::Int(n) => n,
             _ => unreachable!(),
         }
     }
     fn rebuild(h: i64, p: &str) {
-        contradicts_rebuild(Value::Tuple(vec![Value::Int(h), Value::Str(intern_str(p))]));
+        contradicts_rebuild(h, intern_str(p));
     }
     fn has(h: i64, a: &str, b: &str) -> bool {
-        match contradicts_has(Value::Tuple(vec![
-            Value::Int(h),
-            Value::Str(intern_str(a)),
-            Value::Str(intern_str(b)),
-        ])) {
+        match contradicts_has(h, intern_str(a), intern_str(b)) {
             Value::Bool(x) => x,
             _ => unreachable!(),
         }
     }
     fn any(h: i64, a: &str) -> bool {
-        match contradicts_any(Value::Tuple(vec![Value::Int(h), Value::Str(intern_str(a))])) {
+        match contradicts_any(h, intern_str(a)) {
             Value::Bool(x) => x,
             _ => unreachable!(),
         }
@@ -363,16 +321,16 @@ mod tests {
         // thread, so this thread's singleton starts None and is fresh.
         let seg = cframe("sha256:w1", "sha256:w2", b"wp");
         let p = write_seg(&seg);
-        assert!(matches!(contradicts_warm(Value::Str(intern_str(&p))), Value::Int(_)));
-        assert!(matches!(contradicts_any_warm(Value::Str(intern_str("sha256:w1"))), Value::Bool(true)));
-        assert!(matches!(contradicts_any_warm(Value::Str(intern_str("sha256:w2"))), Value::Bool(true)));
-        assert!(matches!(contradicts_any_warm(Value::Str(intern_str("sha256:none"))), Value::Bool(false)));
+        assert!(matches!(contradicts_warm(intern_str(&p)), Value::Int(_)));
+        assert!(matches!(contradicts_any_warm(intern_str("sha256:w1")), Value::Bool(true)));
+        assert!(matches!(contradicts_any_warm(intern_str("sha256:w2")), Value::Bool(true)));
+        assert!(matches!(contradicts_any_warm(intern_str("sha256:none")), Value::Bool(false)));
     }
 
     #[test]
     #[should_panic(expected = "NEVER REBUILT")]
     fn cold_warm_query_panics() {
         // Fresh thread ⇒ WARM is None ⇒ a query must PANIC, never return false (AC-1).
-        let _ = contradicts_any_warm(Value::Str(intern_str("sha256:x")));
+        let _ = contradicts_any_warm(intern_str("sha256:x"));
     }
 }

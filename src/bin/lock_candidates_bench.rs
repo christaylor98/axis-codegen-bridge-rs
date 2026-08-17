@@ -39,7 +39,7 @@ fn thread_counts() -> Vec<usize> {
 }
 
 #[inline]
-fn s(v: &str) -> Value { Value::Str(intern_str(v)) }
+fn s(v: &str) -> std::sync::Arc<str> { intern_str(v) }
 
 /// bindidx, DISTINCT-key pattern (realistic: concurrent connections mutate
 /// distinct PK rows). Each op = one put (bind) + one get (resolve) of a key in
@@ -54,7 +54,7 @@ fn bind_distinct(ops_total: usize, p: usize) -> f64 {
             let mut acc = 0usize;
             for i in 0..per {
                 let name = format!("t{}:row{}", tid, i & 0xffff); // per-thread key space
-                bindidx_put(Value::Tuple(vec![s(&name), s("sha256:abcdef0123")]));
+                bindidx_put(s(&name), s("sha256:abcdef0123"));
                 if let Value::Str(h) = bindidx_get(s(&name)) { acc = acc.wrapping_add(h.len()); }
             }
             sink.fetch_add(acc, Ordering::Relaxed);
@@ -78,7 +78,7 @@ fn bind_hotkey(ops_total: usize, p: usize) -> f64 {
             let mut acc = 0usize;
             for i in 0..per {
                 let name = format!("hot:row{}", (tid + i) % HOT); // shared across threads
-                bindidx_put(Value::Tuple(vec![s(&name), s("sha256:abcdef0123")]));
+                bindidx_put(s(&name), s("sha256:abcdef0123"));
                 if let Value::Str(h) = bindidx_get(s(&name)) { acc = acc.wrapping_add(h.len()); }
             }
             sink.fetch_add(acc, Ordering::Relaxed);
@@ -103,7 +103,7 @@ fn content_distinct(ops_total: usize, p: usize) -> f64 {
             let mut acc = 0usize;
             for i in 0..per {
                 let hash = format!("sha256:t{}_{:08x}", tid, i & 0x3fff); // per-thread distinct
-                contentidx_put(Value::Tuple(vec![s(&hash), Value::Bytes(payload.clone())]));
+                contentidx_put(s(&hash), payload.clone());
                 if let Value::Bytes(b) = contentidx_get(s(&hash)) { acc = acc.wrapping_add(b.len()); }
             }
             sink.fetch_add(acc, Ordering::Relaxed);

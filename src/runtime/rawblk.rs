@@ -449,11 +449,8 @@ fn fnv1a(s: &str) -> u64 {
 
 /// `hotblk_dir_guard(flush_dir: Text) -> Unit`
 #[track_caller]
-pub fn hotblk_dir_guard(arg: Value) -> Value {
-    let dir = match arg {
-        Value::Str(h) => get_str(&h),
-        other => panic!("hotblk_dir_guard: expected Text flush_dir, got {:?}", other),
-    };
+pub fn hotblk_dir_guard(dir: std::sync::Arc<str>) -> Value {
+    let dir = dir.to_string();
     let fp = fnv1a(&dir);
     BOUND_DIR.with(|b| {
         let mut b = b.borrow_mut();
@@ -628,17 +625,10 @@ thread_local! {
     static NEXT: RefCell<i64> = const { RefCell::new(1) };
 }
 
-fn as_text(field: &'static str, v: &Value) -> String {
-    match v {
-        Value::Str(h) => get_str(h),
-        other => panic!("rawblk: {} expected Text, got {:?}", field, other),
-    }
-}
-
 /// `rawblk_recover_open(raw_dir: Text) -> Int`
 #[track_caller]
-pub fn rawblk_recover_open(arg: Value) -> Value {
-    let raw_dir = as_text("raw_dir", &arg);
+pub fn rawblk_recover_open(raw_dir: std::sync::Arc<str>) -> Value {
+    let raw_dir = raw_dir.to_string();
     // shapes.log sits one level above the per-shard dir (it is process-wide,
     // not per-shard), but tolerate it living beside the blocks too.
     let parent = raw_dir.trim_end_matches('/').rsplit_once('/').map(|(p, _)| p.to_string())
@@ -670,11 +660,7 @@ pub fn rawblk_recover_open(arg: Value) -> Value {
 
 /// `rawblk_recover_rebuild(h: Int) -> Int` — frames scanned.
 #[track_caller]
-pub fn rawblk_recover_rebuild(arg: Value) -> Value {
-    let h = match arg {
-        Value::Int(n) => n,
-        other => panic!("rawblk_recover_rebuild: expected Int handle, got {:?}", other),
-    };
+pub fn rawblk_recover_rebuild(h: i64) -> Value {
     SHARDS.with(|s| {
         let mut map = s.borrow_mut();
         let sh = map.get_mut(&h).unwrap_or_else(|| panic!("rawblk_recover_rebuild: bad handle {}", h));
@@ -717,11 +703,7 @@ pub fn rawblk_recover_rebuild(arg: Value) -> Value {
     })
 }
 
-fn with_shard<T>(h: Value, f: impl FnOnce(&RawShard) -> T) -> T {
-    let h = match h {
-        Value::Int(n) => n,
-        other => panic!("rawblk_recover: expected Int handle, got {:?}", other),
-    };
+fn with_shard<T>(h: i64, f: impl FnOnce(&RawShard) -> T) -> T {
     SHARDS.with(|s| {
         let map = s.borrow();
         let sh = map.get(&h).unwrap_or_else(|| panic!("rawblk_recover: bad handle {}", h));
@@ -730,7 +712,7 @@ fn with_shard<T>(h: Value, f: impl FnOnce(&RawShard) -> T) -> T {
 }
 
 /// `rawblk_recover_stats(h: Int) -> Text` → `"<blocks>\t<frames>\t<undecodable>"`
-pub fn rawblk_recover_stats(h: Value) -> Value {
+pub fn rawblk_recover_stats(h: i64) -> Value {
     with_shard(h, |sh| {
         Value::Str(intern_str(&format!(
             "{}\t{}\t{}",
@@ -740,7 +722,7 @@ pub fn rawblk_recover_stats(h: Value) -> Value {
 }
 
 /// `rawblk_recover_dump_pk(h: Int) -> Text` — `"<table:pk>\t<hash>\n"` sorted.
-pub fn rawblk_recover_dump_pk(h: Value) -> Value {
+pub fn rawblk_recover_dump_pk(h: i64) -> Value {
     with_shard(h, |sh| {
         let mut keys: Vec<_> = sh.pk.iter().collect();
         keys.sort();
@@ -756,7 +738,7 @@ pub fn rawblk_recover_dump_pk(h: Value) -> Value {
 }
 
 /// `rawblk_recover_dump_hashes(h: Int) -> Text` — bare hex, one per line, sorted.
-pub fn rawblk_recover_dump_hashes(h: Value) -> Value {
+pub fn rawblk_recover_dump_hashes(h: i64) -> Value {
     with_shard(h, |sh| {
         let mut hs: Vec<_> = sh.hashes.iter().collect();
         hs.sort();

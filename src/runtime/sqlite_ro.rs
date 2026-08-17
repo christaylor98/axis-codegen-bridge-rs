@@ -80,16 +80,10 @@ impl Drop for Stmt {
 /// TAB-joined, NULL as empty, one LF after every row). `arg` is bound to ?1
 /// when the statement declares a parameter; pass "" otherwise.
 #[track_caller]
-pub fn sqlite_ro_tsv(args: Value) -> Value {
-    let (path, sql_text, arg_text) = match args {
-        Value::Tuple(ref es) if es.len() >= 3 => {
-            let p = match &es[0] { Value::Str(h) => get_str(h), _ => panic!("sqlite_ro_tsv: expected Str db_path") };
-            let s = match &es[1] { Value::Str(h) => get_str(h), _ => panic!("sqlite_ro_tsv: expected Str sql") };
-            let a = match &es[2] { Value::Str(h) => get_str(h), _ => panic!("sqlite_ro_tsv: expected Str arg") };
-            (p, s, a)
-        }
-        _ => panic!("sqlite_ro_tsv: expected Tuple(Text, Text, Text)"),
-    };
+pub fn sqlite_ro_tsv(path: std::sync::Arc<str>, sql_text: std::sync::Arc<str>, arg_text: std::sync::Arc<str>) -> Value {
+    let path = path.to_string();
+    let sql_text = sql_text.to_string();
+    let arg_text = arg_text.to_string();
 
     let c_path = CString::new(path.clone())
         .unwrap_or_else(|_| panic!("sqlite_ro_tsv({}): NUL in path", path));

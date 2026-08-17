@@ -239,22 +239,12 @@ fn next_handle() -> i64 {
 /// `mmapseg_open(path: Text, cap: Int) -> Int` — open/mmap a `cap`-byte segment
 /// (resuming/recovering existing content), return the thread-local handle.
 #[track_caller]
-pub fn mmapseg_open(args: Value) -> Value {
-    let (path, cap) = match args {
-        Value::Tuple(es) if es.len() == 2 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("mmapseg_open: expected Tuple(Text, Int), got {:?}", other),
-    };
-    let path = match path {
-        Value::Str(h) => get_str(h),
-        other => panic!("mmapseg_open: arg 0 expected Text path, got {:?}", other),
-    };
-    let cap = match cap {
-        Value::Int(n) if n > 0 => n as usize,
-        other => panic!("mmapseg_open: arg 1 expected positive Int cap, got {:?}", other),
-    };
+pub fn mmapseg_open(path: std::sync::Arc<str>, cap: i64) -> Value {
+    let path = get_str(path);
+    if cap <= 0 {
+        panic!("mmapseg_open: arg 1 expected positive Int cap, got {}", cap);
+    }
+    let cap = cap as usize;
     // parent-dir fsync once so the new segment file's directory entry is durable
     // (mirrors logbuf_open; a one-time open-path cost, never on append).
     let parent = Path::new(&path).parent().unwrap_or_else(|| Path::new(""));
@@ -276,22 +266,7 @@ pub fn mmapseg_open(args: Value) -> Value {
 /// `mmapseg_append(handle: Int, data: Bytes) -> Int` — memcpy a framed record;
 /// return its offset, or -1 if the segment is full (caller rotates).
 #[track_caller]
-pub fn mmapseg_append(args: Value) -> Value {
-    let (h, data) = match args {
-        Value::Tuple(es) if es.len() == 2 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("mmapseg_append: expected Tuple(Int, Bytes), got {:?}", other),
-    };
-    let h = match h {
-        Value::Int(n) => n,
-        other => panic!("mmapseg_append: arg 0 expected Int handle, got {:?}", other),
-    };
-    let data = match data {
-        Value::Bytes(b) => b,
-        other => panic!("mmapseg_append: arg 1 expected Bytes, got {:?}", other),
-    };
+pub fn mmapseg_append(h: i64, data: Vec<u8>) -> Value {
     SEGS.with(|s| {
         let mut s = s.borrow_mut();
         let seg = s
@@ -304,22 +279,11 @@ pub fn mmapseg_append(args: Value) -> Value {
 /// `mmapseg_read(handle: Int, off: Int) -> Bytes` — read the frame at `off` (empty
 /// Bytes if invalid / past the frontier).
 #[track_caller]
-pub fn mmapseg_read(args: Value) -> Value {
-    let (h, off) = match args {
-        Value::Tuple(es) if es.len() == 2 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("mmapseg_read: expected Tuple(Int, Int), got {:?}", other),
-    };
-    let h = match h {
-        Value::Int(n) => n,
-        other => panic!("mmapseg_read: arg 0 expected Int handle, got {:?}", other),
-    };
-    let off = match off {
-        Value::Int(n) if n >= 0 => n as usize,
-        other => panic!("mmapseg_read: arg 1 expected non-negative Int, got {:?}", other),
-    };
+pub fn mmapseg_read(h: i64, off: i64) -> Value {
+    if off < 0 {
+        panic!("mmapseg_read: arg 1 expected non-negative Int, got {}", off);
+    }
+    let off = off as usize;
     SEGS.with(|s| {
         let s = s.borrow();
         let seg = s
@@ -331,11 +295,7 @@ pub fn mmapseg_read(args: Value) -> Value {
 
 /// `mmapseg_msync(handle: Int) -> Unit` — flush the dirty range (background cadence).
 #[track_caller]
-pub fn mmapseg_msync(arg: Value) -> Value {
-    let h = match arg {
-        Value::Int(n) => n,
-        other => panic!("mmapseg_msync: expected Int handle, got {:?}", other),
-    };
+pub fn mmapseg_msync(h: i64) -> Value {
     SEGS.with(|s| {
         let mut s = s.borrow_mut();
         if let Some(seg) = s.get_mut(&h) {
@@ -347,11 +307,7 @@ pub fn mmapseg_msync(arg: Value) -> Value {
 
 /// `mmapseg_frontier(handle: Int) -> Int` — current append/recovered frontier offset.
 #[track_caller]
-pub fn mmapseg_frontier(arg: Value) -> Value {
-    let h = match arg {
-        Value::Int(n) => n,
-        other => panic!("mmapseg_frontier: expected Int handle, got {:?}", other),
-    };
+pub fn mmapseg_frontier(h: i64) -> Value {
     SEGS.with(|s| {
         let s = s.borrow();
         let seg = s
@@ -372,11 +328,8 @@ pub fn mmapseg_frontier(arg: Value) -> Value {
 /// syncs; this runs entirely off the write path. Best-effort: a missing/again-open
 /// failure is a no-op (the next cadence tick retries), never a panic on the janitor.
 #[track_caller]
-pub fn mmapseg_flush_file(arg: Value) -> Value {
-    let path = match arg {
-        Value::Str(h) => get_str(h),
-        other => panic!("mmapseg_flush_file: expected Text path, got {:?}", other),
-    };
+pub fn mmapseg_flush_file(path: std::sync::Arc<str>) -> Value {
+    let path = get_str(path);
     if let Ok(f) = OpenOptions::new().read(true).write(true).open(&path) {
         let _ = f.sync_data();
     }
@@ -495,7 +448,7 @@ mod tests {
             for i in 0..5000u32 {
                 seg.append(format!("f{}", i).as_bytes());
             }
-            mmapseg_flush_file(Value::Str(intern_str(&p)));
+            mmapseg_flush_file(intern_str(&p));
         }
         let seg2 = MmapSeg::open(&p, CAP).unwrap();
         let (_f, count) = unsafe { scan_frontier(seg2.ptr, seg2.cap) };

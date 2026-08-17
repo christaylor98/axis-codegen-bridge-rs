@@ -181,12 +181,8 @@ impl Enumeration {
 /// projection lazily from `.` on first use — the binaries resolve
 /// `.axverity` from CWD, same as every other store path.
 #[track_caller]
-pub fn frame_stream(arg: Value) -> Value {
-    let tag = match arg {
-        Value::Str(h) => get_str(&h),
-        other => panic!("frame_stream: expected Text tag, got {:?}", other),
-    };
-    let mut prefix = tag.into_bytes();
+pub fn frame_stream(tag: std::sync::Arc<str>) -> Value {
+    let mut prefix = tag.to_string().into_bytes();
     prefix.push(b'\t');
     ENUM.with(|e| {
         let mut e = e.borrow_mut();

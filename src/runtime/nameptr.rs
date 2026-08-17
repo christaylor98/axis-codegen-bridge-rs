@@ -47,23 +47,12 @@ thread_local! {
     static CELLS: RefCell<HashMap<String, ToggleCell>> = RefCell::new(HashMap::new());
 }
 
-fn arg_str(v: &Value, who: &str, i: usize) -> String {
-    match v {
-        Value::Str(h) => get_str(h),
-        other => panic!("{}: arg {} expected Text, got {:?}", who, i, other),
-    }
-}
-
 /// `nameptr_set(slug: Text, line: Text) -> Unit` — fill the idle slot, then
 /// flip the indicator to it.
 #[track_caller]
-pub fn nameptr_set(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 2 => es,
-        other => panic!("nameptr_set: expected Tuple(Text, Text), got {:?}", other),
-    };
-    let slug = arg_str(&es[0], "nameptr_set", 0);
-    let line = arg_str(&es[1], "nameptr_set", 1);
+pub fn nameptr_set(slug: std::sync::Arc<str>, line: std::sync::Arc<str>) -> Value {
+    let slug = slug.to_string();
+    let line = line.to_string();
     CELLS.with(|c| {
         let mut c = c.borrow_mut();
         match c.get_mut(&slug) {
@@ -86,11 +75,8 @@ pub fn nameptr_set(args: Value) -> Value {
 /// `nameptr_get(slug: Text) -> Text` — read the indicator, then that slot.
 /// Returns "" if this thread never set a cell for `slug`.
 #[track_caller]
-pub fn nameptr_get(arg: Value) -> Value {
-    let slug = match arg {
-        Value::Str(h) => get_str(h),
-        other => panic!("nameptr_get: expected Text slug, got {:?}", other),
-    };
+pub fn nameptr_get(slug: std::sync::Arc<str>) -> Value {
+    let slug = slug.to_string();
     CELLS.with(|c| {
         let c = c.borrow();
         let out = match c.get(&slug) {

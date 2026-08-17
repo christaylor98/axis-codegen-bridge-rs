@@ -173,10 +173,7 @@ impl Slab {
         let seq = self.next_seq;
         self.next_seq += 1;
         let path = blk_path(&self.dir, seq);
-        super::prealloc::fs_prealloc(Value::Tuple(vec![
-            Value::Str(intern_str(&path)),
-            Value::Int(self.block_bytes),
-        ]));
+        super::prealloc::fs_prealloc(intern_str(&path), self.block_bytes);
         let file = OpenOptions::new()
             .append(true)
             .open(&path)
@@ -265,28 +262,12 @@ fn with_slab<R>(h: i64, f: impl FnOnce(&mut Slab) -> R) -> R {
 /// (e.g. 100 / 5_000 / 100_000 / 2_000_000). `block_bytes <= 0` selects the
 /// 4 MiB default. Returns a handle valid only on the calling thread.
 #[track_caller]
-pub fn slab_open(args: Value) -> Value {
-    let (dir, sla_us, block_bytes) = match args {
-        Value::Tuple(es) if es.len() == 3 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("slab_open: expected Tuple(Text, Int, Int), got {:?}", other),
-    };
-    let dir = match dir {
-        Value::Str(hh) => get_str(&hh),
-        other => panic!("slab_open: arg 0 (dir) expected Text, got {:?}", other),
-    };
-    let sla_us = match sla_us {
-        Value::Int(n) if n > 0 => n,
-        Value::Int(n) => panic!("slab_open: sla_us must be > 0 (explicit tier), got {}", n),
-        other => panic!("slab_open: arg 1 (sla_us) expected Int, got {:?}", other),
-    };
-    let block_bytes = match block_bytes {
-        Value::Int(n) if n > 0 => n,
-        Value::Int(_) => DEFAULT_BLOCK_BYTES,
-        other => panic!("slab_open: arg 2 (block_bytes) expected Int, got {:?}", other),
-    };
+pub fn slab_open(dir: std::sync::Arc<str>, sla_us: i64, block_bytes: i64) -> Value {
+    let dir = get_str(dir);
+    if sla_us <= 0 {
+        panic!("slab_open: sla_us must be > 0 (explicit tier), got {}", sla_us);
+    }
+    let block_bytes = if block_bytes > 0 { block_bytes } else { DEFAULT_BLOCK_BYTES };
     std::fs::create_dir_all(&dir)
         .unwrap_or_else(|e| panic!("slab_open: mkdir {}: {}", dir, e));
     let h = NEXT.with(|n| {
@@ -329,22 +310,7 @@ pub fn slab_open(args: Value) -> Value {
 /// alone in a fresh block, which may exceed the capacity by that record — the
 /// pack-tier oversize rule.
 #[track_caller]
-pub fn slab_append(args: Value) -> Value {
-    let (h, bytes) = match args {
-        Value::Tuple(es) if es.len() == 2 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("slab_append: expected Tuple(Int, Bytes), got {:?}", other),
-    };
-    let h = match h {
-        Value::Int(n) => n,
-        other => panic!("slab_append: arg 0 (handle) expected Int, got {:?}", other),
-    };
-    let bytes = match bytes {
-        Value::Bytes(b) => b,
-        other => panic!("slab_append: arg 1 expected Bytes, got {:?}", other),
-    };
+pub fn slab_append(h: i64, bytes: Vec<u8>) -> Value {
     let offset = with_slab(h, |slab| {
         // Rotate a non-empty active block the incoming record would overflow.
         let needs_rotation = match slab.active.as_ref() {
@@ -383,11 +349,7 @@ pub fn slab_append(args: Value) -> Value {
 /// early-exit — then the active block's in-place re-fsync) and returns the
 /// number of data fsyncs performed (0 = fired but nothing was dirty).
 #[track_caller]
-pub fn slab_tick(arg: Value) -> Value {
-    let h = match arg {
-        Value::Int(n) => n,
-        other => panic!("slab_tick: expected Int handle, got {:?}", other),
-    };
+pub fn slab_tick(h: i64) -> Value {
     let n = with_slab(h, |slab| {
         let now = Instant::now();
         if let Some(last) = slab.last_sweep {
@@ -410,11 +372,7 @@ pub fn slab_tick(arg: Value) -> Value {
 /// `"EMPTY"` if no bytes were ever appended to the current active block. After
 /// this the handle has no active block; a later append mints the next seq.
 #[track_caller]
-pub fn slab_seal(arg: Value) -> Value {
-    let h = match arg {
-        Value::Int(n) => n,
-        other => panic!("slab_seal: expected Int handle, got {:?}", other),
-    };
+pub fn slab_seal(h: i64) -> Value {
     let hash = with_slab(h, |slab| {
         // Drain rotated-out blocks first so seal order matches block order.
         let pending = std::mem::take(&mut slab.full_pending);
@@ -454,11 +412,7 @@ pub fn slab_seal(arg: Value) -> Value {
 /// `appends=N\tdata_fsyncs=N\tdir_fsyncs=N\tsweeps=N\tgated=N\tsealed=N\tactive_seq=N\tactive_len=N\tactive_unflushed=N\tsla_us=N`
 /// (`active_seq=-1` when no active block). Read-only.
 #[track_caller]
-pub fn slab_stats(arg: Value) -> Value {
-    let h = match arg {
-        Value::Int(n) => n,
-        other => panic!("slab_stats: expected Int handle, got {:?}", other),
-    };
+pub fn slab_stats(h: i64) -> Value {
     let s = with_slab(h, |slab| {
         let (aseq, alen, aunf) = match slab.active.as_ref() {
             Some(a) => (a.seq, a.len, a.unflushed),
@@ -488,11 +442,7 @@ pub fn slab_stats(arg: Value) -> Value {
 /// this is Phase-A observability, NOT an on-disk manifest (whether a durable
 /// manifest accompanies seal is a cutover-intent question).
 #[track_caller]
-pub fn slab_sealed(arg: Value) -> Value {
-    let h = match arg {
-        Value::Int(n) => n,
-        other => panic!("slab_sealed: expected Int handle, got {:?}", other),
-    };
+pub fn slab_sealed(h: i64) -> Value {
     let s = with_slab(h, |slab| {
         slab.sealed
             .iter()
@@ -518,25 +468,21 @@ mod tests {
     }
 
     fn open(dir: &str, sla_us: i64, block_bytes: i64) -> i64 {
-        match slab_open(Value::Tuple(vec![
-            Value::Str(intern_str(dir)),
-            Value::Int(sla_us),
-            Value::Int(block_bytes),
-        ])) {
+        match slab_open(intern_str(dir), sla_us, block_bytes) {
             Value::Int(h) => h,
             other => panic!("slab_open returned {:?}", other),
         }
     }
 
     fn append(h: i64, b: &[u8]) -> i64 {
-        match slab_append(Value::Tuple(vec![Value::Int(h), Value::Bytes(b.to_vec())])) {
+        match slab_append(h, b.to_vec()) {
             Value::Int(off) => off,
             other => panic!("slab_append returned {:?}", other),
         }
     }
 
     fn stats(h: i64) -> String {
-        match slab_stats(Value::Int(h)) {
+        match slab_stats(h) {
             Value::Str(s) => get_str(&s),
             other => panic!("slab_stats returned {:?}", other),
         }
@@ -557,7 +503,7 @@ mod tests {
         append(h, b"row-one");
         append(h, b"row-two");
         assert_eq!(stat_field(h, "data_fsyncs"), 0, "append must not fsync");
-        let n = match slab_tick(Value::Int(h)) {
+        let n = match slab_tick(h) {
             Value::Int(n) => n,
             other => panic!("slab_tick returned {:?}", other),
         };
@@ -571,9 +517,9 @@ mod tests {
         let dir = scratch("gate");
         let h = open(&dir, 60_000_000, 0); // 60s tier: second tick can't fire
         append(h, b"x");
-        assert_eq!(slab_tick(Value::Int(h)), Value::Int(1)); // first tick fires
+        assert_eq!(slab_tick(h), Value::Int(1)); // first tick fires
         append(h, b"y");
-        assert_eq!(slab_tick(Value::Int(h)), Value::Int(-1), "gated inside SLA window");
+        assert_eq!(slab_tick(h), Value::Int(-1), "gated inside SLA window");
         assert_eq!(stat_field(h, "gated"), 1);
         assert_eq!(stat_field(h, "data_fsyncs"), 1);
     }
@@ -584,7 +530,7 @@ mod tests {
         let h = open(&dir, 1, 0);
         for i in 0..5 {
             append(h, format!("row-{}", i).as_bytes());
-            slab_tick(Value::Int(h));
+            slab_tick(h);
             std::thread::sleep(std::time::Duration::from_micros(5));
         }
         // 5 partial flushes, still exactly ONE block file, grown in place.
@@ -603,18 +549,18 @@ mod tests {
         append(h, a);
         append(h, b);
         assert_eq!(stat_field(h, "sealed"), 0, "seal happens in the sweep, not at append");
-        let n = match slab_tick(Value::Int(h)) {
+        let n = match slab_tick(h) {
             Value::Int(n) => n,
             other => panic!("slab_tick returned {:?}", other),
         };
         assert_eq!(n, 2, "full block + active block");
         assert_eq!(stat_field(h, "sealed"), 1);
         // Sealed hash must be byte-identical to bytes_hash over the same bytes.
-        let expect = match bytes_hash(Value::Bytes(a.to_vec())) {
+        let expect = match bytes_hash(a.to_vec()) {
             Value::Str(s) => get_str(&s),
             other => panic!("bytes_hash returned {:?}", other),
         };
-        let sealed = match slab_sealed(Value::Int(h)) {
+        let sealed = match slab_sealed(h) {
             Value::Str(s) => get_str(&s),
             other => panic!("slab_sealed returned {:?}", other),
         };
@@ -634,16 +580,16 @@ mod tests {
         assert_eq!(append(h, b"aaaa"), 0);
         assert_eq!(append(h, b"bb"), 4, "offset = prior bytes in block");
         let all = b"aaaabb";
-        let expect = match bytes_hash(Value::Bytes(all.to_vec())) {
+        let expect = match bytes_hash(all.to_vec()) {
             Value::Str(s) => get_str(&s),
             other => panic!("bytes_hash returned {:?}", other),
         };
-        let got = match slab_seal(Value::Int(h)) {
+        let got = match slab_seal(h) {
             Value::Str(s) => get_str(&s),
             other => panic!("slab_seal returned {:?}", other),
         };
         assert_eq!(got, expect, "seal-time hash == bytes_hash of appended bytes");
-        assert_eq!(slab_seal(Value::Int(h)), Value::Str(intern_str("EMPTY")));
+        assert_eq!(slab_seal(h), Value::Str(intern_str("EMPTY")));
     }
 
     #[test]
@@ -657,8 +603,8 @@ mod tests {
                 for i in 0..50 {
                     append(h, format!("t-{}-{}", dir, i).as_bytes());
                 }
-                slab_tick(Value::Int(h));
-                let sealed = match slab_seal(Value::Int(h)) {
+                slab_tick(h);
+                let sealed = match slab_seal(h) {
                     Value::Str(s) => get_str(&s),
                     other => panic!("slab_seal returned {:?}", other),
                 };
@@ -679,7 +625,7 @@ mod tests {
         append(h, b"small");
         let big = vec![0x5au8; 200]; // > block_bytes
         assert_eq!(append(h, &big), 0, "oversize record starts its own block");
-        slab_tick(Value::Int(h));
+        slab_tick(h);
         assert_eq!(stat_field(h, "sealed"), 1, "the small block sealed at rotation sweep");
         assert_eq!(std::fs::read(format!("{}/blk-1.bin", dir)).unwrap(), big);
     }

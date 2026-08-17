@@ -8,7 +8,6 @@ use std::thread;
 fn setup() { init_runtime(); }
 
 fn s(text: &str) -> Value { Value::Str(intern_str(text)) }
-fn t2(a: Value, b: Value) -> Value { Value::Tuple(vec![a, b]) }
 
 // ── 1. Value deep-clone stress ────────────────────────────────────────────────
 
@@ -154,7 +153,7 @@ fn test_list_cons_chain_10k() {
     setup();
     let mut acc = Value::List(vec![]);
     for i in 0..10_000 {
-        acc = list::list_cons(t2(Value::Int(i), acc));
+        acc = list::list_cons(Value::Int(i), acc);
     }
     assert_eq!(list::list_len(acc), Value::Int(10_000));
 }
@@ -175,7 +174,7 @@ fn test_list_concat_large() {
     setup();
     let a: Value = Value::List((0..5_000).map(Value::Int).collect());
     let b: Value = Value::List((5_000..10_000).map(Value::Int).collect());
-    let c = list::list_concat(t2(a, b));
+    let c = list::list_concat(a, b);
     assert_eq!(list::list_len(c.clone()), Value::Int(10_000));
     assert_eq!(list::list_head(c.clone()), Value::Int(0));
     assert_eq!(list::list_get(c, 9_999), Value::Int(9_999));
@@ -205,7 +204,7 @@ fn test_list_head_tail_chain() {
 fn test_list_get_at_oob_returns_none() {
     setup();
     let lst = Value::List(vec![Value::Int(1), Value::Int(2)]);
-    let result = list::list_get_at(t2(lst, Value::Int(99)));
+    let result = list::list_get_at(lst, 99);
     assert!(matches!(result, Value::Ctor { tag, .. } if {
         use axis_codegen_bridge::runtime::value::get_tag_name;
         get_tag_name(tag) == "None"
@@ -232,19 +231,19 @@ fn test_str_concat_chain_large() {
         acc = str_ops::str_concat(acc.as_text(), s(&format!("_{}", i)).as_text());
     }
     // Verify at least the length grew
-    assert!(matches!(str_ops::str_len(acc), Value::Int(n) if n > 500));
+    assert!(matches!(str_ops::str_len(acc.as_text()), Value::Int(n) if n > 500));
 }
 
 #[test]
 fn test_str_char_at_walk_unicode() {
     setup();
     let text = s("Hello, world! こんにちは🦀");
-    let len = match str_ops::str_len(text.clone()) { Value::Int(n) => n, _ => panic!() };
+    let len = match str_ops::str_len(text.as_text()) { Value::Int(n) => n, _ => panic!() };
     for i in 0..len {
-        let r = str_ops::str_char_at(t2(text.clone(), Value::Int(i)));
+        let r = str_ops::str_char_at(text.as_text(), i);
         assert!(matches!(r, Value::Ctor { .. }), "expected Some at index {}", i);
     }
-    let oob = str_ops::str_char_at(t2(text, Value::Int(len + 100)));
+    let oob = str_ops::str_char_at(text.as_text(), len + 100);
     assert!(matches!(oob, Value::Ctor { tag, .. } if {
         use axis_codegen_bridge::runtime::value::get_tag_name;
         get_tag_name(tag) == "None"
@@ -255,9 +254,9 @@ fn test_str_char_at_walk_unicode() {
 fn test_str_slice_full_and_empty() {
     setup();
     let text = s("battlehardening");
-    let full = str_ops::str_slice(Value::Tuple(vec![text.clone(), Value::Int(0), Value::Int(15)]));
+    let full = str_ops::str_slice(text.as_text(), 0, 15);
     assert_eq!(full, text);
-    let empty = str_ops::str_slice(Value::Tuple(vec![text, Value::Int(5), Value::Int(5)]));
+    let empty = str_ops::str_slice(text.as_text(), 5, 5);
     assert_eq!(empty, s(""));
 }
 
@@ -265,7 +264,7 @@ fn test_str_slice_full_and_empty() {
 fn test_str_slice_beyond_end_clamped() {
     setup();
     let text = s("hello");
-    let result = str_ops::str_slice(Value::Tuple(vec![text.clone(), Value::Int(0), Value::Int(9999)]));
+    let result = str_ops::str_slice(text.as_text(), 0, 9999);
     assert_eq!(result, text);
 }
 
@@ -314,11 +313,11 @@ fn test_int_div_by_zero_panics_then_resumes() {
     setup();
     for _ in 0..100 {
         let err = panic::catch_unwind(|| {
-            arith::int_div(t2(Value::Int(100), Value::Int(0)))
+            arith::int_div(100, 0)
         });
         assert!(err.is_err());
         // Normal ops still work after the panic
-        assert_eq!(arith::int_div(t2(Value::Int(100), Value::Int(5))), Value::Int(20));
+        assert_eq!(arith::int_div(100, 5), Value::Int(20));
     }
 }
 
@@ -511,7 +510,7 @@ fn test_concurrent_str_concat_independent_threads() {
             for i in 0..100 {
                 acc = str_ops::str_concat(acc.as_text(), s(&format!("_{}", i)).as_text());
             }
-            assert!(matches!(str_ops::str_len(acc), Value::Int(n) if n > 100));
+            assert!(matches!(str_ops::str_len(acc.as_text()), Value::Int(n) if n > 100));
         })
     }).collect();
     for h in handles { h.join().unwrap(); }
@@ -557,10 +556,10 @@ fn test_arith_saturating_extremes() {
 fn test_bool_ops_stress() {
     setup();
     for i in 0..10_000 {
-        let v = arith::int_gt(t2(Value::Int(i), Value::Int(0)));
+        let v = arith::int_gt(i, 0);
         let _ = bool_ops::bool_not(v.clone());
-        let _ = bool_ops::bool_and(t2(v.clone(), Value::Bool(true)));
-        let _ = bool_ops::bool_or(t2(v, Value::Bool(false)));
+        let _ = bool_ops::bool_and(v.clone(), Value::Bool(true));
+        let _ = bool_ops::bool_or(v, Value::Bool(false));
     }
 }
 

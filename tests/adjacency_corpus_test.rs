@@ -23,8 +23,8 @@ use std::fs;
 use axis_codegen_bridge::runtime::adjacency::{adj_build, adj_get, adj_stats};
 use axis_codegen_bridge::runtime::value::{get_str, intern_str, Value};
 
-fn text(s: &str) -> Value {
-    Value::Str(intern_str(s))
+fn text(s: &str) -> std::sync::Arc<str> {
+    intern_str(s)
 }
 
 fn as_text(v: Value) -> String {
@@ -97,20 +97,14 @@ fn projection_matches_ground_truth_across_the_full_corpus() {
     // ── EVERY source, EVERY target — no sampling ──────────────────────────
     let mut out_mismatch = Vec::new();
     for (node, want) in &truth_out {
-        let got = posting_len(&as_text(adj_get(Value::Tuple(vec![
-            text("OUT"),
-            text(node),
-        ]))));
+        let got = posting_len(&as_text(adj_get(text("OUT"), text(node))));
         if got != *want {
             out_mismatch.push((node.clone(), *want, got));
         }
     }
     let mut in_mismatch = Vec::new();
     for (node, want) in &truth_in {
-        let got = posting_len(&as_text(adj_get(Value::Tuple(vec![
-            text("IN"),
-            text(node),
-        ]))));
+        let got = posting_len(&as_text(adj_get(text("IN"), text(node))));
         if got != *want {
             in_mismatch.push((node.clone(), *want, got));
         }
@@ -134,10 +128,7 @@ fn projection_matches_ground_truth_across_the_full_corpus() {
 
     // A node the corpus never mentions must come back empty, not wrong.
     assert_eq!(
-        as_text(adj_get(Value::Tuple(vec![
-            text("OUT"),
-            text("sha256:no-such-node")
-        ]))),
+        as_text(adj_get(text("OUT"), text("sha256:no-such-node"))),
         ""
     );
 }

@@ -83,11 +83,8 @@ fn next_handle() -> i64 {
 /// Register a fresh empty index shard in THIS thread's table and return its
 /// handle. Handles are never reused within a thread.
 #[track_caller]
-pub fn walidx_open(arg: Value) -> Value {
-    let shard = match arg {
-        Value::Str(h) => get_str(h),
-        other => panic!("walidx_open: expected Text shard, got {:?}", other),
-    };
+pub fn walidx_open(shard: std::sync::Arc<str>) -> Value {
+    let shard = get_str(shard);
     let h = next_handle();
     IDX.with(|idx| {
         idx.borrow_mut().insert(h, IdxShard { shard, map: HashMap::new(), fseg: 0, foff: 0, hb_seq: 1 });
@@ -95,34 +92,14 @@ pub fn walidx_open(arg: Value) -> Value {
     Value::Int(h)
 }
 
-fn arg_int(v: &Value, who: &str, i: usize) -> i64 {
-    match v {
-        Value::Int(n) => *n,
-        other => panic!("{}: arg {} expected Int, got {:?}", who, i, other),
-    }
-}
-fn arg_str(v: &Value, who: &str, i: usize) -> String {
-    match v {
-        Value::Str(h) => get_str(h),
-        other => panic!("{}: arg {} expected Text, got {:?}", who, i, other),
-    }
-}
 
 /// `walidx_insert(h: Int, key: Text, seg: Int, off: Int, len: Int) -> Unit`
 ///
 /// Synchronous in-memory insert into the calling thread's shard — a HashMap
 /// insert, no syscall, no lock. This is the hot loop the daemon runs per object.
 #[track_caller]
-pub fn walidx_insert(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 5 => es,
-        other => panic!("walidx_insert: expected Tuple(Int, Text, Int, Int, Int), got {:?}", other),
-    };
-    let h = arg_int(&es[0], "walidx_insert", 0);
-    let key = arg_str(&es[1], "walidx_insert", 1);
-    let seg = arg_int(&es[2], "walidx_insert", 2);
-    let off = arg_int(&es[3], "walidx_insert", 3);
-    let len = arg_int(&es[4], "walidx_insert", 4);
+pub fn walidx_insert(h: i64, key: std::sync::Arc<str>, seg: i64, off: i64, len: i64) -> Value {
+    let key = get_str(key);
     IDX.with(|idx| {
         let mut idx = idx.borrow_mut();
         let sh = idx
@@ -136,13 +113,8 @@ pub fn walidx_insert(args: Value) -> Value {
 
 /// `walidx_has(h: Int, key: Text) -> Bool` — is `key` present in the shard?
 #[track_caller]
-pub fn walidx_has(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 2 => es,
-        other => panic!("walidx_has: expected Tuple(Int, Text), got {:?}", other),
-    };
-    let h = arg_int(&es[0], "walidx_has", 0);
-    let key = arg_str(&es[1], "walidx_has", 1);
+pub fn walidx_has(h: i64, key: std::sync::Arc<str>) -> Value {
+    let key = get_str(key);
     IDX.with(|idx| {
         let idx = idx.borrow();
         let sh = idx
@@ -156,13 +128,8 @@ pub fn walidx_has(args: Value) -> Value {
 ///
 /// Return `"<seg>\t<off>\t<len>"` for `key`, or `""` if absent.
 #[track_caller]
-pub fn walidx_get(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 2 => es,
-        other => panic!("walidx_get: expected Tuple(Int, Text), got {:?}", other),
-    };
-    let h = arg_int(&es[0], "walidx_get", 0);
-    let key = arg_str(&es[1], "walidx_get", 1);
+pub fn walidx_get(h: i64, key: std::sync::Arc<str>) -> Value {
+    let key = get_str(key);
     IDX.with(|idx| {
         let idx = idx.borrow();
         let sh = idx
@@ -208,13 +175,8 @@ fn write_durable(path: &str, bytes: &[u8]) {
 ///   `WALIDX1\t<wm_seg>\t<wm_off>\t<count>\n`  then `count` lines
 ///   `<key>\t<seg>\t<off>\t<len>\n`.
 #[track_caller]
-pub fn walidx_snapshot(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 2 => es,
-        other => panic!("walidx_snapshot: expected Tuple(Int, Text), got {:?}", other),
-    };
-    let h = arg_int(&es[0], "walidx_snapshot", 0);
-    let path = arg_str(&es[1], "walidx_snapshot", 1);
+pub fn walidx_snapshot(h: i64, path: std::sync::Arc<str>) -> Value {
+    let path = get_str(path);
     let body = IDX.with(|idx| {
         let idx = idx.borrow();
         let sh = idx
@@ -640,14 +602,9 @@ fn do_replay(sh: &mut IdxShard, prefix: &str) -> i64 {
 /// and threads a content-index visitor into it. A clean short read ends a segment;
 /// a hash mismatch or out-of-bounds length is a torn tail and halts the scan.
 #[track_caller]
-pub fn walidx_rebuild(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 3 => es,
-        other => panic!("walidx_rebuild: expected Tuple(Int, Text, Text), got {:?}", other),
-    };
-    let h = arg_int(&es[0], "walidx_rebuild", 0);
-    let prefix = arg_str(&es[1], "walidx_rebuild", 1);
-    let snap_path = arg_str(&es[2], "walidx_rebuild", 2);
+pub fn walidx_rebuild(h: i64, prefix: std::sync::Arc<str>, snap_path: std::sync::Arc<str>) -> Value {
+    let prefix = get_str(prefix);
+    let snap_path = get_str(snap_path);
 
     let scanned = IDX.with(|idx| {
         let mut idx = idx.borrow_mut();
@@ -670,13 +627,8 @@ pub fn walidx_rebuild(args: Value) -> Value {
 /// incrementality instrument (hard-limit VERIFY_GENUINE_INCREMENTALITY): after
 /// appending K frames it returns K, not base+K; with no new frames it returns 0.
 #[track_caller]
-pub fn walidx_replay(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 2 => es,
-        other => panic!("walidx_replay: expected Tuple(Int, Text), got {:?}", other),
-    };
-    let h = arg_int(&es[0], "walidx_replay", 0);
-    let prefix = arg_str(&es[1], "walidx_replay", 1);
+pub fn walidx_replay(h: i64, prefix: std::sync::Arc<str>) -> Value {
+    let prefix = get_str(prefix);
     let scanned = IDX.with(|idx| {
         let mut idx = idx.borrow_mut();
         let sh = idx
@@ -757,18 +709,16 @@ fn residency_mode() -> &'static str {
 /// doubles as the membership answer (wal_find_shard_step tests non-empty), so one
 /// resident primitive serves both the has-fan-out and the read.
 #[track_caller]
-pub fn walidx_res_get(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 4 => es,
-        other => panic!(
-            "walidx_res_get: expected Tuple(shard, prefix, snap, key), got {:?}",
-            other
-        ),
-    };
-    let shard = arg_str(&es[0], "walidx_res_get", 0);
-    let prefix = arg_str(&es[1], "walidx_res_get", 1);
-    let snap = arg_str(&es[2], "walidx_res_get", 2);
-    let key = arg_str(&es[3], "walidx_res_get", 3);
+pub fn walidx_res_get(
+    shard: std::sync::Arc<str>,
+    prefix: std::sync::Arc<str>,
+    snap: std::sync::Arc<str>,
+    key: std::sync::Arc<str>,
+) -> Value {
+    let shard = get_str(shard);
+    let prefix = get_str(prefix);
+    let snap = get_str(snap);
+    let key = get_str(key);
 
     let existing = RESIDENT.with(|r| r.borrow().get(&shard).copied());
     let h = match existing {
@@ -816,11 +766,8 @@ pub fn walidx_res_get(args: Value) -> Value {
 /// resident so it is always a no-op. Byte-for-byte the same discipline as
 /// `fieldidx_res_scope`.
 #[track_caller]
-pub fn walidx_res_scope(arg: Value) -> Value {
-    let which = match arg {
-        Value::Str(h) => get_str(h),
-        other => panic!("walidx_res_scope: expected Text, got {:?}", other),
-    };
+pub fn walidx_res_scope(which: std::sync::Arc<str>) -> Value {
+    let which = get_str(which);
     if residency_mode() == which {
         RESIDENT.with(|r| {
             let mut r = r.borrow_mut();
@@ -948,12 +895,12 @@ mod residency_tests {
         // resident handle, keyed by shard "s"
         let shard = "s".to_string();
         let get = |i: usize| -> String {
-            match walidx_res_get(Value::Tuple(vec![
-                Value::Str(intern_str(&shard)),
-                Value::Str(intern_str(&prefix)),
-                Value::Str(intern_str("/nope.snap")),
-                Value::Str(intern_str(&obj_key(i))),
-            ])) {
+            match walidx_res_get(
+                intern_str(&shard),
+                intern_str(&prefix),
+                intern_str("/nope.snap"),
+                intern_str(&obj_key(i)),
+            ) {
                 Value::Str(h) => get_str(&h),
                 _ => panic!("res_get non-Text"),
             }
@@ -975,12 +922,12 @@ mod residency_tests {
     }
 
     fn get_absent(shard: &str, prefix: &str) -> String {
-        match walidx_res_get(Value::Tuple(vec![
-            Value::Str(intern_str(shard)),
-            Value::Str(intern_str(prefix)),
-            Value::Str(intern_str("/nope.snap")),
-            Value::Str(intern_str(&"f".repeat(64))),
-        ])) {
+        match walidx_res_get(
+            intern_str(shard),
+            intern_str(prefix),
+            intern_str("/nope.snap"),
+            intern_str(&"f".repeat(64)),
+        ) {
             Value::Str(h) => get_str(&h),
             _ => panic!("res_get non-Text"),
         }

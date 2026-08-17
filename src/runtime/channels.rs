@@ -30,7 +30,7 @@
 //!   across contexts is race-free — the *names* are still compile-time literals,
 //!   so this is not dynamic channel creation.
 
-use super::value::{get_str, Value};
+use super::value::Value;
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -124,27 +124,12 @@ thread_local! {
     static SUBSCRIPTIONS: RefCell<Vec<String>> = RefCell::new(Vec::new());
 }
 
-fn name_of(v: &Value) -> String {
-    match v {
-        Value::Str(h) => get_str(h),
-        other => panic!("channel name must be Text, got {:?}", other),
-    }
-}
-
 /// `channel_send(name: Text, data: Value) -> Unit`.
 ///
-/// Calling convention: unary `Value::Tuple([name, data])` (the data-fn convention
-/// the emitter uses for 2-arg bridge fns).
+/// AXVERITY_RAWMEM_CALL_CONVENTION_V1: native positional params, no
+/// `Value::Tuple` boxing.
 #[track_caller]
-pub fn channel_send(args: Value) -> Value {
-    let (name, data) = match args {
-        Value::Tuple(mut es) if es.len() == 2 => {
-            let data = es.pop().unwrap();
-            let name = es.pop().unwrap();
-            (name_of(&name), data)
-        }
-        other => panic!("channel_send: expected Tuple(Text, Value), got {:?}", other),
-    };
+pub fn channel_send(name: std::sync::Arc<str>, data: Value) -> Value {
     let chan = channel_for(&name);
     chan.lfq.push(data); // our lock-free MPSC primitive; single atomic swap
     // Wake any thread blocked in wait() — see wake()'s doc comment. Notifying
@@ -161,13 +146,12 @@ pub fn channel_send(args: Value) -> Value {
 /// "hotmem-frame"). Read-only: locks the queue, reads len, unlocks. No effect on
 /// any functional path.
 #[track_caller]
-pub fn channel_depth(name: Value) -> Value {
-    let n = name_of(&name);
+pub fn channel_depth(name: std::sync::Arc<str>) -> Value {
     // AXVERITY_WAY_BACK_CONSOLIDATION_V1: the mutex-queue depth this read is gone (the lock-free
     // mpsc_intrusive queue has no O(1) len). It ALREADY returned 0 under the shipped lock-free
     // default (sends go to lfq, never the removed mutex queue), so a 0 stub is byte-identical to
     // current behavior. The channel is still declared eagerly (the prior side effect).
-    let _ = channel_for(&n);
+    let _ = channel_for(&name);
     Value::Int(0)
 }
 
@@ -175,8 +159,8 @@ pub fn channel_depth(name: Value) -> Value {
 /// waiter on `name` and declares the channel buffer eagerly. Idempotent per
 /// context — subscribing twice to the same name is a no-op.
 #[track_caller]
-pub fn event_subscribe(name: Value) -> Value {
-    let n = name_of(&name);
+pub fn event_subscribe(name: std::sync::Arc<str>) -> Value {
+    let n = name.to_string();
     let _ = channel_for(&n); // declare the buffer eagerly (race-free with senders)
     SUBSCRIPTIONS.with(|s| {
         let mut s = s.borrow_mut();
@@ -381,8 +365,8 @@ pub fn bchan_take(name: std::sync::Arc<str>) -> Value {
 
 /// `bchan_len(name: Text) -> Int`. Current queue depth.
 #[track_caller]
-pub fn bchan_len(name: Value) -> Value {
-    Value::Int(bounded_len(&name_of(&name)) as i64)
+pub fn bchan_len(name: std::sync::Arc<str>) -> Value {
+    Value::Int(bounded_len(&name) as i64)
 }
 
 /// Block until ≥1 item, then accumulate one batch until `max` items OR
@@ -453,25 +437,9 @@ pub fn bchan_send(name: std::sync::Arc<str>, item: Value) -> Value {
 /// `bchan_drain(name: Text, max: Int, window_ms: Int) -> List`. Blocks until ≥1
 /// item, returns one batch (cap-or-window bounded) as a `Value::List`.
 #[track_caller]
-pub fn bchan_drain(args: Value) -> Value {
-    let (name, max, window_ms) = match args {
-        Value::Tuple(es) if es.len() == 3 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("bchan_drain: expected Tuple(Text, Int, Int), got {:?}", other),
-    };
-    let name = name_of(&name);
-    let max = match max {
-        Value::Int(n) if n >= 1 => n as usize,
-        Value::Int(_) => 1,
-        other => panic!("bchan_drain: arg 1 (max) expected Int, got {:?}", other),
-    };
-    let window_ms = match window_ms {
-        Value::Int(n) if n >= 0 => n as u64,
-        Value::Int(_) => 0,
-        other => panic!("bchan_drain: arg 2 (window_ms) expected Int, got {:?}", other),
-    };
+pub fn bchan_drain(name: std::sync::Arc<str>, max: i64, window_ms: i64) -> Value {
+    let max = if max >= 1 { max as usize } else { 1 };
+    let window_ms = if window_ms >= 0 { window_ms as u64 } else { 0 };
     Value::List(bounded_drain_batch(&name, max, window_ms))
 }
 
@@ -495,7 +463,7 @@ mod tests {
 
     fn nm(s: &str) -> Value { Value::Str(intern_str(s)) }
     fn send(ch: &str, n: i64) {
-        channel_send(Value::Tuple(vec![nm(ch), Value::Int(n)]));
+        channel_send(intern_str(ch), Value::Int(n));
     }
 
     thread_local! {
@@ -507,8 +475,8 @@ mod tests {
         if let Value::List(items) = v {
             DRAINED.with(|d| {
                 let mut d = d.borrow_mut();
-                for it in items {
-                    if let Value::Int(n) = it { d.push(n); }
+                for it in items.iter() {
+                    if let Value::Int(n) = it { d.push(*n); }
                 }
             });
         }
@@ -528,8 +496,8 @@ mod tests {
     #[test]
     fn wait_drains_all_subscribed_channels_in_order() {
         let (a, b) = ("t_order_a", "t_order_b");
-        event_subscribe(nm(a));
-        event_subscribe(nm(b));
+        event_subscribe(intern_str(a));
+        event_subscribe(intern_str(b));
         // Enqueue everything BEFORE waiting so the first wait() drains it all.
         send(a, 10); send(a, 11);
         send(b, 20); send(b, 21);
@@ -543,7 +511,7 @@ mod tests {
     /// with exactly that message (never an empty early return).
     #[test]
     fn wait_blocks_until_message_arrives() {
-        event_subscribe(nm("t_block"));
+        event_subscribe(intern_str("t_block"));
         let _ = take_drained();
         let producer = thread::spawn(|| {
             thread::sleep(Duration::from_millis(60));
@@ -563,7 +531,7 @@ mod tests {
     /// (the regression `wake()` documents) would make CPU ≈ wall.
     #[test]
     fn wait_does_not_busy_spin() {
-        event_subscribe(nm("t_nospin"));
+        event_subscribe(intern_str("t_nospin"));
         let _ = take_drained();
         let producer = thread::spawn(|| {
             thread::sleep(Duration::from_millis(120));

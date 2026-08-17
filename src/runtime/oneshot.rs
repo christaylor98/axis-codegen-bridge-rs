@@ -153,11 +153,7 @@ pub fn oneshot_new(_: Value) -> Value {
 
 /// `oneshot_wait(id: Int) -> Unit`. Blocks until `id` is signaled.
 #[track_caller]
-pub fn oneshot_wait(arg: Value) -> Value {
-    let id = match arg {
-        Value::Int(n) => n,
-        other => panic!("oneshot_wait: expected Int id, got {:?}", other),
-    };
+pub fn oneshot_wait(id: i64) -> Value {
     wait_oneshot(id);
     Value::Unit
 }
@@ -165,29 +161,13 @@ pub fn oneshot_wait(arg: Value) -> Value {
 /// `oneshot_wait_timeout(id: Int, timeout_ms: Int) -> Bool`. Blocks until `id`
 /// is signaled or `timeout_ms` elapses; returns whether it was signaled.
 #[track_caller]
-pub fn oneshot_wait_timeout(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 2 => es,
-        other => panic!("oneshot_wait_timeout: expected Tuple(Int, Int), got {:?}", other),
-    };
-    let id = match &es[0] {
-        Value::Int(n) => *n,
-        other => panic!("oneshot_wait_timeout: arg 0 expected Int, got {:?}", other),
-    };
-    let ms = match &es[1] {
-        Value::Int(n) => *n,
-        other => panic!("oneshot_wait_timeout: arg 1 expected Int, got {:?}", other),
-    };
-    Value::Bool(wait_oneshot_timeout(id, ms.max(0) as u64))
+pub fn oneshot_wait_timeout(id: i64, timeout_ms: i64) -> Value {
+    Value::Bool(wait_oneshot_timeout(id, timeout_ms.max(0) as u64))
 }
 
 /// `oneshot_signal(id: Int) -> Unit`. Marks `id` done and wakes its waiter.
 #[track_caller]
-pub fn oneshot_signal(arg: Value) -> Value {
-    let id = match arg {
-        Value::Int(n) => n,
-        other => panic!("oneshot_signal: expected Int id, got {:?}", other),
-    };
+pub fn oneshot_signal(id: i64) -> Value {
     signal_oneshot(id);
     Value::Unit
 }

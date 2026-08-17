@@ -94,12 +94,10 @@ fn candidate_a_reclog_fsync_split_sweep() {
 
         let mut ids = Vec::with_capacity(ITEMS_PER_BATCH);
         for i in 0..ITEMS_PER_BATCH {
-            let args = Value::Tuple(vec![
-                synth_frame(i),
-                synth_name_path(&root, cardinality, i),
-                synth_bind_line(i),
-            ]);
-            match reclog_submit(args) {
+            let frame = synth_frame(i).as_bytes();
+            let logp = synth_name_path(&root, cardinality, i).as_text();
+            let bind_line = synth_bind_line(i).as_bytes();
+            match reclog_submit(frame, logp, bind_line) {
                 Value::Int(id) => ids.push(id),
                 other => panic!("reclog_submit: unexpected return {:?}", other),
             }

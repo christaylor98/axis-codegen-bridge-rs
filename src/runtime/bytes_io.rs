@@ -41,37 +41,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use sha2::{Digest, Sha256};
 
-use super::value::{Value, get_str, intern_str};
+use super::value::{Value, intern_str};
 
 // ── text_to_bytes ────────────────────────────────────────────────────────────
 
 #[track_caller]
-pub fn text_to_bytes(v: Value) -> Value {
-    match v {
-        Value::Str(h) => Value::Bytes(get_str(h).into_bytes()),
-        other => panic!("text_to_bytes: expected Text, got {:?}", other),
-    }
+pub fn text_to_bytes(s: std::sync::Arc<str>) -> Value {
+    Value::Bytes(s.as_bytes().to_vec())
 }
 
 // ── fs_write_bytes ───────────────────────────────────────────────────────────
 
 #[track_caller]
-pub fn fs_write_bytes(args: Value) -> Value {
-    let (path, content) = match args {
-        Value::Tuple(es) if es.len() == 2 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("fs_write_bytes: expected Tuple(Text, Bytes), got {:?}", other),
-    };
-    let path = match path {
-        Value::Str(h) => get_str(h),
-        other => panic!("fs_write_bytes: arg 0 expected Text, got {:?}", other),
-    };
-    let content = match content {
-        Value::Bytes(bs) => bs,
-        other => panic!("fs_write_bytes: arg 1 expected Bytes, got {:?}", other),
-    };
+pub fn fs_write_bytes(path: std::sync::Arc<str>, content: Vec<u8>) -> Value {
     if let Err(e) = write_durable(&path, &content) {
         panic!("fs_write_bytes({}): {}", path, e);
     }
@@ -202,15 +184,10 @@ fn write_durable(path: &str, content: &[u8]) -> std::io::Result<()> {
 /// + 64 lowercase hex chars. Same crypto as `content_hash`, but consumes
 /// `Value::Bytes` directly without per-element list coercion.
 #[track_caller]
-pub fn bytes_hash(v: Value) -> Value {
-    match v {
-        Value::Bytes(b) => {
-            let digest = Sha256::digest(&b);
-            let hex: String = digest.iter().map(|byte| format!("{:02x}", byte)).collect();
-            Value::Str(intern_str(&format!("sha256:{}", hex)))
-        }
-        other => panic!("bytes_hash: expected Bytes, got {:?}", other),
-    }
+pub fn bytes_hash(b: Vec<u8>) -> Value {
+    let digest = Sha256::digest(&b);
+    let hex: String = digest.iter().map(|byte| format!("{:02x}", byte)).collect();
+    Value::Str(intern_str(&format!("sha256:{}", hex)))
 }
 
 // ── fs_mkdir_p ───────────────────────────────────────────────────────────────
@@ -234,13 +211,10 @@ pub fn fs_mkdir_p(path: std::sync::Arc<str>) -> Value {
 /// Checked UTF-8 decode. Returns the decoded Text. Panics on invalid UTF-8.
 /// Symmetric inverse of `text_to_bytes` for valid UTF-8 inputs.
 #[track_caller]
-pub fn bytes_to_text(v: Value) -> Value {
-    match v {
-        Value::Bytes(b) => match String::from_utf8(b) {
-            Ok(s) => Value::Str(intern_str(&s)),
-            Err(e) => panic!("bytes_to_text: invalid UTF-8: {}", e),
-        },
-        other => panic!("bytes_to_text: expected Bytes, got {:?}", other),
+pub fn bytes_to_text(b: Vec<u8>) -> Value {
+    match String::from_utf8(b) {
+        Ok(s) => Value::Str(intern_str(&s)),
+        Err(e) => panic!("bytes_to_text: invalid UTF-8: {}", e),
     }
 }
 
@@ -265,22 +239,22 @@ mod tests {
         // "aé€": a=0x61, é=U+00E9 (C3 A9), €=U+20AC (E2 82 AC).
         let s = "aé€";
         let expect = vec![0x61, 0xC3, 0xA9, 0xE2, 0x82, 0xAC];
-        assert_eq!(bytes(text_to_bytes(Value::Str(intern_str(s)))), expect);
+        assert_eq!(bytes(text_to_bytes(intern_str(s))), expect);
         assert_eq!(s.as_bytes().to_vec(), expect, "sanity: matches Rust's own UTF-8");
 
         // Round-trips back through bytes_to_text unchanged.
-        let back = bytes_to_text(Value::Bytes(expect));
+        let back = bytes_to_text(expect);
         assert_eq!(back, Value::Str(intern_str(s)));
 
         // A 4-byte emoji (😀 = U+1F600 -> F0 9F 98 80) also survives.
         let emoji = "😀";
-        assert_eq!(bytes(text_to_bytes(Value::Str(intern_str(emoji)))), vec![0xF0, 0x9F, 0x98, 0x80]);
+        assert_eq!(bytes(text_to_bytes(intern_str(emoji))), vec![0xF0, 0x9F, 0x98, 0x80]);
     }
 
     /// ASCII behaviour is byte-identical to before the UTF-8 audit — no caller
     /// that fed ASCII can observe any change.
     #[test]
     fn text_to_bytes_ascii_unchanged() {
-        assert_eq!(bytes(text_to_bytes(Value::Str(intern_str("abc")))), vec![0x61, 0x62, 0x63]);
+        assert_eq!(bytes(text_to_bytes(intern_str("abc"))), vec![0x61, 0x62, 0x63]);
     }
 }

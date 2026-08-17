@@ -57,22 +57,9 @@ fn shard(key: &str) -> usize {
 /// name's current value (a content hash for a bind, "TOMBSTONED" for a delete). Locks
 /// one shard; O(1); no fsync, no cross-shard coordination.
 #[track_caller]
-pub fn bindidx_put(args: Value) -> Value {
-    let (name, value) = match args {
-        Value::Tuple(es) if es.len() == 2 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("bindidx_put: expected Tuple(Text, Text), got {:?}", other),
-    };
-    let name = match name {
-        Value::Str(h) => get_str(h),
-        other => panic!("bindidx_put: arg 0 expected Text name, got {:?}", other),
-    };
-    let value = match value {
-        Value::Str(h) => get_str(h),
-        other => panic!("bindidx_put: arg 1 expected Text value, got {:?}", other),
-    };
+pub fn bindidx_put(name: std::sync::Arc<str>, value: std::sync::Arc<str>) -> Value {
+    let name = name.to_string();
+    let value = value.to_string();
     let s = shard(&name);
     idx().shards[s]
         .lock()
@@ -84,11 +71,8 @@ pub fn bindidx_put(args: Value) -> Value {
 /// `bindidx_get(name: Text) -> Text` — the name's current value, or "" if the name is
 /// not in the index (a miss — the caller falls through to the durable path).
 #[track_caller]
-pub fn bindidx_get(arg: Value) -> Value {
-    let name = match arg {
-        Value::Str(h) => get_str(h),
-        other => panic!("bindidx_get: expected Text name, got {:?}", other),
-    };
+pub fn bindidx_get(name: std::sync::Arc<str>) -> Value {
+    let name = name.to_string();
     let s = shard(&name);
     let v = idx().shards[s]
         .lock()
@@ -103,8 +87,8 @@ pub fn bindidx_get(arg: Value) -> Value {
 mod tests {
     use super::*;
 
-    fn s(v: &str) -> Value {
-        Value::Str(intern_str(v))
+    fn s(v: &str) -> std::sync::Arc<str> {
+        intern_str(v)
     }
     fn got(v: Value) -> String {
         match v {
@@ -118,13 +102,13 @@ mod tests {
         // miss -> "" (caller falls to durable path)
         assert_eq!(got(bindidx_get(s("bindidx_test:absent"))), "");
         // bind, then read
-        bindidx_put(Value::Tuple(vec![s("bindidx_test:k1"), s("sha256:aaa")]));
+        bindidx_put(s("bindidx_test:k1"), s("sha256:aaa"));
         assert_eq!(got(bindidx_get(s("bindidx_test:k1"))), "sha256:aaa");
         // last-writer-wins (UPDATE rebinds)
-        bindidx_put(Value::Tuple(vec![s("bindidx_test:k1"), s("sha256:bbb")]));
+        bindidx_put(s("bindidx_test:k1"), s("sha256:bbb"));
         assert_eq!(got(bindidx_get(s("bindidx_test:k1"))), "sha256:bbb");
         // tombstone (DELETE)
-        bindidx_put(Value::Tuple(vec![s("bindidx_test:k1"), s("TOMBSTONED")]));
+        bindidx_put(s("bindidx_test:k1"), s("TOMBSTONED"));
         assert_eq!(got(bindidx_get(s("bindidx_test:k1"))), "TOMBSTONED");
     }
 
@@ -138,10 +122,10 @@ mod tests {
             .map(|t| {
                 std::thread::spawn(move || {
                     for i in 0..per {
-                        bindidx_put(Value::Tuple(vec![
+                        bindidx_put(
                             s(&format!("bindidx_conc:t{}:{}", t, i)),
                             s(&format!("sha256:{}_{}", t, i)),
-                        ]));
+                        );
                     }
                 })
             })

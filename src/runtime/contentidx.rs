@@ -108,22 +108,8 @@ fn shard(key: &str) -> usize {
 /// under its content hash. Insert-if-absent (immutable content); locks one shard;
 /// O(1); no fsync. Evicts the shard's oldest entry (FIFO) if at the per-shard cap.
 #[track_caller]
-pub fn contentidx_put(args: Value) -> Value {
-    let (hash, bytes) = match args {
-        Value::Tuple(es) if es.len() == 2 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("contentidx_put: expected Tuple(Text, Bytes), got {:?}", other),
-    };
-    let hash = match hash {
-        Value::Str(h) => get_str(&h),
-        other => panic!("contentidx_put: arg 0 expected Text hash, got {:?}", other),
-    };
-    let bytes = match bytes {
-        Value::Bytes(b) => b,
-        other => panic!("contentidx_put: arg 1 expected Bytes, got {:?}", other),
-    };
+pub fn contentidx_put(hash: std::sync::Arc<str>, bytes: Vec<u8>) -> Value {
+    let hash = hash.to_string();
     let cap = per_shard_cap();
     let s = shard(&hash);
     let mut g = idx().shards[s].lock().unwrap_or_else(|p| p.into_inner());
@@ -146,11 +132,8 @@ pub fn contentidx_put(args: Value) -> Value {
 /// miss (the caller falls through to the durable loose/WAL/pack tiers). No lock on
 /// the returned bytes: the clone happens under the shard lock, then the lock drops.
 #[track_caller]
-pub fn contentidx_get(arg: Value) -> Value {
-    let hash = match arg {
-        Value::Str(h) => get_str(&h),
-        other => panic!("contentidx_get: expected Text hash, got {:?}", other),
-    };
+pub fn contentidx_get(hash: std::sync::Arc<str>) -> Value {
+    let hash = hash.to_string();
     let s = shard(&hash);
     let g = idx().shards[s].lock().unwrap_or_else(|p| p.into_inner());
     Value::Bytes(g.map.get(&hash).cloned().unwrap_or_default())
@@ -162,13 +145,10 @@ mod tests {
     use crate::runtime::value::intern_str;
 
     fn put(h: &str, b: &[u8]) {
-        contentidx_put(Value::Tuple(vec![
-            Value::Str(intern_str(h)),
-            Value::Bytes(b.to_vec()),
-        ]));
+        contentidx_put(intern_str(h), b.to_vec());
     }
     fn get(h: &str) -> Vec<u8> {
-        match contentidx_get(Value::Str(intern_str(h))) {
+        match contentidx_get(intern_str(h)) {
             Value::Bytes(b) => b,
             other => panic!("{:?}", other),
         }

@@ -53,7 +53,7 @@ use std::sync::{Mutex, OnceLock};
 
 use postgres::{Client, NoTls};
 
-use super::value::{Value, get_str, intern_str};
+use super::value::{Value, intern_str};
 
 // Schema (idempotent bootstrap; run on first connect). gcore_objects is
 // handled separately by `migrate_gcore_objects` (D048 changed its shape
@@ -151,32 +151,6 @@ fn provision_scratch_db() -> String {
     format!("host={socket} port={port} user={user} dbname={db}")
 }
 
-// ── tuple / scalar unpacking ────────────────────────────────────────────────
-
-fn unpack2(args: Value, who: &str) -> (Value, Value) {
-    match args {
-        Value::Tuple(es) if es.len() == 2 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("{who}: expected Tuple(Text, Bytes/Text), got {:?}", other),
-    }
-}
-
-fn to_str(v: Value, who: &str, what: &str) -> String {
-    match v {
-        Value::Str(h) => get_str(h),
-        other => panic!("{who}: {what} expected Text, got {:?}", other),
-    }
-}
-
-fn to_bytes(v: Value, who: &str, what: &str) -> Vec<u8> {
-    match v {
-        Value::Bytes(b) => b,
-        other => panic!("{who}: {what} expected Bytes, got {:?}", other),
-    }
-}
-
 // ── pg_bytes_put / pg_bytes_get ─────────────────────────────────────────────
 
 /// `pg_bytes_put(addr: Text, content: Bytes) -> Unit` — content-addressed,
@@ -184,10 +158,8 @@ fn to_bytes(v: Value, who: &str, what: &str) -> Vec<u8> {
 /// `objseg::seg_append` — one pwrite + one fsync); the postgres row is only
 /// the pointer.
 #[track_caller]
-pub fn pg_bytes_put(args: Value) -> Value {
-    let (a, b) = unpack2(args, "pg_bytes_put");
-    let addr = to_str(a, "pg_bytes_put", "addr");
-    let content = to_bytes(b, "pg_bytes_put", "content");
+pub fn pg_bytes_put(addr: std::sync::Arc<str>, content: Vec<u8>) -> Value {
+    let addr = addr.to_string();
     let (seg_id, off) = super::objseg::seg_append(&content);
     let len = content.len() as i64;
     let mut c = conn().lock().unwrap();
@@ -204,8 +176,8 @@ pub fn pg_bytes_put(args: Value) -> Value {
 /// maps empty -> miss (same convention as contentidx_get). Looks up the
 /// segment pointer, then reads the bytes off disk (D048).
 #[track_caller]
-pub fn pg_bytes_get(addr: Value) -> Value {
-    let addr = to_str(addr, "pg_bytes_get", "addr");
+pub fn pg_bytes_get(addr: std::sync::Arc<str>) -> Value {
+    let addr = addr.to_string();
     let mut c = conn().lock().unwrap();
     let row = c
         .query_opt(
@@ -235,10 +207,8 @@ pub fn pg_bytes_get(addr: Value) -> Value {
 /// two-step crash window, and the segment append itself is durable
 /// (fsync'd) before any pointer row can reference it.
 #[track_caller]
-pub fn pg_obj_block_put(args: Value) -> Value {
-    let (b, i) = unpack2(args, "pg_obj_block_put");
-    let block = to_bytes(b, "pg_obj_block_put", "block");
-    let index = to_str(i, "pg_obj_block_put", "index");
+pub fn pg_obj_block_put(block: Vec<u8>, index: std::sync::Arc<str>) -> Value {
+    let index = index.to_string();
 
     let mut objs: Vec<(String, i64, i64)> = Vec::new(); // (addr, off-in-block, len)
     for line in index.lines() {
@@ -287,8 +257,8 @@ pub fn pg_obj_block_put(args: Value) -> Value {
 /// `pg_log_append(line: Text) -> Unit` — append one ledger block. seq is
 /// bigserial, so scan order == append order == old file order.
 #[track_caller]
-pub fn pg_log_append(line: Value) -> Value {
-    let line = to_str(line, "pg_log_append", "line");
+pub fn pg_log_append(line: std::sync::Arc<str>) -> Value {
+    let line = line.to_string();
     let mut c = conn().lock().unwrap();
     c.execute("INSERT INTO gcore_log(line) VALUES ($1)", &[&line])
         .unwrap_or_else(|e| panic!("pg_log_append: {e}"));
@@ -334,8 +304,8 @@ pub fn pg_anchor_get(_u: Value) -> Value {
 /// `pg_anchor_set(value: Text) -> Unit` — commit the anchor (single-row
 /// upsert on key 'anchor').
 #[track_caller]
-pub fn pg_anchor_set(value: Value) -> Value {
-    let value = to_str(value, "pg_anchor_set", "value");
+pub fn pg_anchor_set(value: std::sync::Arc<str>) -> Value {
+    let value = value.to_string();
     let mut c = conn().lock().unwrap();
     c.execute(
         "INSERT INTO gcore_anchor(k, v) VALUES ('anchor', $1) \
@@ -356,12 +326,8 @@ mod tests {
     // Must be run from an account with create-database rights (chris).
     #[test]
     fn round_trips() {
-        let a1 = Value::Str(intern_str("sha256:aa"));
-        let hello = Value::Str(intern_str("hello"));
-        let res = pg_bytes_put(Value::Tuple(vec![
-            a1.clone(),
-            text_to_bytes_for_test(hello),
-        ]));
+        let a1 = intern_str("sha256:aa");
+        let res = pg_bytes_put(a1.clone(), b"hello".to_vec());
         assert_eq!(res, Value::Unit);
 
         let got = pg_bytes_get(a1.clone());
@@ -371,46 +337,39 @@ mod tests {
         }
 
         // absent -> empty Bytes (the seam's miss convention)
-        match pg_bytes_get(Value::Str(intern_str("sha256:nope"))) {
+        match pg_bytes_get(intern_str("sha256:nope")) {
             Value::Bytes(b) => assert!(b.is_empty()),
             other => panic!("expected empty Bytes, got {:?}", other),
         }
 
         // log append is ordered and byte-faithful
-        assert_eq!(pg_log_append(Value::Str(intern_str("L1\n"))), Value::Unit);
-        assert_eq!(pg_log_append(Value::Str(intern_str("L2\n"))), Value::Unit);
+        assert_eq!(pg_log_append(intern_str("L1\n")), Value::Unit);
+        assert_eq!(pg_log_append(intern_str("L2\n")), Value::Unit);
         assert_eq!(
             pg_log_scan(Value::Unit),
             Value::Str(intern_str("L1\nL2\n"))
         );
 
         // anchor upsert: set, read back, overwrite
-        assert_eq!(pg_anchor_set(Value::Str(intern_str("abc\n"))), Value::Unit);
+        assert_eq!(pg_anchor_set(intern_str("abc\n")), Value::Unit);
         assert_eq!(pg_anchor_get(Value::Unit), Value::Str(intern_str("abc\n")));
-        assert_eq!(pg_anchor_set(Value::Str(intern_str("def\n"))), Value::Unit);
+        assert_eq!(pg_anchor_set(intern_str("def\n")), Value::Unit);
         assert_eq!(pg_anchor_get(Value::Unit), Value::Str(intern_str("def\n")));
 
         // block put: two objects from one block via index lines
         let block = b"AAAthequickBBBbrownfox".to_vec();
         let index = "sha256:x\t3\t8\nsha256:y\t14\t8\n";
         assert_eq!(
-            pg_obj_block_put(Value::Tuple(vec![
-                Value::Bytes(block),
-                Value::Str(intern_str(index)),
-            ])),
+            pg_obj_block_put(block, intern_str(index)),
             Value::Unit
         );
-        match pg_bytes_get(Value::Str(intern_str("sha256:x"))) {
+        match pg_bytes_get(intern_str("sha256:x")) {
             Value::Bytes(b) => assert_eq!(b, b"thequick"),
             other => panic!("expected Bytes, got {:?}", other),
         }
-        match pg_bytes_get(Value::Str(intern_str("sha256:y"))) {
+        match pg_bytes_get(intern_str("sha256:y")) {
             Value::Bytes(b) => assert_eq!(b, b"brownfox"),
             other => panic!("expected Bytes, got {:?}", other),
         }
-    }
-
-    fn text_to_bytes_for_test(v: Value) -> Value {
-        super::super::bytes_io::text_to_bytes(v)
     }
 }

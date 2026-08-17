@@ -43,31 +43,31 @@ fn with_registry<F: FnOnce()>(f: F) {
 #[test]
 fn test_int_mod_basic() {
     setup();
-    assert_eq!(arith::int_mod(t2(Value::Int(10), Value::Int(3))), Value::Int(1));
+    assert_eq!(arith::int_mod(10, 3), Value::Int(1));
 }
 
 #[test]
 fn test_int_mod_exact_divisor() {
     setup();
-    assert_eq!(arith::int_mod(t2(Value::Int(9), Value::Int(3))), Value::Int(0));
+    assert_eq!(arith::int_mod(9, 3), Value::Int(0));
 }
 
 #[test]
 fn test_int_mod_negative_dividend() {
     setup();
-    assert_eq!(arith::int_mod(t2(Value::Int(-7), Value::Int(3))), Value::Int(-1));
+    assert_eq!(arith::int_mod(-7, 3), Value::Int(-1));
 }
 
 #[test]
 fn test_int_eq_true() {
     setup();
-    assert_eq!(arith::int_eq(t2(Value::Int(42), Value::Int(42))), Value::Bool(true));
+    assert_eq!(arith::int_eq(42, 42), Value::Bool(true));
 }
 
 #[test]
 fn test_int_eq_false() {
     setup();
-    assert_eq!(arith::int_eq(t2(Value::Int(1), Value::Int(2))), Value::Bool(false));
+    assert_eq!(arith::int_eq(1, 2), Value::Bool(false));
 }
 
 #[test]
@@ -125,29 +125,29 @@ fn test_float_ordered_compares() {
 #[test]
 fn test_text_ordered_compares() {
     setup();
-    let a = || Value::Str(intern_str("apple"));
-    let b = || Value::Str(intern_str("banana"));
-    assert_eq!(str_ops::text_lt(t2(a(), b())), Value::Bool(true));
-    assert_eq!(str_ops::text_lt(t2(b(), a())), Value::Bool(false));
-    assert_eq!(str_ops::text_lte(t2(a(), a())), Value::Bool(true));
-    assert_eq!(str_ops::text_gt(t2(b(), a())), Value::Bool(true));
-    assert_eq!(str_ops::text_gte(t2(a(), a())), Value::Bool(true));
-    assert_eq!(str_ops::text_gte(t2(a(), b())), Value::Bool(false));
+    let a = || intern_str("apple");
+    let b = || intern_str("banana");
+    assert_eq!(str_ops::text_lt(a(), b()), Value::Bool(true));
+    assert_eq!(str_ops::text_lt(b(), a()), Value::Bool(false));
+    assert_eq!(str_ops::text_lte(a(), a()), Value::Bool(true));
+    assert_eq!(str_ops::text_gt(b(), a()), Value::Bool(true));
+    assert_eq!(str_ops::text_gte(a(), a()), Value::Bool(true));
+    assert_eq!(str_ops::text_gte(a(), b()), Value::Bool(false));
 }
 
 #[test]
 fn test_str_ordered_compare_aliases_match_text() {
     setup();
-    let a = || Value::Str(intern_str("apple"));
-    let b = || Value::Str(intern_str("banana"));
+    let a = || intern_str("apple");
+    let b = || intern_str("banana");
     // str_* aliases must be byte-identical to the canonical text_* fns.
-    assert_eq!(str_ops::str_lt(t2(a(), b())),  str_ops::text_lt(t2(a(), b())));
-    assert_eq!(str_ops::str_lte(t2(a(), a())), str_ops::text_lte(t2(a(), a())));
-    assert_eq!(str_ops::str_gt(t2(b(), a())),  str_ops::text_gt(t2(b(), a())));
-    assert_eq!(str_ops::str_gte(t2(a(), b())), str_ops::text_gte(t2(a(), b())));
+    assert_eq!(str_ops::str_lt(a(), b()),  str_ops::text_lt(a(), b()));
+    assert_eq!(str_ops::str_lte(a(), a()), str_ops::text_lte(a(), a()));
+    assert_eq!(str_ops::str_gt(b(), a()),  str_ops::text_gt(b(), a()));
+    assert_eq!(str_ops::str_gte(a(), b()), str_ops::text_gte(a(), b()));
     // And correct on their own: apple < banana.
-    assert_eq!(str_ops::str_lt(t2(a(), b())), Value::Bool(true));
-    assert_eq!(str_ops::str_gt(t2(a(), b())), Value::Bool(false));
+    assert_eq!(str_ops::str_lt(a(), b()), Value::Bool(true));
+    assert_eq!(str_ops::str_gt(a(), b()), Value::Bool(false));
 }
 
 #[test]
@@ -177,19 +177,19 @@ fn test_seq_unit_plain_unit() {
 #[test]
 fn test_int_abs_positive() {
     setup();
-    assert_eq!(arith::int_abs(Value::Int(5)), Value::Int(5));
+    assert_eq!(arith::int_abs(5), Value::Int(5));
 }
 
 #[test]
 fn test_int_abs_negative() {
     setup();
-    assert_eq!(arith::int_abs(Value::Int(-7)), Value::Int(7));
+    assert_eq!(arith::int_abs(-7), Value::Int(7));
 }
 
 #[test]
 fn test_int_abs_zero() {
     setup();
-    assert_eq!(arith::int_abs(Value::Int(0)), Value::Int(0));
+    assert_eq!(arith::int_abs(0), Value::Int(0));
 }
 
 // ── str_ops — untested functions ──────────────────────────────────────────────
@@ -197,116 +197,116 @@ fn test_int_abs_zero() {
 #[test]
 fn test_str_char_code_ascii() {
     setup();
-    assert_eq!(str_ops::str_char_code(t2(s("A"), Value::Int(0))), Value::Int(65));
+    assert_eq!(str_ops::str_char_code(intern_str("A"), 0), Value::Int(65));
 }
 
 #[test]
 fn test_str_char_code_unicode() {
     setup();
     let expected = 'é' as i64;
-    assert_eq!(str_ops::str_char_code(t2(s("é"), Value::Int(0))), Value::Int(expected));
+    assert_eq!(str_ops::str_char_code(intern_str("é"), 0), Value::Int(expected));
 }
 
 #[test]
 fn test_str_slice_mid() {
     setup();
-    assert_eq!(str_ops::str_slice(t3(s("hello"), Value::Int(1), Value::Int(4))), s("ell"));
+    assert_eq!(str_ops::str_slice(intern_str("hello"), 1, 4), s("ell"));
 }
 
 #[test]
 fn test_str_slice_clamps_to_len() {
     setup();
-    assert_eq!(str_ops::str_slice(t3(s("hi"), Value::Int(0), Value::Int(100))), s("hi"));
+    assert_eq!(str_ops::str_slice(intern_str("hi"), 0, 100), s("hi"));
 }
 
 #[test]
 fn test_str_slice_empty_range() {
     setup();
-    assert_eq!(str_ops::str_slice(t3(s("hello"), Value::Int(2), Value::Int(2))), s(""));
+    assert_eq!(str_ops::str_slice(intern_str("hello"), 2, 2), s(""));
 }
 
 #[test]
 fn test_str_ends_with_true() {
     setup();
-    assert_eq!(str_ops::str_ends_with(t2(s("hello"), s("llo"))), Value::Bool(true));
+    assert_eq!(str_ops::str_ends_with(intern_str("hello"), intern_str("llo")), Value::Bool(true));
 }
 
 #[test]
 fn test_str_ends_with_false() {
     setup();
-    assert_eq!(str_ops::str_ends_with(t2(s("hello"), s("hel"))), Value::Bool(false));
+    assert_eq!(str_ops::str_ends_with(intern_str("hello"), intern_str("hel")), Value::Bool(false));
 }
 
 #[test]
 fn test_str_ends_with_empty_suffix() {
     setup();
-    assert_eq!(str_ops::str_ends_with(t2(s("hello"), s(""))), Value::Bool(true));
+    assert_eq!(str_ops::str_ends_with(intern_str("hello"), intern_str("")), Value::Bool(true));
 }
 
 #[test]
 fn test_str_trim_both_sides() {
     setup();
-    assert_eq!(str_ops::str_trim(s("  hello  ")), s("hello"));
+    assert_eq!(str_ops::str_trim(intern_str("  hello  ")), s("hello"));
 }
 
 #[test]
 fn test_str_trim_no_whitespace() {
     setup();
-    assert_eq!(str_ops::str_trim(s("clean")), s("clean"));
+    assert_eq!(str_ops::str_trim(intern_str("clean")), s("clean"));
 }
 
 #[test]
 fn test_str_trim_only_whitespace() {
     setup();
-    assert_eq!(str_ops::str_trim(s("   ")), s(""));
+    assert_eq!(str_ops::str_trim(intern_str("   ")), s(""));
 }
 
 #[test]
 fn test_str_contains_true() {
     setup();
-    assert_eq!(str_ops::str_contains(t2(s("foobar"), s("oba"))), Value::Bool(true));
+    assert_eq!(str_ops::str_contains(intern_str("foobar"), intern_str("oba")), Value::Bool(true));
 }
 
 #[test]
 fn test_str_contains_false() {
     setup();
-    assert_eq!(str_ops::str_contains(t2(s("foobar"), s("baz"))), Value::Bool(false));
+    assert_eq!(str_ops::str_contains(intern_str("foobar"), intern_str("baz")), Value::Bool(false));
 }
 
 #[test]
 fn test_str_contains_empty_needle() {
     setup();
-    assert_eq!(str_ops::str_contains(t2(s("anything"), s(""))), Value::Bool(true));
+    assert_eq!(str_ops::str_contains(intern_str("anything"), intern_str("")), Value::Bool(true));
 }
 
 #[test]
 fn test_str_index_of_found() {
     setup();
-    assert_eq!(str_ops::str_index_of(t2(s("hello"), s("ll"))), Value::Int(2));
+    assert_eq!(str_ops::str_index_of(intern_str("hello"), intern_str("ll")), Value::Int(2));
 }
 
 #[test]
 fn test_str_index_of_not_found() {
     setup();
-    assert_eq!(str_ops::str_index_of(t2(s("hello"), s("xyz"))), Value::Int(-1));
+    assert_eq!(str_ops::str_index_of(intern_str("hello"), intern_str("xyz")), Value::Int(-1));
 }
 
 #[test]
 fn test_str_index_of_at_start() {
     setup();
-    assert_eq!(str_ops::str_index_of(t2(s("hello"), s("he"))), Value::Int(0));
+    assert_eq!(str_ops::str_index_of(intern_str("hello"), intern_str("he")), Value::Int(0));
 }
 
 #[test]
 fn test_chr_ascii() {
     setup();
-    assert_eq!(str_ops::chr(Value::Int(65)), s("A"));
+    assert_eq!(str_ops::chr(65), s("A"));
 }
 
 #[test]
 fn test_chr_unicode() {
     setup();
-    assert_eq!(str_ops::chr(Value::Int('é' as i64)), s("é"));
+    assert_eq!(str_ops::chr('é' as i64), s("é"));
 }
 
 // ── Fix-4: chr(Int(10)) produces a real newline (0x0A), not backslash-n ──────
@@ -317,7 +317,7 @@ fn test_chr_unicode() {
 #[test]
 fn test_chr_newline_is_0x0a() {
     setup();
-    let nl = str_ops::chr(Value::Int(10));
+    let nl = str_ops::chr(10);
     match &nl {
         Value::Str(h) => {
             let text = axis_codegen_bridge::runtime::value::get_str(h);
@@ -332,7 +332,7 @@ fn test_chr_newline_is_0x0a() {
 #[test]
 fn test_chr_tab_is_0x09() {
     setup();
-    let tab = str_ops::chr(Value::Int(9));
+    let tab = str_ops::chr(9);
     match &tab {
         Value::Str(h) => {
             let text = axis_codegen_bridge::runtime::value::get_str(h);
@@ -345,7 +345,7 @@ fn test_chr_tab_is_0x09() {
 #[test]
 fn test_chr_newline_concat_roundtrip() {
     setup();
-    let nl  = str_ops::chr(Value::Int(10));
+    let nl  = str_ops::chr(10);
     let ab  = str_ops::str_concat(s("a").as_text(), nl.as_text());
     match &ab {
         Value::Str(h) => {
@@ -361,13 +361,13 @@ fn test_chr_newline_concat_roundtrip() {
 #[test]
 fn test_bool_to_str_true() {
     setup();
-    assert_eq!(str_ops::bool_to_str(Value::Bool(true)), s("true"));
+    assert_eq!(str_ops::bool_to_str(true), s("true"));
 }
 
 #[test]
 fn test_bool_to_str_false() {
     setup();
-    assert_eq!(str_ops::bool_to_str(Value::Bool(false)), s("false"));
+    assert_eq!(str_ops::bool_to_str(false), s("false"));
 }
 
 // ── text_eq / text_lt (axis.axreg canonical names) ───────────────────────────
@@ -375,31 +375,31 @@ fn test_bool_to_str_false() {
 #[test]
 fn test_text_eq_equal() {
     setup();
-    assert_eq!(str_ops::text_eq(t2(s("abc"), s("abc"))), Value::Bool(true));
+    assert_eq!(str_ops::text_eq(intern_str("abc"), intern_str("abc")), Value::Bool(true));
 }
 
 #[test]
 fn test_text_eq_not_equal() {
     setup();
-    assert_eq!(str_ops::text_eq(t2(s("abc"), s("abd"))), Value::Bool(false));
+    assert_eq!(str_ops::text_eq(intern_str("abc"), intern_str("abd")), Value::Bool(false));
 }
 
 #[test]
 fn test_text_lt_less() {
     setup();
-    assert_eq!(str_ops::text_lt(t2(s("abc"), s("abd"))), Value::Bool(true));
+    assert_eq!(str_ops::text_lt(intern_str("abc"), intern_str("abd")), Value::Bool(true));
 }
 
 #[test]
 fn test_text_lt_equal() {
     setup();
-    assert_eq!(str_ops::text_lt(t2(s("abc"), s("abc"))), Value::Bool(false));
+    assert_eq!(str_ops::text_lt(intern_str("abc"), intern_str("abc")), Value::Bool(false));
 }
 
 #[test]
 fn test_text_lt_greater() {
     setup();
-    assert_eq!(str_ops::text_lt(t2(s("abd"), s("abc"))), Value::Bool(false));
+    assert_eq!(str_ops::text_lt(intern_str("abd"), intern_str("abc")), Value::Bool(false));
 }
 
 // ── list — untested functions ─────────────────────────────────────────────────
@@ -409,7 +409,7 @@ fn test_list_concat_two_non_empty() {
     setup();
     let a = Value::List(vec![Value::Int(1), Value::Int(2)]);
     let b = Value::List(vec![Value::Int(3), Value::Int(4)]);
-    let result = list::list_concat(t2(a, b));
+    let result = list::list_concat(a, b);
     assert_eq!(result, Value::List(vec![
         Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4),
     ]));
@@ -418,20 +418,20 @@ fn test_list_concat_two_non_empty() {
 #[test]
 fn test_list_concat_left_empty() {
     setup();
-    let result = list::list_concat(t2(
+    let result = list::list_concat(
         Value::List(vec![]),
         Value::List(vec![Value::Int(1)]),
-    ));
+    );
     assert_eq!(result, Value::List(vec![Value::Int(1)]));
 }
 
 #[test]
 fn test_list_concat_right_empty() {
     setup();
-    let result = list::list_concat(t2(
+    let result = list::list_concat(
         Value::List(vec![Value::Int(1)]),
         Value::List(vec![]),
-    ));
+    );
     assert_eq!(result, Value::List(vec![Value::Int(1)]));
 }
 
@@ -441,7 +441,7 @@ fn test_list_str_len_lte_if_some_within_threshold() {
     let lst = Value::List(vec![s("hi"), s("world")]);
     // "hi" has len 2, threshold 3 → 1
     assert_eq!(
-        list::list_str_len_lte_if_some(t3(lst, Value::Int(0), Value::Int(3))),
+        list::list_str_len_lte_if_some(lst, 0, 3),
         Value::Int(1)
     );
 }
@@ -452,7 +452,7 @@ fn test_list_str_len_lte_if_some_exceeds_threshold() {
     let lst = Value::List(vec![s("hello")]);
     // "hello" has len 5, threshold 3 → 0
     assert_eq!(
-        list::list_str_len_lte_if_some(t3(lst, Value::Int(0), Value::Int(3))),
+        list::list_str_len_lte_if_some(lst, 0, 3),
         Value::Int(0)
     );
 }
@@ -463,7 +463,7 @@ fn test_list_str_len_lte_if_some_oob_index() {
     let lst = Value::List(vec![s("x")]);
     // index 5 is out of bounds → 0
     assert_eq!(
-        list::list_str_len_lte_if_some(t3(lst, Value::Int(5), Value::Int(10))),
+        list::list_str_len_lte_if_some(lst, 5, 10),
         Value::Int(0)
     );
 }
@@ -474,7 +474,7 @@ fn test_list_str_len_lte_if_some_exact_threshold() {
     let lst = Value::List(vec![s("abc")]);
     // "abc" has len 3, threshold 3 → 1 (≤ is inclusive)
     assert_eq!(
-        list::list_str_len_lte_if_some(t3(lst, Value::Int(0), Value::Int(3))),
+        list::list_str_len_lte_if_some(lst, 0, 3),
         Value::Int(1)
     );
 }
@@ -484,21 +484,21 @@ fn test_list_get_println_if_some_in_bounds() {
     setup();
     let lst = Value::List(vec![Value::Int(42)]);
     // prints "42" to stdout, returns Unit
-    assert_eq!(list::list_get_println_if_some(t2(lst, Value::Int(0))), Value::Unit);
+    assert_eq!(list::list_get_println_if_some(lst, 0), Value::Unit);
 }
 
 #[test]
 fn test_list_get_println_if_some_oob() {
     setup();
     let lst = Value::List(vec![Value::Int(1)]);
-    assert_eq!(list::list_get_println_if_some(t2(lst, Value::Int(99))), Value::Unit);
+    assert_eq!(list::list_get_println_if_some(lst, 99), Value::Unit);
 }
 
 #[test]
 fn test_list_get_println_if_some_negative_index() {
     setup();
     let lst = Value::List(vec![Value::Int(1)]);
-    assert_eq!(list::list_get_println_if_some(t2(lst, Value::Int(-1))), Value::Unit);
+    assert_eq!(list::list_get_println_if_some(lst, -1), Value::Unit);
 }
 
 // ── registry ──────────────────────────────────────────────────────────────────

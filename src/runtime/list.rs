@@ -13,17 +13,14 @@ pub fn list_make(args: Value) -> Value {
 }
 
 #[track_caller]
-pub fn list_cons(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => match &es[1] {
-            Value::List(tail) => {
-                let mut v = vec![es[0].clone()];
-                v.extend(tail.clone());
-                Value::List(v)
-            }
-            _ => Value::List(vec![es[0].clone()]),
-        },
-        _ => panic!("list_cons: expected Tuple(elem, List)"),
+pub fn list_cons(elem: Value, tail: Value) -> Value {
+    match tail {
+        Value::List(tail) => {
+            let mut v = vec![elem];
+            v.extend(tail);
+            Value::List(v)
+        }
+        _ => Value::List(vec![elem]),
     }
 }
 
@@ -44,20 +41,14 @@ pub fn list_get(list: Value, idx: i64) -> Value {
 }
 
 #[track_caller]
-pub fn list_get_at(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => {
-            let idx = match &es[1] { Value::Int(n) => *n, _ => panic!("list_get_at: expected Int index") };
-            if idx < 0 { return super::option::option_none(); }
-            match &es[0] {
-                Value::List(elems) => match elems.get(idx as usize) {
-                    Some(v) => super::option::option_some(v.clone()),
-                    None    => super::option::option_none(),
-                },
-                _ => panic!("list_get_at: expected List"),
-            }
-        }
-        _ => panic!("list_get_at: expected Tuple(List, Int)"),
+pub fn list_get_at(list: Value, idx: i64) -> Value {
+    if idx < 0 { return super::option::option_none(); }
+    match list {
+        Value::List(elems) => match elems.get(idx as usize) {
+            Some(v) => super::option::option_some(v.clone()),
+            None    => super::option::option_none(),
+        },
+        _ => panic!("list_get_at: expected List"),
     }
 }
 
@@ -78,17 +69,13 @@ pub fn list_append(list: Value, elem: Value) -> Value {
 }
 
 #[track_caller]
-pub fn list_concat(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-            (Value::List(a), Value::List(b)) => {
-                let mut v = a.clone();
-                v.extend(b.clone());
-                Value::List(v)
-            }
-            _ => panic!("list_concat: expected two Lists"),
-        },
-        _ => panic!("list_concat: expected Tuple(List, List)"),
+pub fn list_concat(a: Value, b: Value) -> Value {
+    match (a, b) {
+        (Value::List(mut a), Value::List(b)) => {
+            a.extend(b);
+            Value::List(a)
+        }
+        _ => panic!("list_concat: expected two Lists"),
     }
 }
 
@@ -143,25 +130,18 @@ pub fn list_of_3(a: Value, b: Value, c: Value) -> Value {
 
 /// Returns 1 if list[index] exists and str_len(list[index]) ≤ max_len, else 0. OOB-safe.
 #[track_caller]
-pub fn list_str_len_lte_if_some(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 3 => {
-            let idx = match &es[1] { Value::Int(n) => *n, _ => panic!("list_str_len_lte_if_some: expected Int index") };
-            let max_len = match &es[2] { Value::Int(n) => *n, _ => panic!("list_str_len_lte_if_some: expected Int max_len") };
-            if idx < 0 { return Value::Int(0); }
-            match &es[0] {
-                Value::List(elems) => match elems.get(idx as usize) {
-                    Some(Value::Str(s)) => {
-                        let len = get_str(s).chars().count() as i64;
-                        Value::Int(if len <= max_len { 1 } else { 0 })
-                    }
-                    Some(_) => panic!("list_str_len_lte_if_some: list element is not Str"),
-                    None    => Value::Int(0),
-                },
-                _ => panic!("list_str_len_lte_if_some: expected List"),
+pub fn list_str_len_lte_if_some(list: Value, idx: i64, max_len: i64) -> Value {
+    if idx < 0 { return Value::Int(0); }
+    match list {
+        Value::List(elems) => match elems.get(idx as usize) {
+            Some(Value::Str(s)) => {
+                let len = get_str(s).chars().count() as i64;
+                Value::Int(if len <= max_len { 1 } else { 0 })
             }
-        }
-        _ => panic!("list_str_len_lte_if_some: expected Tuple(List, Int, Int)"),
+            Some(_) => panic!("list_str_len_lte_if_some: list element is not Str"),
+            None    => Value::Int(0),
+        },
+        _ => panic!("list_str_len_lte_if_some: expected List"),
     }
 }
 
@@ -169,19 +149,13 @@ pub fn list_str_len_lte_if_some(args: Value) -> Value {
 /// Used by the unrolled forEach loop in 0.5 bundles where CIf branches are
 /// evaluated eagerly — inlining the None check into Rust avoids option_unwrap(None).
 #[track_caller]
-pub fn list_get_println_if_some(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => {
-            let idx = match &es[1] { Value::Int(n) => *n, _ => panic!("list_get_println_if_some: expected Int index") };
-            if idx < 0 { return Value::Unit; }
-            match &es[0] {
-                Value::List(elems) => match elems.get(idx as usize) {
-                    Some(v) => super::io::io_println(v.clone()),
-                    None    => Value::Unit,
-                },
-                _ => panic!("list_get_println_if_some: expected List"),
-            }
-        }
-        _ => panic!("list_get_println_if_some: expected Tuple(List, Int)"),
+pub fn list_get_println_if_some(list: Value, idx: i64) -> Value {
+    if idx < 0 { return Value::Unit; }
+    match list {
+        Value::List(elems) => match elems.get(idx as usize) {
+            Some(v) => super::io::io_println(v.clone()),
+            None    => Value::Unit,
+        },
+        _ => panic!("list_get_println_if_some: expected List"),
     }
 }

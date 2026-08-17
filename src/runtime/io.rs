@@ -48,12 +48,9 @@ pub fn io_read_line(_: Value) -> Value {
 }
 
 #[track_caller]
-pub fn fs_read_text(path: Value) -> Value {
-    let path_str = match path {
-        Value::Str(h) => get_str(h),
-        _ => panic!("fs_read_text: expected Str path"),
-    };
-    match std::fs::read_to_string(&path_str) {
+pub fn fs_read_text(path: std::sync::Arc<str>) -> Value {
+    let path_str = path.as_ref();
+    match std::fs::read_to_string(path_str) {
         Ok(content) => Value::Str(intern_str(&content)),
         Err(e) => panic!("fs_read_text({}): {}", path_str, e),
     }
@@ -68,12 +65,8 @@ pub fn fs_read_text(path: Value) -> Value {
 /// append-only `.log` (lib/resolve_name.m1), replacing the read of a
 /// separately-maintained `.current` cache file.
 #[track_caller]
-pub fn fs_read_last_line(path: Value) -> Value {
-    let path_str = match path {
-        Value::Str(h) => get_str(h),
-        _ => panic!("fs_read_last_line: expected Str path"),
-    };
-    let content = match std::fs::read_to_string(&path_str) {
+pub fn fs_read_last_line(path: std::sync::Arc<str>) -> Value {
+    let content = match std::fs::read_to_string(path.as_ref()) {
         Ok(c) => c,
         Err(_) => return Value::Str(intern_str("")),
     };
@@ -82,43 +75,23 @@ pub fn fs_read_last_line(path: Value) -> Value {
 }
 
 #[track_caller]
-pub fn fs_write_text(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-            (Value::Str(path_h), Value::Str(content_h)) => {
-                let path    = get_str(path_h);
-                let content = get_str(content_h);
-                if let Err(e) = std::fs::write(&path, &content) {
-                    panic!("fs_write_text({}): {}", path, e);
-                }
-                Value::Unit
-            }
-            _ => panic!("fs_write_text: expected Tuple(Str, Str)"),
-        },
-        _ => panic!("fs_write_text: expected Tuple(path, content)"),
+pub fn fs_write_text(path: std::sync::Arc<str>, content: std::sync::Arc<str>) -> Value {
+    if let Err(e) = std::fs::write(path.as_ref(), content.as_ref()) {
+        panic!("fs_write_text({}): {}", path, e);
     }
+    Value::Unit
 }
 
 #[track_caller]
-pub fn fs_append_text(args: Value) -> Value {
+pub fn fs_append_text(path: std::sync::Arc<str>, content: std::sync::Arc<str>) -> Value {
     use std::io::Write as IoWrite;
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-            (Value::Str(path_h), Value::Str(content_h)) => {
-                let path    = get_str(path_h);
-                let content = get_str(content_h);
-                let result = std::fs::OpenOptions::new()
-                    .append(true).create(true).open(&path)
-                    .and_then(|mut f| f.write_all(content.as_bytes()));
-                if let Err(e) = result {
-                    panic!("fs_append_text({}): {}", path, e);
-                }
-                Value::Unit
-            }
-            _ => panic!("fs_append_text: expected Tuple(Str, Str)"),
-        },
-        _ => panic!("fs_append_text: expected Tuple(path, content)"),
+    let result = std::fs::OpenOptions::new()
+        .append(true).create(true).open(path.as_ref())
+        .and_then(|mut f| f.write_all(content.as_bytes()));
+    if let Err(e) = result {
+        panic!("fs_append_text({}): {}", path, e);
     }
+    Value::Unit
 }
 
 // `fs_append_text_durable(path: Text, content: Text) -> Unit` —
@@ -130,22 +103,11 @@ pub fn fs_append_text(args: Value) -> Value {
 // bytes_io.rs::write_durable's parent-dir fsync, minus the temp+rename
 // since an append target is never atomically replaced).
 #[track_caller]
-pub fn fs_append_text_durable(args: Value) -> Value {
-    use std::io::Write as IoWrite;
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-            (Value::Str(path_h), Value::Str(content_h)) => {
-                let path    = get_str(path_h);
-                let content = get_str(content_h);
-                if let Err(e) = append_durable(&path, content.as_bytes()) {
-                    panic!("fs_append_text_durable({}): {}", path, e);
-                }
-                Value::Unit
-            }
-            _ => panic!("fs_append_text_durable: expected Tuple(Str, Str)"),
-        },
-        _ => panic!("fs_append_text_durable: expected Tuple(path, content)"),
+pub fn fs_append_text_durable(path: std::sync::Arc<str>, content: std::sync::Arc<str>) -> Value {
+    if let Err(e) = append_durable(path.as_ref(), content.as_bytes()) {
+        panic!("fs_append_text_durable({}): {}", path, e);
     }
+    Value::Unit
 }
 
 fn append_durable(path: &str, content: &[u8]) -> std::io::Result<()> {
@@ -164,21 +126,14 @@ fn append_durable(path: &str, content: &[u8]) -> std::io::Result<()> {
 }
 
 #[track_caller]
-pub fn fs_file_exists(path: Value) -> Value {
-    let path_str = match path {
-        Value::Str(h) => get_str(h),
-        _ => panic!("fs_file_exists: expected Str path"),
-    };
-    Value::Bool(std::path::Path::new(&path_str).exists())
+pub fn fs_file_exists(path: std::sync::Arc<str>) -> Value {
+    Value::Bool(std::path::Path::new(path.as_ref()).exists())
 }
 
 #[track_caller]
-pub fn fs_list_dir(path: Value) -> Value {
-    let path_str = match path {
-        Value::Str(h) => get_str(h),
-        _ => panic!("fs_list_dir: expected Str path"),
-    };
-    let mut entries: Vec<Value> = std::fs::read_dir(&path_str)
+pub fn fs_list_dir(path: std::sync::Arc<str>) -> Value {
+    let path_str = path.as_ref();
+    let mut entries: Vec<Value> = std::fs::read_dir(path_str)
         .unwrap_or_else(|e| panic!("fs_list_dir: {}", e))
         .filter_map(|e| e.ok())
         .map(|e| Value::Str(intern_str(&e.file_name().to_string_lossy())))

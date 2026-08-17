@@ -65,56 +65,6 @@ use super::value::Value;
 
 const ALIGN: usize = 8;
 
-fn unpack2(fn_name: &'static str, args: Value) -> (Value, Value) {
-    match args {
-        Value::Tuple(es) if es.len() == 2 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("{}: expected a 2-Tuple, got {:?}", fn_name, other),
-    }
-}
-
-fn unpack3(fn_name: &'static str, args: Value) -> (Value, Value, Value) {
-    match args {
-        Value::Tuple(es) if es.len() == 3 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("{}: expected a 3-Tuple, got {:?}", fn_name, other),
-    }
-}
-
-fn unpack5(fn_name: &'static str, args: Value) -> (Value, Value, Value, Value, Value) {
-    match args {
-        Value::Tuple(es) if es.len() == 5 => {
-            let mut it = es.into_iter();
-            (
-                it.next().unwrap(),
-                it.next().unwrap(),
-                it.next().unwrap(),
-                it.next().unwrap(),
-                it.next().unwrap(),
-            )
-        }
-        other => panic!("{}: expected a 5-Tuple, got {:?}", fn_name, other),
-    }
-}
-
-fn as_int(fn_name: &'static str, arg_ix: usize, v: Value) -> i64 {
-    match v {
-        Value::Int(n) => n,
-        other => panic!("{}: arg {} expected Int, got {:?}", fn_name, arg_ix, other),
-    }
-}
-
-fn as_bytes(fn_name: &'static str, arg_ix: usize, v: Value) -> Vec<u8> {
-    match v {
-        Value::Bytes(b) => b,
-        other => panic!("{}: arg {} expected Bytes, got {:?}", fn_name, arg_ix, other),
-    }
-}
-
 // ── cell_new_raw / cell_load_raw / cell_cas_raw ─────────────────────────────
 
 /// `cell_new_raw(initial: Int) -> Int`
@@ -145,8 +95,7 @@ pub fn cell_new_raw(initial: i64) -> Value {
 /// Caller must pass an `addr` that is actually a live cell — dereferencing a
 /// stale/bogus address is UB, not checked here.
 #[track_caller]
-pub fn cell_load_raw(args: Value) -> Value {
-    let addr = as_int("cell_load_raw", 0, args);
+pub fn cell_load_raw(addr: i64) -> Value {
     let cell = unsafe { &*(addr as *const AtomicI64) };
     Value::Int(cell.load(Ordering::SeqCst))
 }
@@ -218,11 +167,7 @@ pub fn mem_write_raw(ptr: i64, offset: i64, data: Vec<u8>) -> Value {
 /// verify the read range was actually written — both are caller obligations,
 /// see the module doc comment. Panics if `offset < 0 || length < 0`.
 #[track_caller]
-pub fn mem_read_raw(args: Value) -> Value {
-    let (ptr_v, offset_v, length_v) = unpack3("mem_read_raw", args);
-    let ptr = as_int("mem_read_raw", 0, ptr_v);
-    let offset = as_int("mem_read_raw", 1, offset_v);
-    let length = as_int("mem_read_raw", 2, length_v);
+pub fn mem_read_raw(ptr: i64, offset: i64, length: i64) -> Value {
     if offset < 0 || length < 0 {
         panic!(
             "mem_read_raw: offset and length must be >= 0, got offset={}, length={}",
@@ -244,10 +189,7 @@ pub fn mem_read_raw(args: Value) -> Value {
 /// per Rust's allocator contract. A mismatched capacity is undefined
 /// behavior, not a checked error.
 #[track_caller]
-pub fn mem_free_raw(args: Value) -> Value {
-    let (ptr_v, capacity_v) = unpack2("mem_free_raw", args);
-    let ptr = as_int("mem_free_raw", 0, ptr_v);
-    let capacity = as_int("mem_free_raw", 1, capacity_v);
+pub fn mem_free_raw(ptr: i64, capacity: i64) -> Value {
     let layout = Layout::from_size_align(capacity as usize, ALIGN)
         .unwrap_or_else(|e| panic!("mem_free_raw({}, {}): bad layout: {}", ptr, capacity, e));
     unsafe {
@@ -369,7 +311,7 @@ mod tests {
             _ => unreachable!(),
         };
         // Deliberately wrong: reserved at 16, freed as if it were 32.
-        mem_free_raw(tup(vec![i(ptr_n), i(32)]));
+        mem_free_raw(ptr_n, 32);
     }
 
     #[test]
@@ -392,10 +334,10 @@ mod tests {
             Value::Unit
         );
 
-        let read_back = mem_read_raw(tup(vec![i(ptr_n), i(0), i(5)]));
+        let read_back = mem_read_raw(ptr_n, 0, 5);
         assert_eq!(read_back, payload);
 
-        assert_eq!(mem_free_raw(tup(vec![i(ptr_n), i(16)])), Value::Unit);
+        assert_eq!(mem_free_raw(ptr_n, 16), Value::Unit);
     }
 
     #[test]
@@ -410,8 +352,8 @@ mod tests {
         };
         let payload = Value::Bytes(vec![9, 9, 9]);
         mem_write_raw(ptr_n, 10, payload.as_bytes());
-        assert_eq!(mem_read_raw(tup(vec![i(ptr_n), i(10), i(3)])), payload);
-        mem_free_raw(tup(vec![i(ptr_n), i(32)]));
+        assert_eq!(mem_read_raw(ptr_n, 10, 3), payload);
+        mem_free_raw(ptr_n, 32);
     }
 
     #[test]
@@ -451,7 +393,7 @@ mod tests {
             },
             _ => unreachable!(),
         };
-        mem_read_raw(tup(vec![i(ptr_n), i(0), i(-1)]));
+        mem_read_raw(ptr_n, 0, -1);
     }
 
     #[test]
@@ -460,15 +402,15 @@ mod tests {
             Value::Int(n) => n,
             other => panic!("expected Int, got {:?}", other),
         };
-        assert_eq!(cell_load_raw(i(addr)), i(42));
+        assert_eq!(cell_load_raw(addr), i(42));
 
         // CAS success: current value (42) matches expected.
         assert_eq!(cell_cas_raw(addr, 42, 100), Value::Bool(true));
-        assert_eq!(cell_load_raw(i(addr)), i(100));
+        assert_eq!(cell_load_raw(addr), i(100));
 
         // CAS failure: current value (100) does not match stale expected (42).
         assert_eq!(cell_cas_raw(addr, 42, 999), Value::Bool(false));
-        assert_eq!(cell_load_raw(i(addr)), i(100));
+        assert_eq!(cell_load_raw(addr), i(100));
     }
 
     /// Sanity precondition for the concurrency stress test in
@@ -505,7 +447,7 @@ mod tests {
             let (ptr_n, cell_addr) = h.join().unwrap();
             mem_ranges.push((ptr_n, ptr_n + 8));
             assert!(cell_addrs.insert(cell_addr), "duplicate cell address {}", cell_addr);
-            mem_free_raw(tup(vec![i(ptr_n), i(8)]));
+            mem_free_raw(ptr_n, 8);
         }
         mem_ranges.sort();
         for w in mem_ranges.windows(2) {

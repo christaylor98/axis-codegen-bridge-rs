@@ -73,10 +73,9 @@ fn reset_default_handlers() {
 
 /// `tty_raw_on(vtime_tenths: Int) -> Unit`
 #[track_caller]
-pub fn tty_raw_on(v: Value) -> Value {
-    let vtime = match v {
-        Value::Int(n) if (0..=255).contains(&n) => n as u8,
-        other => panic!("tty_raw_on: expected Int 0..=255, got {:?}", other),
+pub fn tty_raw_on(n: i64) -> Value {
+    let vtime = if (0..=255).contains(&n) { n as u8 } else {
+        panic!("tty_raw_on: expected Int 0..=255, got {}", n)
     };
     if RAW_ACTIVE.swap(true, Ordering::SeqCst) {
         panic!("tty_raw_on: already active (missing a tty_raw_off?)");

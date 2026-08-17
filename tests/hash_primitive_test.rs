@@ -74,7 +74,7 @@ fn t5_content_hash_deterministic() {
 #[test]
 fn t6_hash256_parse_accepts_valid_address() {
     let valid = format!("sha256:{}", "a".repeat(64));
-    let r = hash256_parse(Value::Str(intern_str(&valid)));
+    let r = hash256_parse(intern_str(&valid));
     assert_eq!(str_of(&r), valid);
 }
 
@@ -84,7 +84,7 @@ fn t6_hash256_parse_accepts_valid_address() {
 #[should_panic(expected = "hash256_parse: invalid input")]
 fn t7_hash256_parse_rejects_63_hex_chars() {
     let short = format!("sha256:{}", "a".repeat(63));
-    hash256_parse(Value::Str(intern_str(&short)));
+    hash256_parse(intern_str(&short));
 }
 
 // ── T8: missing prefix rejected ────────────────────────────────────────────
@@ -93,7 +93,7 @@ fn t7_hash256_parse_rejects_63_hex_chars() {
 #[should_panic(expected = "hash256_parse: invalid input")]
 fn t8_hash256_parse_rejects_missing_prefix() {
     let no_prefix = "a".repeat(64);
-    hash256_parse(Value::Str(intern_str(&no_prefix)));
+    hash256_parse(intern_str(&no_prefix));
 }
 
 // ── T9: 65-char hex rejected ───────────────────────────────────────────────
@@ -102,7 +102,7 @@ fn t8_hash256_parse_rejects_missing_prefix() {
 #[should_panic(expected = "hash256_parse: invalid input")]
 fn t9_hash256_parse_rejects_65_hex_chars() {
     let long = format!("sha256:{}", "a".repeat(65));
-    hash256_parse(Value::Str(intern_str(&long)));
+    hash256_parse(intern_str(&long));
 }
 
 // ── T10: non-hex char in body rejected ─────────────────────────────────────
@@ -112,7 +112,7 @@ fn t9_hash256_parse_rejects_65_hex_chars() {
 fn t10_hash256_parse_rejects_non_hex_chars_in_body() {
     // 63 'a' + one 'z' = 64 chars total, but 'z' is not hex.
     let bad = format!("sha256:{}z", "a".repeat(63));
-    hash256_parse(Value::Str(intern_str(&bad)));
+    hash256_parse(intern_str(&bad));
 }
 
 // ── T11: byte > 255 panics ─────────────────────────────────────────────────
@@ -142,9 +142,12 @@ fn t13_content_hash_rejects_non_list() {
 // ── T14: non-Text input to parse panics ────────────────────────────────────
 
 #[test]
-#[should_panic(expected = "UNKNOWN gate")]
+#[should_panic(expected = "expected Text, got")]
 fn t14_hash256_parse_rejects_non_text_input() {
-    hash256_parse(Value::Int(0));
+    // hash256_parse now takes a native Arc<str> directly — the type check
+    // that used to live in the body now lives in the call site's
+    // `.as_text()` accessor.
+    let _ = hash256_parse(Value::Int(0).as_text());
 }
 
 // ── T15: round-trip — content_hash output parses cleanly ───────────────────
@@ -152,6 +155,6 @@ fn t14_hash256_parse_rejects_non_text_input() {
 #[test]
 fn t15_content_hash_output_feeds_hash256_parse() {
     let addr = content_hash(Value::List(vec![Value::Int(1), Value::Int(2)]));
-    let parsed = hash256_parse(addr.clone());
+    let parsed = hash256_parse(addr.as_text());
     assert_eq!(parsed, addr);
 }

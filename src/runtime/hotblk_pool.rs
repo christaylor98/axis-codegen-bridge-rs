@@ -20,7 +20,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Condvar, Mutex, OnceLock};
 
-use super::value::{get_str, intern_str, Value};
+use super::value::{intern_str, Value};
 
 struct Pool {
     queue: Mutex<VecDeque<(i64, i64)>>,
@@ -121,34 +121,14 @@ pub(crate) fn pool_take(shard: &str) -> (i64, i64) {
 
 /// `hotblk_pool_put(shard: Text, ptr: Int, cell: Int) -> Unit`
 #[track_caller]
-pub fn hotblk_pool_put(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 3 => es,
-        other => panic!("hotblk_pool_put: expected Tuple(Text, Int, Int), got {:?}", other),
-    };
-    let shard = match &es[0] {
-        Value::Str(s) => get_str(s),
-        other => panic!("hotblk_pool_put: arg 0 expected Text, got {:?}", other),
-    };
-    let ptr = match &es[1] {
-        Value::Int(n) => *n,
-        other => panic!("hotblk_pool_put: arg 1 expected Int, got {:?}", other),
-    };
-    let cell = match &es[2] {
-        Value::Int(n) => *n,
-        other => panic!("hotblk_pool_put: arg 2 expected Int, got {:?}", other),
-    };
+pub fn hotblk_pool_put(shard: std::sync::Arc<str>, ptr: i64, cell: i64) -> Value {
     pool_put(&shard, ptr, cell);
     Value::Unit
 }
 
 /// `hotblk_pool_take(shard: Text) -> Text` — `"<ptr>\t<cell>"`.
 #[track_caller]
-pub fn hotblk_pool_take(arg: Value) -> Value {
-    let shard = match arg {
-        Value::Str(s) => get_str(&s),
-        other => panic!("hotblk_pool_take: expected Text shard, got {:?}", other),
-    };
+pub fn hotblk_pool_take(shard: std::sync::Arc<str>) -> Value {
     let (ptr, cell) = pool_take(&shard);
     Value::Str(intern_str(&format!("{}\t{}", ptr, cell)))
 }

@@ -84,18 +84,14 @@ fn scratch_root() -> std::path::PathBuf {
 }
 
 fn open(dir: &str, sla_us: i64, block_bytes: i64) -> i64 {
-    match slab_open(Value::Tuple(vec![
-        Value::Str(intern_str(dir)),
-        Value::Int(sla_us),
-        Value::Int(block_bytes),
-    ])) {
+    match slab_open(intern_str(dir), sla_us, block_bytes) {
         Value::Int(h) => h,
         other => panic!("slab_open returned {:?}", other),
     }
 }
 
 fn stat_field(h: i64, key: &str) -> i64 {
-    let s = match slab_stats(Value::Int(h)) {
+    let s = match slab_stats(h) {
         Value::Str(s) => get_str(&s),
         other => panic!("slab_stats returned {:?}", other),
     };
@@ -166,7 +162,7 @@ fn run_combo(root: &std::path::Path, tier: &'static str, sla_us: i64, load: usiz
         for i in 0..load {
             let row = synth_row(w * load + i);
             let t0 = Instant::now();
-            let off = slab_append(Value::Tuple(vec![Value::Int(h), Value::Bytes(row)]));
+            let off = slab_append(h, row);
             append_lat.push(t0.elapsed());
             match off {
                 Value::Int(_) => {}
@@ -177,7 +173,7 @@ fn run_combo(root: &std::path::Path, tier: &'static str, sla_us: i64, load: usiz
         }
         // Poll the tick until the sweep fires (gate makes extra calls free).
         loop {
-            match slab_tick(Value::Int(h)) {
+            match slab_tick(h) {
                 Value::Int(-1) => std::thread::sleep(poll),
                 Value::Int(_) => break,
                 other => panic!("slab_tick returned {:?}", other),
@@ -191,12 +187,12 @@ fn run_combo(root: &std::path::Path, tier: &'static str, sla_us: i64, load: usiz
 
     // End-of-stream: explicit seal (final fsync + hash) so the ledger and the
     // on-disk block set are complete for the checks below.
-    match slab_seal(Value::Int(h)) {
+    match slab_seal(h) {
         Value::Str(_) => {}
         other => panic!("slab_seal returned {:?}", other),
     }
 
-    let sealed_ledger = match slab_sealed(Value::Int(h)) {
+    let sealed_ledger = match slab_sealed(h) {
         Value::Str(s) => get_str(&s),
         other => panic!("slab_sealed returned {:?}", other),
     };
@@ -381,22 +377,19 @@ fn phase_a_parallel_shared_nothing() {
             let h = open(&dir, 5_000, 0);
             let t0 = Instant::now();
             for i in 0..rows_per_thread {
-                slab_append(Value::Tuple(vec![
-                    Value::Int(h),
-                    Value::Bytes(synth_row(i)),
-                ]));
+                slab_append(h, synth_row(i));
                 if i % 64 == 0 {
-                    slab_tick(Value::Int(h));
+                    slab_tick(h);
                 }
             }
             // final flush + seal
             loop {
-                match slab_tick(Value::Int(h)) {
+                match slab_tick(h) {
                     Value::Int(-1) => std::thread::sleep(Duration::from_micros(200)),
                     _ => break,
                 }
             }
-            slab_seal(Value::Int(h));
+            slab_seal(h);
             let secs = t0.elapsed().as_secs_f64();
             (stat_field(h, "data_fsyncs"), rows_per_thread as f64 / secs)
         }));
@@ -507,18 +500,18 @@ fn run_sweep_combo(
         joins.push(std::thread::spawn(move || {
             let h = open(&dir, sla_us, cap_bytes);
             for i in 0..rows_per_thread {
-                slab_append(Value::Tuple(vec![Value::Int(h), Value::Bytes(synth_row(i))]));
+                slab_append(h, synth_row(i));
                 if i % 64 == 0 {
-                    slab_tick(Value::Int(h));
+                    slab_tick(h);
                 }
             }
             loop {
-                match slab_tick(Value::Int(h)) {
+                match slab_tick(h) {
                     Value::Int(-1) => std::thread::sleep(Duration::from_micros(200)),
                     _ => break,
                 }
             }
-            slab_seal(Value::Int(h));
+            slab_seal(h);
             let fsyncs = stat_field(h, "data_fsyncs");
             let all = std::fs::read_dir(&dir).unwrap().count();
             let blocks = std::fs::read_dir(&dir)
@@ -791,7 +784,7 @@ fn run_ceiling_step_debug(
 
             for i in 0..rows_per_thread {
                 let a0 = Instant::now();
-                slab_append(Value::Tuple(vec![Value::Int(h), Value::Bytes(synth_row(i))]));
+                slab_append(h, synth_row(i));
                 let a_us = a0.elapsed().as_secs_f64() * 1e6;
                 append_calls += 1;
                 append_total_us += a_us;
@@ -800,7 +793,7 @@ fn run_ceiling_step_debug(
                 }
                 if i % 64 == 0 {
                     let tk0 = Instant::now();
-                    slab_tick(Value::Int(h));
+                    slab_tick(h);
                     let tk_us = tk0.elapsed().as_secs_f64() * 1e6;
                     let now_fsyncs = stat_field(h, "data_fsyncs");
                     if now_fsyncs > last_fsyncs {
@@ -824,7 +817,7 @@ fn run_ceiling_step_debug(
             let mut drain_flush_max_us = 0.0f64;
             loop {
                 let tk0 = Instant::now();
-                let res = slab_tick(Value::Int(h));
+                let res = slab_tick(h);
                 let tk_us = tk0.elapsed().as_secs_f64() * 1e6;
                 match res {
                     Value::Int(-1) => {
@@ -843,7 +836,7 @@ fn run_ceiling_step_debug(
                     }
                 }
             }
-            slab_seal(Value::Int(h));
+            slab_seal(h);
             let fsyncs = stat_field(h, "data_fsyncs");
             let thread_wall_us = thread_t0.elapsed().as_secs_f64() * 1e6;
 

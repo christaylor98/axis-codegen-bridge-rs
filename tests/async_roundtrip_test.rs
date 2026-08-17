@@ -35,11 +35,11 @@ fn process(v: &Value) -> Value {
         Value::Str(h) => Value::Int(get_str(h).chars().count() as i64),
         Value::List(es) if es.iter().all(|e| matches!(e, Value::List(_))) => {
             let mut total: i64 = 0;
-            for inner in es {
+            for inner in es.iter() {
                 if let Value::List(xs) = inner {
-                    for x in xs {
+                    for x in xs.iter() {
                         if let Value::Int(n) = x {
-                            total += n;
+                            total += *n;
                         }
                     }
                 }
@@ -72,7 +72,7 @@ fn pong_handler(msgs: Value) -> Value {
         other => panic!("pong_handler expected List, got {:?}", other),
     };
     let result = process(&payload);
-    channel_send(Value::Tuple(vec![Value::Str(intern_str("b2a")), result]));
+    channel_send(intern_str("b2a"), result);
     Value::Unit
 }
 
@@ -80,7 +80,7 @@ fn pong_handler(msgs: Value) -> Value {
 /// caller for verification.
 fn ping_handler(msgs: Value) -> Value {
     match msgs {
-        Value::List(mut es) => es.remove(0),
+        Value::List(es) => es[0].clone(),
         other => panic!("ping_handler expected List, got {:?}", other),
     }
 }
@@ -88,18 +88,18 @@ fn ping_handler(msgs: Value) -> Value {
 #[test]
 fn ping_pong_roundtrip_via_primitives() {
     let pong = std::thread::spawn(|| {
-        event_subscribe(Value::Str(intern_str("a2b")));
+        event_subscribe(intern_str("a2b"));
         for _ in 0..ROUNDS {
             wait(pong_handler);
         }
     });
 
     let ping = std::thread::spawn(|| {
-        event_subscribe(Value::Str(intern_str("b2a")));
+        event_subscribe(intern_str("b2a"));
         for round in 0..ROUNDS {
             let payload = make_payload(round);
             let expected = process(&payload);
-            channel_send(Value::Tuple(vec![Value::Str(intern_str("a2b")), payload]));
+            channel_send(intern_str("a2b"), payload);
             let got = wait(ping_handler);
             assert_eq!(
                 got,

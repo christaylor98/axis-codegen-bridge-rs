@@ -33,26 +33,8 @@ use super::value::{get_str, Value};
 /// discipline as the rest of the fs surface — surfaces to M1 as a process
 /// abort rather than a silent empty read).
 #[track_caller]
-pub fn fs_read_range(args: Value) -> Value {
-    let (path, offset, len) = match args {
-        Value::Tuple(es) if es.len() == 3 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("fs_read_range: expected Tuple(Text, Int, Int), got {:?}", other),
-    };
-    let path = match path {
-        Value::Str(h) => get_str(h),
-        other => panic!("fs_read_range: arg 0 expected Text, got {:?}", other),
-    };
-    let offset = match offset {
-        Value::Int(n) => n,
-        other => panic!("fs_read_range: arg 1 expected Int offset, got {:?}", other),
-    };
-    let len = match len {
-        Value::Int(n) => n,
-        other => panic!("fs_read_range: arg 2 expected Int len, got {:?}", other),
-    };
+pub fn fs_read_range(path: std::sync::Arc<str>, offset: i64, len: i64) -> Value {
+    let path = path.to_string();
     if offset < 0 || len < 0 {
         panic!("fs_read_range: negative offset={} or len={}", offset, len);
     }

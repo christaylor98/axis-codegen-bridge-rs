@@ -43,7 +43,7 @@ fn run(producers: usize) -> f64 {
     let consumer = {
         let name = name.clone();
         thread::spawn(move || {
-            event_subscribe(Value::Str(intern_str(&name)));
+            event_subscribe(intern_str(&name));
             while RECVD.load(Ordering::Relaxed) < real_total {
                 wait(count_handler);
             }
@@ -59,7 +59,7 @@ fn run(producers: usize) -> f64 {
             let nm = intern_str(&name);
             start.wait();
             for i in 0..per {
-                channel_send(Value::Tuple(vec![Value::Str(nm.clone()), Value::Int(i as i64)]));
+                channel_send(nm.clone(), Value::Int(i as i64));
             }
         }));
     }

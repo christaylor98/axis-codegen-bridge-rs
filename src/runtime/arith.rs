@@ -50,9 +50,13 @@ pub fn int_mul(x: i64, y: i64) -> Value { Value::Int(x * y) }
 #[track_caller]
 pub fn int_lt(x: i64, y: i64) -> Value { Value::Bool(x < y) }
 
-cmp_op!(int_lte, Int, "Int", <=);
-cmp_op!(int_gt,  Int, "Int", >);
-cmp_op!(int_gte, Int, "Int", >=);
+#[track_caller]
+pub fn int_lte(x: i64, y: i64) -> Value { Value::Bool(x <= y) }
+#[track_caller]
+pub fn int_gt(x: i64, y: i64) -> Value { Value::Bool(x > y) }
+#[track_caller]
+pub fn int_gte(x: i64, y: i64) -> Value { Value::Bool(x >= y) }
+
 cmp_op!(dec_lt,  Dec, "Dec", <);
 cmp_op!(dec_lte, Dec, "Dec", <=);
 cmp_op!(dec_gt,  Dec, "Dec", >);
@@ -63,56 +67,33 @@ cmp_op!(float_gt,  Float, "Float", >);
 cmp_op!(float_gte, Float, "Float", >=);
 
 #[track_caller]
-pub fn int_div(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-            (Value::Int(x), Value::Int(y)) => {
-                if *y == 0 { panic!("int_div: division by zero") }
-                Value::Int(x / y)
-            }
-            _ => panic!("int_div: expected two Int values"),
-        },
-        _ => panic!("int_div: expected Tuple(Int, Int)"),
+pub fn int_div(x: i64, y: i64) -> Value {
+    if y == 0 { panic!("int_div: division by zero") }
+    Value::Int(x / y)
+}
+
+#[track_caller]
+pub fn int_div_checked(x: i64, y: i64) -> Value {
+    if y == 0 {
+        super::option::option_none()
+    } else {
+        super::option::option_some(Value::Int(x / y))
     }
 }
 
 #[track_caller]
-pub fn int_div_checked(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-            (Value::Int(x), Value::Int(y)) => {
-                if *y == 0 {
-                    super::option::option_none()
-                } else {
-                    super::option::option_some(Value::Int(x / y))
-                }
-            }
-            _ => panic!("int_div_checked: expected two Int values"),
-        },
-        _ => panic!("int_div_checked: expected Tuple(Int, Int)"),
-    }
+pub fn int_mod(x: i64, y: i64) -> Value {
+    if y == 0 { panic!("int_mod: division by zero") }
+    Value::Int(x % y)
 }
 
+// value_eq has a second registered alias `__eq__` -> the SAME Rust symbol
+// (src/emit/rust_05.rs). Any native_call_fn_arg_types entry for value_eq
+// MUST be mirrored under "__eq__" too, or a CCall targeting __eq__ falls
+// back to the stale boxed convention against this native signature.
 #[track_caller]
-pub fn int_mod(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-            (Value::Int(x), Value::Int(y)) => {
-                if *y == 0 { panic!("int_mod: division by zero") }
-                Value::Int(x % y)
-            }
-            _ => panic!("int_mod: expected two Int values"),
-        },
-        _ => panic!("int_mod: expected Tuple(Int, Int)"),
-    }
-}
-
-#[track_caller]
-pub fn value_eq(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => Value::Bool(es[0] == es[1]),
-        _ => panic!("value_eq: expected Tuple with 2 elements"),
-    }
+pub fn value_eq(a: Value, b: Value) -> Value {
+    Value::Bool(a == b)
 }
 
 #[track_caller]
@@ -126,81 +107,43 @@ pub fn str_to_int(s: std::sync::Arc<str>) -> Value {
 }
 
 #[track_caller]
-pub fn int_abs(n: Value) -> Value {
-    match n {
-        Value::Int(i) => Value::Int(i.abs()),
-        _ => panic!("int_abs: expected Int"),
-    }
+pub fn int_abs(n: i64) -> Value {
+    Value::Int(n.abs())
 }
 
 #[track_caller]
-pub fn int_min(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-            (Value::Int(a), Value::Int(b)) => Value::Int((*a).min(*b)),
-            _ => panic!("int_min: expected two Int values"),
-        },
-        _ => panic!("int_min: expected Tuple(Int, Int)"),
-    }
+pub fn int_min(a: i64, b: i64) -> Value {
+    Value::Int(a.min(b))
 }
 
 #[track_caller]
-pub fn int_max(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-            (Value::Int(a), Value::Int(b)) => Value::Int((*a).max(*b)),
-            _ => panic!("int_max: expected two Int values"),
-        },
-        _ => panic!("int_max: expected Tuple(Int, Int)"),
-    }
+pub fn int_max(a: i64, b: i64) -> Value {
+    Value::Int(a.max(b))
 }
 
 #[track_caller]
-pub fn int_clamp(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 3 => match (&es[0], &es[1], &es[2]) {
-            (Value::Int(v), Value::Int(lo), Value::Int(hi)) => {
-                Value::Int((*v).max(*lo).min(*hi))
-            }
-            _ => panic!("int_clamp: expected three Int values"),
-        },
-        _ => panic!("int_clamp: expected Tuple(Int, Int, Int)"),
-    }
+pub fn int_clamp(v: i64, lo: i64, hi: i64) -> Value {
+    Value::Int(v.max(lo).min(hi))
 }
 
 #[track_caller]
-pub fn celsius_to_fahrenheit(c: Value) -> Value {
-    match c {
-        Value::Int(n) => Value::Int((n * 9 / 5) + 32),
-        _ => panic!("celsius_to_fahrenheit: expected Int"),
-    }
+pub fn celsius_to_fahrenheit(c: i64) -> Value {
+    Value::Int((c * 9 / 5) + 32)
 }
 
 #[track_caller]
-pub fn fahrenheit_to_celsius(f: Value) -> Value {
-    match f {
-        Value::Int(n) => Value::Int((n - 32) * 5 / 9),
-        _ => panic!("fahrenheit_to_celsius: expected Int"),
-    }
+pub fn fahrenheit_to_celsius(f: i64) -> Value {
+    Value::Int((f - 32) * 5 / 9)
 }
 
 #[track_caller]
-pub fn is_positive(n: Value) -> Value {
-    match n {
-        Value::Int(i) => Value::Bool(i > 0),
-        _ => panic!("is_positive: expected Int"),
-    }
+pub fn is_positive(n: i64) -> Value {
+    Value::Bool(n > 0)
 }
 
 #[track_caller]
-pub fn int_eq(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-            (Value::Int(x), Value::Int(y)) => Value::Bool(x == y),
-            _ => panic!("int_eq: expected two Int values"),
-        },
-        _ => panic!("int_eq: expected Tuple(Int, Int)"),
-    }
+pub fn int_eq(x: i64, y: i64) -> Value {
+    Value::Bool(x == y)
 }
 
 /// dec_eq(Dec, Dec) -> Bool. Typed exact equality on rust_decimal::Decimal —
@@ -301,12 +244,15 @@ pub fn seq_unit(args: Value) -> Value {
 /// effect becomes a data-dependency of the arm's result and the branch-scoping
 /// emitter keeps it inside that arm (BRANCH_SCOPING_V1). Unlike `seq_unit` this is
 /// type-agnostic in both positions, since a branch result may be any Value.
+// CAUTION (flagged for review): `seq` is compiler-injected by
+// nf_lowering.rs's seq_scope_arm_effects for BRANCH_SCOPING_V1 — always
+// called with exactly 2 args by construction, so native conversion is
+// arg-count-safe, but this fn is correctness-critical for branch-effect
+// scoping (a prior silent-wrong-behavior bug). Recommend extra scrutiny /
+// a real `if`/`else` branch-effect test before trusting this conversion.
 #[track_caller]
-pub fn seq(args: Value) -> Value {
-    match args {
-        Value::Tuple(mut es) if es.len() >= 2 => es.swap_remove(1),
-        _ => panic!("seq: expected Tuple(_, _)"),
-    }
+pub fn seq(_eff: Value, result: Value) -> Value {
+    result
 }
 
 #[cfg(test)]

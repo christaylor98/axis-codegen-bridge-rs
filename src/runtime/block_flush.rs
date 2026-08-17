@@ -281,14 +281,14 @@ fn advance_anchor(committed_block: &[u8]) {
     let prev_hex = anchor_raw.split('\n').next().unwrap_or("");
     let mut combined = prev_hex.as_bytes().to_vec();
     combined.extend_from_slice(committed_block);
-    let hashed = super::bytes_io::bytes_hash(Value::Bytes(combined));
+    let hashed = super::bytes_io::bytes_hash(combined);
     let hex_with_prefix = match hashed {
         Value::Str(h) => get_str(&h),
         other => panic!("block_flush_write: bytes_hash returned non-Text: {:?}", other),
     };
     let new_hex = hex_with_prefix.strip_prefix("sha256:").unwrap_or(&hex_with_prefix);
     let content = format!("{}\n", new_hex);
-    pg_store::pg_anchor_set(Value::Str(intern_str(&content)));
+    pg_store::pg_anchor_set(intern_str(&content));
 }
 
 /// Commit one job to postgres, then advance the anchor over the bytes that
@@ -315,7 +315,7 @@ fn commit_job(job: Job) {
                 let text = String::from_utf8(to_commit.to_vec()).unwrap_or_else(|e| {
                     panic!("block_flush_write: log block is not valid UTF-8: {}", e)
                 });
-                pg_store::pg_log_append(Value::Str(intern_str(&text)));
+                pg_store::pg_log_append(intern_str(&text));
                 advance_anchor(to_commit);
             }
             // Free-marker protocol (D044 Phase 1): only now, after the
@@ -329,10 +329,7 @@ fn commit_job(job: Job) {
             }
         }
         Job::Obj { block, index } => {
-            pg_store::pg_obj_block_put(Value::Tuple(vec![
-                Value::Bytes(block.clone()),
-                Value::Str(intern_str(&index)),
-            ]));
+            pg_store::pg_obj_block_put(block.clone(), intern_str(&index));
             advance_anchor(&block);
         }
         Job::Checkpoint { generation, ptr, to } => {
@@ -343,18 +340,14 @@ fn commit_job(job: Job) {
             if len <= 0 {
                 return;
             }
-            let delta = match rawmem::mem_read_raw(Value::Tuple(vec![
-                Value::Int(ptr),
-                Value::Int(from),
-                Value::Int(len),
-            ])) {
+            let delta = match rawmem::mem_read_raw(ptr, from, len) {
                 Value::Bytes(b) => b,
                 other => panic!("block_flush_write: mem_read_raw returned non-Bytes: {:?}", other),
             };
             let text = String::from_utf8(delta.clone()).unwrap_or_else(|e| {
                 panic!("block_flush_write: checkpoint delta is not valid UTF-8: {}", e)
             });
-            pg_store::pg_log_append(Value::Str(intern_str(&text)));
+            pg_store::pg_log_append(intern_str(&text));
             advance_anchor(&delta);
         }
     }
@@ -490,11 +483,11 @@ mod tests {
         };
         let out = block_flush_write(Value::List(vec![tuple_obj_job(&block, &index)]));
         assert_eq!(out, Value::Int(1));
-        match pg_store::pg_bytes_get(Value::Str(intern_str(&addr_x))) {
+        match pg_store::pg_bytes_get(intern_str(&addr_x)) {
             Value::Bytes(b) => assert_eq!(b, b"thequick"),
             other => panic!("expected Bytes, got {:?}", other),
         }
-        match pg_store::pg_bytes_get(Value::Str(intern_str(&addr_y))) {
+        match pg_store::pg_bytes_get(intern_str(&addr_y)) {
             Value::Bytes(b) => assert_eq!(b, b"brownfox"),
             other => panic!("expected Bytes, got {:?}", other),
         }
@@ -522,7 +515,7 @@ mod tests {
             other => panic!("expected Text, got {:?}", other),
         };
         assert!(scan.contains(&marker));
-        match pg_store::pg_bytes_get(Value::Str(intern_str(&addr))) {
+        match pg_store::pg_bytes_get(intern_str(&addr)) {
             Value::Bytes(b) => assert_eq!(b, b"mixedbatchpayload"),
             other => panic!("expected Bytes, got {:?}", other),
         }

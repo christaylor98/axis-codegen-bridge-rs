@@ -74,11 +74,8 @@ fn env_to_name(env: &[u8]) -> Option<String> {
 /// `hotblk_recover_open(flush_dir: Text) -> Int` — register a fresh recovery
 /// shard for THIS thread, return its handle.
 #[track_caller]
-pub fn hotblk_recover_open(arg: Value) -> Value {
-    let flush_dir = match arg {
-        Value::Str(h) => get_str(&h),
-        other => panic!("hotblk_recover_open: expected Text flush_dir, got {:?}", other),
-    };
+pub fn hotblk_recover_open(flush_dir: std::sync::Arc<str>) -> Value {
+    let flush_dir = flush_dir.to_string();
     let h = next_handle();
     SHARDS.with(|s| {
         s.borrow_mut().insert(
@@ -96,11 +93,7 @@ pub fn hotblk_recover_open(arg: Value) -> Value {
 /// frames scanned. Idempotent-if-rerun (last-append-wins semantics match
 /// pkidx_rebuild's, so replaying the same blocks twice is harmless).
 #[track_caller]
-pub fn hotblk_recover_rebuild(arg: Value) -> Value {
-    let h = match arg {
-        Value::Int(n) => n,
-        other => panic!("hotblk_recover_rebuild: expected Int handle, got {:?}", other),
-    };
+pub fn hotblk_recover_rebuild(h: i64) -> Value {
     let scanned = SHARDS.with(|s| {
         let mut s = s.borrow_mut();
         let sh = s.get_mut(&h).unwrap_or_else(|| panic!("hotblk_recover_rebuild: unknown handle {}", h));
@@ -150,19 +143,8 @@ pub fn hotblk_recover_rebuild(arg: Value) -> Value {
 /// current content address for `"<table>:<pk>"`, or `""` if never bound in
 /// the scanned blocks.
 #[track_caller]
-pub fn hotblk_recover_pk_get(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 2 => es,
-        other => panic!("hotblk_recover_pk_get: expected Tuple(Int, Text), got {:?}", other),
-    };
-    let h = match &es[0] {
-        Value::Int(n) => *n,
-        other => panic!("hotblk_recover_pk_get: arg 0 expected Int, got {:?}", other),
-    };
-    let name = match &es[1] {
-        Value::Str(s) => get_str(s),
-        other => panic!("hotblk_recover_pk_get: arg 1 expected Text, got {:?}", other),
-    };
+pub fn hotblk_recover_pk_get(h: i64, name: std::sync::Arc<str>) -> Value {
+    let name = name.to_string();
     SHARDS.with(|s| {
         let s = s.borrow();
         let sh = s.get(&h).unwrap_or_else(|| panic!("hotblk_recover_pk_get: unknown handle {}", h));
@@ -178,19 +160,8 @@ pub fn hotblk_recover_pk_get(args: Value) -> Value {
 /// correctness proof for that hash — no separate content-get is needed for
 /// the recovery-correctness gate.
 #[track_caller]
-pub fn hotblk_recover_has_hash(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 2 => es,
-        other => panic!("hotblk_recover_has_hash: expected Tuple(Int, Text), got {:?}", other),
-    };
-    let h = match &es[0] {
-        Value::Int(n) => *n,
-        other => panic!("hotblk_recover_has_hash: arg 0 expected Int, got {:?}", other),
-    };
-    let hexh_full = match &es[1] {
-        Value::Str(s) => get_str(s),
-        other => panic!("hotblk_recover_has_hash: arg 1 expected Text, got {:?}", other),
-    };
+pub fn hotblk_recover_has_hash(h: i64, hexh_full: std::sync::Arc<str>) -> Value {
+    let hexh_full = hexh_full.to_string();
     let hexh = hexh_full.strip_prefix("sha256:").unwrap_or(&hexh_full);
     SHARDS.with(|s| {
         let s = s.borrow();
@@ -205,11 +176,7 @@ pub fn hotblk_recover_has_hash(args: Value) -> Value {
 /// against its own independently-tracked acked-set without needing M1-side
 /// iteration over an unbounded key list.
 #[track_caller]
-pub fn hotblk_recover_dump_pk(arg: Value) -> Value {
-    let h = match arg {
-        Value::Int(n) => n,
-        other => panic!("hotblk_recover_dump_pk: expected Int handle, got {:?}", other),
-    };
+pub fn hotblk_recover_dump_pk(h: i64) -> Value {
     SHARDS.with(|s| {
         let s = s.borrow();
         let sh = s.get(&h).unwrap_or_else(|| panic!("hotblk_recover_dump_pk: unknown handle {}", h));
@@ -227,11 +194,7 @@ pub fn hotblk_recover_dump_pk(arg: Value) -> Value {
 /// content hash found (bare hex, no `sha256:` prefix), one per line,
 /// LF-terminated (empty if none).
 #[track_caller]
-pub fn hotblk_recover_dump_hashes(arg: Value) -> Value {
-    let h = match arg {
-        Value::Int(n) => n,
-        other => panic!("hotblk_recover_dump_hashes: expected Int handle, got {:?}", other),
-    };
+pub fn hotblk_recover_dump_hashes(h: i64) -> Value {
     SHARDS.with(|s| {
         let s = s.borrow();
         let sh = s.get(&h).unwrap_or_else(|| panic!("hotblk_recover_dump_hashes: unknown handle {}", h));
@@ -248,11 +211,7 @@ pub fn hotblk_recover_dump_hashes(arg: Value) -> Value {
 /// `hotblk_recover_stats(h: Int) -> Text` — `"<blocks_scanned>\t<frames_scanned>"`,
 /// for test/diagnostic reporting.
 #[track_caller]
-pub fn hotblk_recover_stats(arg: Value) -> Value {
-    let h = match arg {
-        Value::Int(n) => n,
-        other => panic!("hotblk_recover_stats: expected Int handle, got {:?}", other),
-    };
+pub fn hotblk_recover_stats(h: i64) -> Value {
     SHARDS.with(|s| {
         let s = s.borrow();
         let sh = s.get(&h).unwrap_or_else(|| panic!("hotblk_recover_stats: unknown handle {}", h));
@@ -298,13 +257,13 @@ mod tests {
     }
 
     fn pk_get(h: i64, name: &str) -> String {
-        match hotblk_recover_pk_get(Value::Tuple(vec![Value::Int(h), Value::Str(intern_str(name))])) {
+        match hotblk_recover_pk_get(h, intern_str(name)) {
             Value::Str(s) => get_str(s),
             _ => unreachable!(),
         }
     }
     fn has_hash(h: i64, hexh: &str) -> bool {
-        match hotblk_recover_has_hash(Value::Tuple(vec![Value::Int(h), Value::Str(intern_str(hexh))])) {
+        match hotblk_recover_has_hash(h, intern_str(hexh)) {
             Value::Bool(b) => b,
             _ => unreachable!(),
         }
@@ -319,11 +278,11 @@ mod tests {
         blk.extend_from_slice(&frame("t", "20", "2", p2));
         write_block(&dir, 1, &blk);
 
-        let h = match hotblk_recover_open(Value::Str(intern_str(&dir))) {
+        let h = match hotblk_recover_open(intern_str(&dir)) {
             Value::Int(n) => n,
             _ => unreachable!(),
         };
-        let scanned = match hotblk_recover_rebuild(Value::Int(h)) {
+        let scanned = match hotblk_recover_rebuild(h) {
             Value::Int(n) => n,
             _ => unreachable!(),
         };
@@ -345,11 +304,11 @@ mod tests {
         write_block(&dir, 1, &frame("users", "1", "42", p_old));
         write_block(&dir, 2, &frame("users", "2", "42", p_new));
 
-        let h = match hotblk_recover_open(Value::Str(intern_str(&dir))) {
+        let h = match hotblk_recover_open(intern_str(&dir)) {
             Value::Int(n) => n,
             _ => unreachable!(),
         };
-        hotblk_recover_rebuild(Value::Int(h));
+        hotblk_recover_rebuild(h);
         assert_eq!(pk_get(h, "users:42"), format!("sha256:{}", sha_hex(p_new)));
         // The superseded hash's CONTENT is still recoverable (blocks are never
         // rewritten) even though the binding points elsewhere now.
@@ -366,11 +325,11 @@ mod tests {
         write_block(&dir, 1, &frame("t", "1", "1", p1));
         // no block-2.bin written
 
-        let h = match hotblk_recover_open(Value::Str(intern_str(&dir))) {
+        let h = match hotblk_recover_open(intern_str(&dir)) {
             Value::Int(n) => n,
             _ => unreachable!(),
         };
-        let scanned = match hotblk_recover_rebuild(Value::Int(h)) {
+        let scanned = match hotblk_recover_rebuild(h) {
             Value::Int(n) => n,
             _ => unreachable!(),
         };
@@ -388,12 +347,12 @@ mod tests {
         blk.extend_from_slice(&frame("t", "2", "2", p2));
         write_block(&dir, 1, &blk);
 
-        let h = match hotblk_recover_open(Value::Str(intern_str(&dir))) {
+        let h = match hotblk_recover_open(intern_str(&dir)) {
             Value::Int(n) => n,
             _ => unreachable!(),
         };
-        hotblk_recover_rebuild(Value::Int(h));
-        let pk_dump = match hotblk_recover_dump_pk(Value::Int(h)) {
+        hotblk_recover_rebuild(h);
+        let pk_dump = match hotblk_recover_dump_pk(h) {
             Value::Str(s) => get_str(s),
             _ => unreachable!(),
         };
@@ -402,7 +361,7 @@ mod tests {
             pk_dump,
             format!("t:1\tsha256:{}\nt:2\tsha256:{}\n", sha_hex(p1), sha_hex(p2))
         );
-        let hash_dump = match hotblk_recover_dump_hashes(Value::Int(h)) {
+        let hash_dump = match hotblk_recover_dump_hashes(h) {
             Value::Str(s) => get_str(s),
             _ => unreachable!(),
         };
@@ -424,11 +383,11 @@ mod tests {
         blk.extend_from_slice(&f2[..f2.len() - 1]);
         write_block(&dir, 1, &blk);
 
-        let h = match hotblk_recover_open(Value::Str(intern_str(&dir))) {
+        let h = match hotblk_recover_open(intern_str(&dir)) {
             Value::Int(n) => n,
             _ => unreachable!(),
         };
-        hotblk_recover_rebuild(Value::Int(h));
+        hotblk_recover_rebuild(h);
         assert_eq!(pk_get(h, "t:1"), format!("sha256:{}", sha_hex(p1)));
         assert_eq!(pk_get(h, "t:2"), "");
         assert!(!has_hash(h, &sha_hex(p2)));

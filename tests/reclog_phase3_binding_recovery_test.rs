@@ -69,21 +69,15 @@ fn write_wal_only(frames: &[Vec<u8>]) -> String {
 }
 
 fn rebuild_and_get(prefix: &str, name: &str) -> (i64, String) {
-    let h = match pkidx_open(Value::Str(intern_str("0"))) {
+    let h = match pkidx_open(intern_str("0")) {
         Value::Int(h) => h,
         other => panic!("pkidx_open returned {:?}", other),
     };
-    let scanned = match pkidx_rebuild(Value::Tuple(vec![
-        Value::Int(h),
-        Value::Str(intern_str(prefix)),
-    ])) {
+    let scanned = match pkidx_rebuild(h, intern_str(prefix)) {
         Value::Int(n) => n,
         other => panic!("pkidx_rebuild returned {:?}", other),
     };
-    let addr = match pkidx_get(Value::Tuple(vec![
-        Value::Int(h),
-        Value::Str(intern_str(name)),
-    ])) {
+    let addr = match pkidx_get(h, intern_str(name)) {
         Value::Str(s) => get_str(s),
         other => panic!("pkidx_get returned {:?}", other),
     };

@@ -60,7 +60,7 @@ fn concurrent_distinct_regions_write_read_free_never_corrupt() {
                         .map(|k| ((tid * 7 + round * 13 + k) % 256) as u8)
                         .collect();
                     mem_write_raw(ptr, 0, payload.clone());
-                    let read_back = mem_read_raw(tup(vec![i(ptr), i(0), i(32)]));
+                    let read_back = mem_read_raw(ptr, 0, 32);
                     assert_eq!(
                         read_back,
                         Value::Bytes(payload),
@@ -68,7 +68,7 @@ fn concurrent_distinct_regions_write_read_free_never_corrupt() {
                         tid,
                         round
                     );
-                    mem_free_raw(tup(vec![i(ptr), i(cap)]));
+                    mem_free_raw(ptr, cap);
                 }
             })
         })
@@ -98,14 +98,14 @@ fn concurrent_distinct_cells_new_load_cas_never_corrupt() {
                 for round in 0..ROUNDS {
                     let init = (tid * 1000 + round) as i64;
                     let addr = int_of(cell_new_raw(init));
-                    assert_eq!(int_of(cell_load_raw(i(addr))), init);
+                    assert_eq!(int_of(cell_load_raw(addr)), init);
 
                     let new_val = init + 1;
                     assert_eq!(
                         cell_cas_raw(addr, init, new_val),
                         Value::Bool(true)
                     );
-                    assert_eq!(int_of(cell_load_raw(i(addr))), new_val);
+                    assert_eq!(int_of(cell_load_raw(addr)), new_val);
 
                     // Stale CAS against this thread's OWN now-superseded value must fail.
                     assert_eq!(
@@ -144,7 +144,7 @@ fn concurrent_same_cell_cas_increment_loses_no_updates() {
             thread::spawn(move || {
                 for _ in 0..INCREMENTS_PER_THREAD {
                     loop {
-                        let current = int_of(cell_load_raw(i(addr)));
+                        let current = int_of(cell_load_raw(addr));
                         if cell_cas_raw(addr, current, current + 1)
                             == Value::Bool(true)
                         {
@@ -161,7 +161,7 @@ fn concurrent_same_cell_cas_increment_loses_no_updates() {
     }
 
     assert_eq!(
-        int_of(cell_load_raw(i(addr))),
+        int_of(cell_load_raw(addr)),
         THREADS as i64 * INCREMENTS_PER_THREAD,
         "lost update under concurrent same-cell CAS — atomic coordination failed"
     );
@@ -197,7 +197,7 @@ fn concurrent_minting_never_aliases() {
         let (ptr, cell_addr) = h.join().unwrap();
         mem_ranges.push((ptr, ptr + 16));
         assert!(cell_addrs.insert(cell_addr), "duplicate cell address {}", cell_addr);
-        mem_free_raw(tup(vec![i(ptr), i(16)]));
+        mem_free_raw(ptr, 16);
     }
     mem_ranges.sort();
     for w in mem_ranges.windows(2) {

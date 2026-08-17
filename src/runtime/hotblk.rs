@@ -137,11 +137,7 @@ pub fn hotblk_timer_interval_ms(_arg: Value) -> Value {
 /// Read one accumulator field of the calling thread's active block. Panics on a
 /// non-Int arg or an out-of-range field index.
 #[track_caller]
-pub fn hotblk_get(arg: Value) -> Value {
-    let f = match arg {
-        Value::Int(n) => n,
-        other => panic!("hotblk_get: expected Int field, got {:?}", other),
-    };
+pub fn hotblk_get(f: i64) -> Value {
     if f < 0 || f as usize >= NFIELDS {
         panic!("hotblk_get: field {} out of range 0..{}", f, NFIELDS);
     }
@@ -153,22 +149,7 @@ pub fn hotblk_get(arg: Value) -> Value {
 /// Write one accumulator field of the calling thread's active block. Panics on a
 /// non-Tuple(2) arg, a non-Int field/value, or an out-of-range field index.
 #[track_caller]
-pub fn hotblk_set(args: Value) -> Value {
-    let (f, v) = match args {
-        Value::Tuple(es) if es.len() == 2 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("hotblk_set: expected Tuple(Int, Int), got {:?}", other),
-    };
-    let f = match f {
-        Value::Int(n) => n,
-        other => panic!("hotblk_set: arg 0 expected Int field, got {:?}", other),
-    };
-    let v = match v {
-        Value::Int(n) => n,
-        other => panic!("hotblk_set: arg 1 expected Int val, got {:?}", other),
-    };
+pub fn hotblk_set(f: i64, v: i64) -> Value {
     if f < 0 || f as usize >= NFIELDS {
         panic!("hotblk_set: field {} out of range 0..{}", f, NFIELDS);
     }
@@ -223,22 +204,22 @@ mod tests {
     fn unset_reads_zero_then_roundtrips() {
         // A fresh thread's slot is all-zero (ptr==0 sentinel).
         for f in 0..NFIELDS as i64 {
-            assert_eq!(hotblk_get(Value::Int(f)), Value::Int(0));
+            assert_eq!(hotblk_get(f), Value::Int(0));
         }
         // set/get round-trips each field independently.
         let vals = [111, 222, 333, 444, 555, 666];
         for (f, v) in vals.iter().enumerate() {
-            hotblk_set(Value::Tuple(vec![Value::Int(f as i64), Value::Int(*v)]));
+            hotblk_set(f as i64, *v);
         }
         for (f, v) in vals.iter().enumerate() {
-            assert_eq!(hotblk_get(Value::Int(f as i64)), Value::Int(*v));
+            assert_eq!(hotblk_get(f as i64), Value::Int(*v));
         }
     }
 
     #[test]
     #[should_panic(expected = "out of range")]
     fn get_out_of_range_panics() {
-        let _ = hotblk_get(Value::Int(NFIELDS as i64));
+        let _ = hotblk_get(NFIELDS as i64);
     }
 
     /// D044 Phase 2: hotblk_active_block reflects ptr/cursor writes, and
@@ -271,17 +252,17 @@ mod tests {
             let gen_of = |s: &str| s.rsplit('\t').next().unwrap().parse::<i64>().unwrap();
             let g0 = gen_of(&read());
 
-            hotblk_set(Value::Tuple(vec![Value::Int(0), Value::Int(4096)]));
+            hotblk_set(0, 4096);
             let r1 = read();
             assert_eq!(r1, format!("4096\t0\t{}", g0 + 1), "first ptr write: cursor resets, generation +1");
 
-            hotblk_set(Value::Tuple(vec![Value::Int(3), Value::Int(500)]));
+            hotblk_set(3, 500);
             assert_eq!(read(), format!("4096\t500\t{}", g0 + 1), "cursor write: ptr/generation unchanged");
 
-            hotblk_set(Value::Tuple(vec![Value::Int(3), Value::Int(900)]));
+            hotblk_set(3, 900);
             assert_eq!(read(), format!("4096\t900\t{}", g0 + 1), "second cursor write: still same generation");
 
-            hotblk_set(Value::Tuple(vec![Value::Int(0), Value::Int(8192)]));
+            hotblk_set(0, 8192);
             assert_eq!(read(), format!("8192\t0\t{}", g0 + 2), "rotate: new ptr, cursor resets, generation +1 again");
         })
         .join()

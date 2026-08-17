@@ -236,12 +236,8 @@ fn chunk_reader<R: Read>(mut r: R, p: &Params) -> std::io::Result<String> {
 /// opening/reading `path` — the panic-on-OS-error discipline of the rest of the
 /// fs surface.
 #[track_caller]
-pub fn chunk_file(arg: Value) -> Value {
-    let path = match arg {
-        Value::Str(h) => super::value::get_str(h),
-        other => panic!("chunk_file: expected Text path, got {:?}", other),
-    };
-    let f = File::open(&path).unwrap_or_else(|e| panic!("chunk_file({}): open: {}", path, e));
+pub fn chunk_file(path: std::sync::Arc<str>) -> Value {
+    let f = File::open(&*path).unwrap_or_else(|e| panic!("chunk_file({}): open: {}", path, e));
     let p = params();
     let out = chunk_reader(BufReader::new(f), &p)
         .unwrap_or_else(|e| panic!("chunk_file({}): read: {}", path, e));

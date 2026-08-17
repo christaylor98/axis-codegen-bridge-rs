@@ -60,28 +60,12 @@ fn next_handle() -> i64 {
     })
 }
 
-fn arg_int(v: &Value, who: &str, i: usize) -> i64 {
-    match v {
-        Value::Int(n) => *n,
-        other => panic!("{}: arg {} expected Int, got {:?}", who, i, other),
-    }
-}
-fn arg_str(v: &Value, who: &str, i: usize) -> String {
-    match v {
-        Value::Str(h) => get_str(h),
-        other => panic!("{}: arg {} expected Text, got {:?}", who, i, other),
-    }
-}
-
 /// `pkidx_open(shard: Text) -> Int`
 ///
 /// Register a fresh empty pk-index shard in THIS thread's table, return its handle.
 #[track_caller]
-pub fn pkidx_open(arg: Value) -> Value {
-    let shard = match arg {
-        Value::Str(h) => get_str(h),
-        other => panic!("pkidx_open: expected Text shard, got {:?}", other),
-    };
+pub fn pkidx_open(shard: std::sync::Arc<str>) -> Value {
+    let shard = shard.to_string();
     let h = next_handle();
     PKIDX.with(|idx| {
         idx.borrow_mut().insert(h, PkShard { shard, map: HashMap::new() });
@@ -91,13 +75,8 @@ pub fn pkidx_open(arg: Value) -> Value {
 
 /// `pkidx_has(h: Int, name: Text) -> Bool` — is `name` bound in the shard?
 #[track_caller]
-pub fn pkidx_has(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 2 => es,
-        other => panic!("pkidx_has: expected Tuple(Int, Text), got {:?}", other),
-    };
-    let h = arg_int(&es[0], "pkidx_has", 0);
-    let name = arg_str(&es[1], "pkidx_has", 1);
+pub fn pkidx_has(h: i64, name: std::sync::Arc<str>) -> Value {
+    let name = name.to_string();
     PKIDX.with(|idx| {
         let idx = idx.borrow();
         let sh = idx.get(&h).unwrap_or_else(|| panic!("pkidx_has: unknown handle {}", h));
@@ -110,13 +89,8 @@ pub fn pkidx_has(args: Value) -> Value {
 /// Return the current content address `"sha256:<hex>"` bound to `name`, or `""` if
 /// `name` has never been bound in this (replayed) shard.
 #[track_caller]
-pub fn pkidx_get(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 2 => es,
-        other => panic!("pkidx_get: expected Tuple(Int, Text), got {:?}", other),
-    };
-    let h = arg_int(&es[0], "pkidx_get", 0);
-    let name = arg_str(&es[1], "pkidx_get", 1);
+pub fn pkidx_get(h: i64, name: std::sync::Arc<str>) -> Value {
+    let name = name.to_string();
     PKIDX.with(|idx| {
         let idx = idx.borrow();
         let sh = idx.get(&h).unwrap_or_else(|| panic!("pkidx_get: unknown handle {}", h));
@@ -160,14 +134,8 @@ fn env_to_name(env: &[u8]) -> Option<String> {
 /// envelope binds `"<table>:<pk>" -> "sha256:<H>"`, last-append-wins by frame
 /// order. Returns the number of frames scanned. NO fsync occurs.
 #[track_caller]
-pub fn pkidx_rebuild(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 2 => es,
-        other => panic!("pkidx_rebuild: expected Tuple(Int, Text), got {:?}", other),
-    };
-    let h = arg_int(&es[0], "pkidx_rebuild", 0);
-    let prefix = arg_str(&es[1], "pkidx_rebuild", 1);
-
+pub fn pkidx_rebuild(h: i64, prefix: std::sync::Arc<str>) -> Value {
+    let prefix = prefix.to_string();
     let scanned = PKIDX.with(|idx| {
         let mut idx = idx.borrow_mut();
         let sh = idx.get_mut(&h).unwrap_or_else(|| panic!("pkidx_rebuild: unknown handle {}", h));
@@ -226,27 +194,23 @@ mod tests {
     }
 
     fn pk_get(h: i64, name: &str) -> String {
-        match pkidx_get(Value::Tuple(vec![Value::Int(h), Value::Str(intern_str(name))])) {
+        match pkidx_get(h, intern_str(name)) {
             Value::Str(s) => get_str(s),
             _ => unreachable!(),
         }
     }
     fn wal_has(h: i64, hexh: &str) -> bool {
-        match walindex::walidx_has(Value::Tuple(vec![Value::Int(h), Value::Str(intern_str(hexh))])) {
+        match walindex::walidx_has(h, intern_str(hexh)) {
             Value::Bool(b) => b,
             _ => unreachable!(),
         }
     }
 
     fn rebuild_both(prefix: &str) -> (i64, i64) {
-        let ph = match pkidx_open(Value::Str(intern_str("0"))) { Value::Int(n) => n, _ => unreachable!() };
-        pkidx_rebuild(Value::Tuple(vec![Value::Int(ph), Value::Str(intern_str(prefix))]));
-        let wh = match walindex::walidx_open(Value::Str(intern_str("0"))) { Value::Int(n) => n, _ => unreachable!() };
-        walindex::walidx_rebuild(Value::Tuple(vec![
-            Value::Int(wh),
-            Value::Str(intern_str(prefix)),
-            Value::Str(intern_str("/nonexistent-snap")),
-        ]));
+        let ph = match pkidx_open(intern_str("0")) { Value::Int(n) => n, _ => unreachable!() };
+        pkidx_rebuild(ph, intern_str(prefix));
+        let wh = match walindex::walidx_open(intern_str("0")) { Value::Int(n) => n, _ => unreachable!() };
+        walindex::walidx_rebuild(wh, intern_str(prefix), intern_str("/nonexistent-snap"));
         (ph, wh)
     }
 

@@ -289,16 +289,7 @@ fn lookup(dir: &str, seq: i64) -> Option<String> {
 /// valid entry exists (never indexed, or every entry for it is torn) — the M1
 /// caller maps `""` to the NOT_INDEXED sentinel.
 #[track_caller]
-pub fn idxseg_lookup(args: Value) -> Value {
-    let (dir_v, seq_v) = match args {
-        Value::Tuple(es) if es.len() == 2 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("idxseg_lookup: expected (Text, Int), got {:?}", other),
-    };
-    let dir = as_text("dir", dir_v);
-    let seq = as_int("block_seq", seq_v);
+pub fn idxseg_lookup(dir: std::sync::Arc<str>, seq: i64) -> Value {
     Value::Str(intern_str(&lookup(&dir, seq).unwrap_or_default()))
 }
 
@@ -309,9 +300,8 @@ pub fn idxseg_lookup(args: Value) -> Value {
 /// harmless; last-wins read). No cells (they died with the crashed process).
 /// Returns the number of blocks indexed.
 #[track_caller]
-pub fn index_rebuild_dir(arg: Value) -> Value {
-    let dir = as_text("dir", arg);
-    let mut seqs: Vec<i64> = std::fs::read_dir(&dir)
+pub fn index_rebuild_dir(dir: std::sync::Arc<str>) -> Value {
+    let mut seqs: Vec<i64> = std::fs::read_dir(&*dir)
         .unwrap_or_else(|e| panic!("index_rebuild_dir: read_dir {}: {}", dir, e))
         .filter_map(|e| e.ok())
         .filter_map(|e| {
@@ -336,7 +326,7 @@ pub fn index_rebuild_dir(arg: Value) -> Value {
         .collect();
     let entries: Vec<Entry> = seqs
         .iter()
-        .map(|&seq| build_entry(seq, dir.clone(), -1, 0))
+        .map(|&seq| build_entry(seq, dir.to_string(), -1, 0))
         .collect();
     append_entries(&entries);
     Value::Int(entries.len() as i64)
@@ -382,10 +372,7 @@ mod tests {
 
     /// The reader-visible entry for a block, via the same fn M1 uses.
     fn lookup_str(dir: &str, seq: i64) -> String {
-        match idxseg_lookup(Value::Tuple(vec![
-            Value::Str(intern_str(dir)),
-            Value::Int(seq),
-        ])) {
+        match idxseg_lookup(intern_str(dir), seq) {
             Value::Str(h) => get_str(&h),
             other => panic!("idxseg_lookup returned {:?}", other),
         }
@@ -532,7 +519,7 @@ mod tests {
         // (same file we corrupted) isn't reused — mirrors the real recovery
         // shape, which is always a fresh process.
         let d2 = dir.clone();
-        std::thread::spawn(move || index_rebuild_dir(Value::Str(intern_str(&d2))))
+        std::thread::spawn(move || index_rebuild_dir(intern_str(&d2)))
             .join()
             .unwrap();
         assert_entry_correct(&dir, 0, &payload);
@@ -547,7 +534,7 @@ mod tests {
             std::fs::write(format!("{}/block-{}.bin", dir, seq), &payload).unwrap();
             payloads.push(payload);
         }
-        let out = index_rebuild_dir(Value::Str(intern_str(&dir)));
+        let out = index_rebuild_dir(intern_str(&dir));
         assert_eq!(out, Value::Int(40));
         assert_eq!(seg_count(&dir), 1, "rebuild must produce ONE segment");
         for (seq, p) in payloads.iter().enumerate() {
@@ -748,7 +735,7 @@ mod tests {
             RECEIVED.store(0, Ordering::SeqCst);
             let c_chan = chan.clone();
             let consumer = thread::spawn(move || {
-                super::super::channels::event_subscribe(text(&c_chan));
+                super::super::channels::event_subscribe(intern_str(&c_chan));
                 while RECEIVED.load(Ordering::SeqCst) < TOTAL {
                     super::super::channels::wait(count_handler);
                 }
@@ -769,10 +756,7 @@ mod tests {
                                     Value::Int(0),
                                 ],
                             };
-                            super::super::channels::channel_send(Value::Tuple(vec![
-                                text(&p_chan),
-                                desc,
-                            ]));
+                            super::super::channels::channel_send(intern_str(&p_chan), desc);
                         }
                     })
                 })

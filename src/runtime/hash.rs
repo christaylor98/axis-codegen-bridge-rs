@@ -15,7 +15,7 @@
 
 use sha2::{Digest, Sha256};
 
-use super::value::{get_str, intern_str, Value};
+use super::value::{intern_str, Value};
 
 // ── Byte extractor (UNKNOWN gate — panic, no silent coercion) ────────────────
 //
@@ -64,12 +64,7 @@ pub fn content_hash(v: Value) -> Value {
 /// chars. Panics on any other shape — hex portion of any other length
 /// (including 63), missing prefix, or non-hex character.
 #[track_caller]
-pub fn hash256_parse(v: Value) -> Value {
-    let s = match v {
-        Value::Str(h) => get_str(h),
-        _ => panic!("hash256_parse UNKNOWN gate: input must be Text"),
-    };
-
+pub fn hash256_parse(s: std::sync::Arc<str>) -> Value {
     let hex = match s.strip_prefix("sha256:") {
         Some(h) => h,
         None => {

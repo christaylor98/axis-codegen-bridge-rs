@@ -24,19 +24,13 @@ fn make_ctor(tag: &str, fields: Vec<Value>) -> Value {
 }
 
 #[track_caller]
-pub fn ir_make_int_lit(v: Value) -> Value {
-    match v {
-        Value::Int(n) => make_ctor("IntLit", vec![Value::Int(n)]),
-        _ => panic!("ir_make_int_lit: expected Int, got {:?}", v),
-    }
+pub fn ir_make_int_lit(n: i64) -> Value {
+    make_ctor("IntLit", vec![Value::Int(n)])
 }
 
 #[track_caller]
-pub fn ir_make_bool_lit(v: Value) -> Value {
-    match v {
-        Value::Bool(b) => make_ctor("BoolLit", vec![Value::Bool(b)]),
-        _ => panic!("ir_make_bool_lit: expected Bool, got {:?}", v),
-    }
+pub fn ir_make_bool_lit(b: bool) -> Value {
+    make_ctor("BoolLit", vec![Value::Bool(b)])
 }
 
 #[track_caller]
@@ -48,76 +42,36 @@ pub fn ir_make_unit_lit(v: Value) -> Value {
 }
 
 #[track_caller]
-pub fn ir_make_var(v: Value) -> Value {
-    match v {
-        Value::Str(s) => make_ctor("Var", vec![Value::Str(s)]),
-        _ => panic!("ir_make_var: expected Str, got {:?}", v),
-    }
+pub fn ir_make_var(name: std::sync::Arc<str>) -> Value {
+    make_ctor("Var", vec![Value::Str(name)])
 }
 
 #[track_caller]
-pub fn ir_make_lam(v: Value) -> Value {
-    match v {
-        Value::Tuple(mut fields) if fields.len() == 2 => {
-            let body  = fields.pop().unwrap();
-            let param = fields.pop().unwrap();
-            if !matches!(param, Value::Str(_)) {
-                panic!("ir_make_lam: expected Str param, got {:?}", param);
-            }
-            make_ctor("Lam", vec![param, body])
-        }
-        _ => panic!("ir_make_lam: expected Tuple([param, body]), got {:?}", v),
-    }
+pub fn ir_make_lam(param: std::sync::Arc<str>, body: Value) -> Value {
+    make_ctor("Lam", vec![Value::Str(param), body])
 }
 
 #[track_caller]
-pub fn ir_make_let(v: Value) -> Value {
-    match v {
-        Value::Tuple(mut fields) if fields.len() == 3 => {
-            let body = fields.pop().unwrap();
-            let val  = fields.pop().unwrap();
-            let name = fields.pop().unwrap();
-            if !matches!(name, Value::Str(_)) {
-                panic!("ir_make_let: expected Str name, got {:?}", name);
-            }
-            make_ctor("Let", vec![name, val, body])
-        }
-        _ => panic!("ir_make_let: expected Tuple([name, val, body]), got {:?}", v),
-    }
+pub fn ir_make_let(name: std::sync::Arc<str>, val: Value, body: Value) -> Value {
+    make_ctor("Let", vec![Value::Str(name), val, body])
 }
 
 #[track_caller]
-pub fn ir_make_if(v: Value) -> Value {
-    match v {
-        Value::Tuple(fields) if fields.len() == 3 => make_ctor("If", fields),
-        _ => panic!("ir_make_if: expected Tuple([cond, then, else]), got {:?}", v),
-    }
+pub fn ir_make_if(cond: Value, then: Value, els: Value) -> Value {
+    make_ctor("If", vec![cond, then, els])
 }
 
 #[track_caller]
-pub fn ir_make_app(v: Value) -> Value {
-    match v {
-        Value::Tuple(fields) if fields.len() == 2 => make_ctor("App", fields),
-        _ => panic!("ir_make_app: expected Tuple([fn, arg]), got {:?}", v),
-    }
+pub fn ir_make_app(func: Value, arg: Value) -> Value {
+    make_ctor("App", vec![func, arg])
 }
 
 #[track_caller]
-pub fn ir_make_call(v: Value) -> Value {
-    match v {
-        Value::Tuple(mut fields) if fields.len() == 2 => {
-            let args   = fields.pop().unwrap();
-            let target = fields.pop().unwrap();
-            if !matches!(target, Value::Str(_)) {
-                panic!("ir_make_call: expected Str target, got {:?}", target);
-            }
-            if !matches!(args, Value::List(_)) {
-                panic!("ir_make_call: expected List args, got {:?}", args);
-            }
-            make_ctor("Call", vec![target, args])
-        }
-        _ => panic!("ir_make_call: expected Tuple([target, args]), got {:?}", v),
+pub fn ir_make_call(target: std::sync::Arc<str>, args: Value) -> Value {
+    if !matches!(args, Value::List(_)) {
+        panic!("ir_make_call: expected List args, got {:?}", args);
     }
+    make_ctor("Call", vec![Value::Str(target), args])
 }
 
 fn term_to_str(v: &Value) -> String {
@@ -401,56 +355,28 @@ pub(crate) fn subst_value(name: &str, replacement: &Value, term: Value) -> Value
     }
 }
 
-/// ir_subst: takes Tuple([name_str, replacement_term, target_term]).
-/// Substitutes all free occurrences of name in target with replacement.
-/// Respects shadowing: does not descend into Lam/Let that rebind name.
+/// ir_subst: substitutes all free occurrences of name in target with
+/// replacement. Respects shadowing: does not descend into Lam/Let that
+/// rebind name.
 #[track_caller]
-pub fn ir_subst(v: Value) -> Value {
-    match v {
-        Value::Tuple(mut fields) if fields.len() == 3 => {
-            let target      = fields.pop().unwrap();
-            let replacement = fields.pop().unwrap();
-            let name_val    = fields.pop().unwrap();
-            let name = match &name_val {
-                Value::Str(h) => get_str(h),
-                _ => panic!("ir_subst: expected Str name, got {:?}", name_val),
-            };
-            subst_value(&name, &replacement, target)
-        }
-        _ => panic!("ir_subst: expected Tuple([name, replacement, target]), got {:?}", v),
-    }
+pub fn ir_subst(name: std::sync::Arc<str>, replacement: Value, target: Value) -> Value {
+    subst_value(&get_str(&name), &replacement, target)
 }
 
-/// ir_rename: takes Tuple([old_name_str, new_name_str, lam_term]).
-/// Replaces the Lam's param with new_name and substitutes old_name → Var(new_name) in body.
+/// ir_rename: replaces the Lam's param with new_name and substitutes
+/// old_name → Var(new_name) in body.
 #[track_caller]
-pub fn ir_rename(v: Value) -> Value {
-    match v {
-        Value::Tuple(mut fields) if fields.len() == 3 => {
-            let lam_term = fields.pop().unwrap();
-            let new_name = fields.pop().unwrap();
-            let old_name = fields.pop().unwrap();
-            let old_str = match &old_name {
-                Value::Str(h) => get_str(h),
-                _ => panic!("ir_rename: expected Str old_name, got {:?}", old_name),
-            };
-            let new_str = match &new_name {
-                Value::Str(h) => get_str(h),
-                _ => panic!("ir_rename: expected Str new_name, got {:?}", new_name),
-            };
-            match lam_term {
-                Value::Ctor { tag, mut fields } if get_tag_name(tag) == "Lam" && fields.len() == 2 => {
-                    let body   = fields.pop().unwrap();
-                    let _param = fields.pop().unwrap();
-                    let new_name_h = intern_str(&new_str);
-                    let new_var    = make_ctor("Var", vec![Value::Str(new_name_h.clone())]);
-                    let new_body   = subst_value(&old_str, &new_var, body);
-                    make_ctor("Lam", vec![Value::Str(new_name_h), new_body])
-                }
-                other => panic!("ir_rename: expected Ctor(Lam), got {:?}", other),
-            }
+pub fn ir_rename(old_name: std::sync::Arc<str>, new_name: std::sync::Arc<str>, lam_term: Value) -> Value {
+    let old_str = get_str(&old_name);
+    match lam_term {
+        Value::Ctor { tag, mut fields } if get_tag_name(tag) == "Lam" && fields.len() == 2 => {
+            let body   = fields.pop().unwrap();
+            let _param = fields.pop().unwrap();
+            let new_var  = make_ctor("Var", vec![Value::Str(new_name.clone())]);
+            let new_body = subst_value(&old_str, &new_var, body);
+            make_ctor("Lam", vec![Value::Str(new_name), new_body])
         }
-        _ => panic!("ir_rename: expected Tuple([old_name, new_name, lam_term]), got {:?}", v),
+        other => panic!("ir_rename: expected Ctor(Lam), got {:?}", other),
     }
 }
 
@@ -551,33 +477,21 @@ pub fn ir_free_vars(v: Value) -> Value {
 /// by ir_read_bundle (Bundle05) and writes it. Returns Unit on success;
 /// panics with the OS / encode message on any error.
 #[track_caller]
-pub fn ir_write_bundle(v: Value) -> Value {
-    match v {
-        Value::Tuple(ref fields) if fields.len() == 2 => {
-            let bundle_val = &fields[0];
-            let path = match &fields[1] {
-                Value::Str(s) => get_str(s),
-                other => panic!("ir_write_bundle: expected Str path, got {:?}", other),
-            };
-            let bundle = match value_to_bundle_05(bundle_val) {
-                Ok(b) => b,
-                Err(e) => panic!("ir_write_bundle: {}", e),
-            };
-            if let Err(e) = crate::core_ir_05::write_core_bundle_05_to_file(&bundle, &path) {
-                panic!("ir_write_bundle({}): {}", path, e);
-            }
-            Value::Unit
-        }
-        _ => panic!("ir_write_bundle: expected Tuple([bundle, path]), got {:?}", v),
+pub fn ir_write_bundle(bundle_val: Value, path: std::sync::Arc<str>) -> Value {
+    let path = get_str(&path);
+    let bundle = match value_to_bundle_05(&bundle_val) {
+        Ok(b) => b,
+        Err(e) => panic!("ir_write_bundle: {}", e),
+    };
+    if let Err(e) = crate::core_ir_05::write_core_bundle_05_to_file(&bundle, &path) {
+        panic!("ir_write_bundle({}): {}", path, e);
     }
+    Value::Unit
 }
 
 #[track_caller]
-pub fn ir_read_bundle(v: Value) -> Value {
-    let path = match v {
-        Value::Str(s) => get_str(s),
-        _ => panic!("ir_read_bundle: expected Str path, got {:?}", v),
-    };
+pub fn ir_read_bundle(path: std::sync::Arc<str>) -> Value {
+    let path = get_str(&path);
     match crate::core_ir_05::load_core_bundle(&path) {
         Ok(bundle) => value_from_bundle_05(&bundle),
         Err(e) => panic!("ir_read_bundle: failed to load {}: {}", path, e),
@@ -738,11 +652,8 @@ pub fn ir_bundle_view(v: Value) -> Value {
 }
 
 #[track_caller]
-pub fn ir_build_program_from_spec(v: Value) -> Value {
-    let path = match v {
-        Value::Str(s) => get_str(s),
-        _ => panic!("ir_build_program_from_spec: expected Str path, got {:?}", v),
-    };
+pub fn ir_build_program_from_spec(path: std::sync::Arc<str>) -> Value {
+    let path = get_str(&path);
 
     let content = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("ir_build_program_from_spec: cannot read '{}': {}", path, e));
@@ -856,11 +767,8 @@ pub fn ir_build_program_from_spec(v: Value) -> Value {
 /// Returns Tuple(term, Str effect_class).
 /// Supports up to 32 list elements (TODO: replace with letrec when recursion lands).
 #[track_caller]
-pub fn ir_build_fold_from_spec(v: Value) -> Value {
-    let path = match v {
-        Value::Str(s) => get_str(s),
-        _ => panic!("ir_build_fold_from_spec: expected Str path, got {:?}", v),
-    };
+pub fn ir_build_fold_from_spec(path: std::sync::Arc<str>) -> Value {
+    let path = get_str(&path);
 
     let content = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("ir_build_fold_from_spec: cannot read '{}': {}", path, e));
@@ -1162,7 +1070,7 @@ mod fold_from_spec_tests {
         let call_fields = unwrap_ctor(&let_fields[1], "Call").to_vec();
         let target = expect_str(&call_fields[0]);
         let args = match &call_fields[1] {
-            Value::List(xs) => xs.clone(),
+            Value::List(xs) => xs.to_vec(),
             other => panic!("expected List args, got {:?}", other),
         };
         (target, args)
@@ -1179,7 +1087,7 @@ source_fn: proc_args
 transform_fn: my_t
 ");
         let (target, args) = outer_source_call(
-            ir_build_fold_from_spec(Value::Str(intern_str(path.to_str().unwrap())))
+            ir_build_fold_from_spec(intern_str(path.to_str().unwrap()))
         );
         assert_eq!(target, "proc_args");
         assert_eq!(args.len(), 1, "expected one UnitLit arg inside proc_args, got {:?}", args);
@@ -1199,7 +1107,7 @@ source_arg2_val: delim
 transform_fn: my_t
 ");
         let (target, args) = outer_source_call(
-            ir_build_fold_from_spec(Value::Str(intern_str(path.to_str().unwrap())))
+            ir_build_fold_from_spec(intern_str(path.to_str().unwrap()))
         );
         assert_eq!(target, "str_split");
         assert_eq!(args.len(), 2);
@@ -1216,7 +1124,7 @@ transform_fn: my_t
         let path = std::env::temp_dir()
             .join(format!("read_bundle_05_int_{}.coreir", std::process::id()));
         write_core_bundle_05_to_file(&bundle, path.to_str().unwrap()).expect("write");
-        let v = ir_read_bundle(Value::Str(intern_str(path.to_str().unwrap())));
+        let v = ir_read_bundle(intern_str(path.to_str().unwrap()));
         let (pool, nodes, result) = match &v {
             Value::Ctor { tag, fields } if get_tag_name(*tag) == "Bundle05" => {
                 match fields.as_slice() {
@@ -1274,7 +1182,7 @@ transform_fn: my_t
         let path = std::env::temp_dir()
             .join(format!("read_bundle_05_ccall_{}.coreir", std::process::id()));
         write_core_bundle_05_to_file(&bundle, path.to_str().unwrap()).expect("write");
-        let v = ir_read_bundle(Value::Str(intern_str(path.to_str().unwrap())));
+        let v = ir_read_bundle(intern_str(path.to_str().unwrap()));
         let (pool, nodes, result) = match &v {
             Value::Ctor { tag, fields } if get_tag_name(*tag) == "Bundle05" => {
                 match fields.as_slice() {
@@ -1346,7 +1254,7 @@ source_arg1_val: 42
 transform_fn: my_t
 ");
         let (target, args) = outer_source_call(
-            ir_build_fold_from_spec(Value::Str(intern_str(path.to_str().unwrap())))
+            ir_build_fold_from_spec(intern_str(path.to_str().unwrap()))
         );
         assert_eq!(target, "range");
         assert_eq!(args.len(), 1);
@@ -1368,7 +1276,7 @@ element_var: elem
 transform_fn: io_println
 ");
         let (target, args) = outer_source_call(
-            ir_build_fold_from_spec(Value::Str(intern_str(path.to_str().unwrap())))
+            ir_build_fold_from_spec(intern_str(path.to_str().unwrap()))
         );
         assert_eq!(target, "str_split");
         assert_eq!(args.len(), 2);
@@ -1411,7 +1319,7 @@ mode: count_if_str_len_lte
 threshold: 3
 ");
         let body = strip_lst_let(
-            ir_build_fold_from_spec(Value::Str(intern_str(path.to_str().unwrap())))
+            ir_build_fold_from_spec(intern_str(path.to_str().unwrap()))
         );
 
         // The body is Let("_b0", lsllis(lst, 0, 3), Let("_b1", ..., ... Let("_s30", int_add(...), println(...))))
@@ -1470,7 +1378,7 @@ mode: count_if_str_len_lte
 threshold: 3
 ");
         let (target, args) = outer_source_call(
-            ir_build_fold_from_spec(Value::Str(intern_str(path.to_str().unwrap())))
+            ir_build_fold_from_spec(intern_str(path.to_str().unwrap()))
         );
         assert_eq!(target, "str_split");
         assert_eq!(args.len(), 2);
@@ -1514,7 +1422,7 @@ source_arg2_val: 2
 transform_fn: io_println
 ");
         let (target, args) = outer_source_call(
-            ir_build_fold_from_spec(Value::Str(intern_str(path.to_str().unwrap())))
+            ir_build_fold_from_spec(intern_str(path.to_str().unwrap()))
         );
         assert_eq!(target, "str_split");
         // arg0 must be fs_read_text(argv(1)) — no unwrap layer
@@ -1537,7 +1445,7 @@ mode: count_if_str_len_lte
 threshold: 3
 ");
         let (target, args) = outer_source_call(
-            ir_build_fold_from_spec(Value::Str(intern_str(path.to_str().unwrap())))
+            ir_build_fold_from_spec(intern_str(path.to_str().unwrap()))
         );
         assert_eq!(target, "str_split");
         // arg0 must be argv(1) directly — no pipe wrapping
@@ -1550,7 +1458,7 @@ threshold: 3
         use super::super::list::list_str_len_lte_if_some;
         let list = Value::List(vec![Value::Str(intern_str("hi"))]);
         // index 5 is OOB → 0
-        let result = list_str_len_lte_if_some(Value::Tuple(vec![list, Value::Int(5), Value::Int(3)]));
+        let result = list_str_len_lte_if_some(list, 5, 3);
         assert!(matches!(result, Value::Int(0)));
     }
 
@@ -1559,7 +1467,7 @@ threshold: 3
         use super::super::list::list_str_len_lte_if_some;
         let list = Value::List(vec![Value::Str(intern_str("cat"))]);
         // "cat".len() == 3 ≤ 3 → 1
-        let result = list_str_len_lte_if_some(Value::Tuple(vec![list, Value::Int(0), Value::Int(3)]));
+        let result = list_str_len_lte_if_some(list, 0, 3);
         assert!(matches!(result, Value::Int(1)));
     }
 
@@ -1568,7 +1476,7 @@ threshold: 3
         use super::super::list::list_str_len_lte_if_some;
         let list = Value::List(vec![Value::Str(intern_str("hello"))]);
         // "hello".len() == 5 > 3 → 0
-        let result = list_str_len_lte_if_some(Value::Tuple(vec![list, Value::Int(0), Value::Int(3)]));
+        let result = list_str_len_lte_if_some(list, 0, 3);
         assert!(matches!(result, Value::Int(0)));
     }
 }

@@ -94,12 +94,6 @@ thread_local! {
     static ADJ: RefCell<Adj> = RefCell::new(Adj::default());
 }
 
-fn arg_str(v: &Value, who: &str, i: usize) -> String {
-    match v {
-        Value::Str(h) => get_str(h),
-        other => panic!("{}: arg {} expected Text, got {:?}", who, i, other),
-    }
-}
 
 /// Reconstruct an object address from its two-level store path.
 /// `<dir>/<xx>/<62hex>` -> `sha256:<xx><62hex>`, the same §5b layout the loose
@@ -310,12 +304,8 @@ impl Adj {
 /// `adj_build(root: Text) -> Int` — force a full rebuild of the projection from
 /// the object store (both tiers). Returns the edge count. Writes nothing.
 #[track_caller]
-pub fn adj_build(arg: Value) -> Value {
-    let root = match arg {
-        Value::Str(h) => get_str(&h),
-        other => panic!("adj_build: expected Text root, got {:?}", other),
-    };
-    let root = if root.is_empty() { ".".to_string() } else { root };
+pub fn adj_build(root: std::sync::Arc<str>) -> Value {
+    let root = if root.is_empty() { ".".to_string() } else { root.to_string() };
     ADJ.with(|a| {
         let mut a = a.borrow_mut();
         a.build(&root);
@@ -336,13 +326,9 @@ pub fn adj_build(arg: Value) -> Value {
 /// Builds the projection lazily on first use, from `.` (the binaries resolve
 /// `.axverity` from CWD, same as every other store path).
 #[track_caller]
-pub fn adj_get(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 2 => es,
-        other => panic!("adj_get: expected Tuple(Text, Text), got {:?}", other),
-    };
-    let dir = arg_str(&es[0], "adj_get", 0);
-    let node = arg_str(&es[1], "adj_get", 1);
+pub fn adj_get(dir: std::sync::Arc<str>, node: std::sync::Arc<str>) -> Value {
+    let dir = dir.to_string();
+    let node = node.to_string();
     ADJ.with(|a| {
         let mut a = a.borrow_mut();
         if !a.built {

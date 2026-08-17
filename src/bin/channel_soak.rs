@@ -64,7 +64,7 @@ fn consume(v: Value) -> Value {
         let st = b.as_mut().expect("state initialized before wait()");
         if st.error.is_some() { return; }
         let items = match v { Value::List(items) => items, _ => return };
-        for it in items {
+        for it in items.iter() {
             let f = match &it { Value::Tuple(f) => f, _ => { st.error = Some("non-tuple msg".into()); return; } };
             let pid = f[0].as_int() as usize;
             let seq = f[1].as_int();
@@ -110,7 +110,7 @@ fn main() {
     let consumer = {
         let producers = producers;
         thread::spawn(move || {
-            event_subscribe(Value::Str(intern_str(CHAN)));
+            event_subscribe(intern_str(CHAN));
             ST.with(|c| *c.borrow_mut() = Some(State {
                 last_seen: vec![-1; producers],
                 counts:    vec![0; producers],
@@ -147,14 +147,14 @@ fn main() {
                 // channel_send convention: Tuple([name, data]); the (pid,seq)
                 // stamp is the single `data` payload (a nested Tuple).
                 let data = Value::Tuple(vec![Value::Int(pid as i64), Value::Int(seq)]);
-                channel_send(Value::Tuple(vec![Value::Str(nm.clone()), data]));
+                channel_send(nm.clone(), data);
                 seq += 1;
                 // periodic micro-idle → frequent drain-to-empty → wake-path exercise
                 if seq & 0x3fff == 0 { thread::sleep(Duration::from_micros(1)); }
             }
             // sentinel payload: (pid, -1, final_count)
             let sent = Value::Tuple(vec![Value::Int(pid as i64), Value::Int(SENTINEL), Value::Int(seq)]);
-            channel_send(Value::Tuple(vec![Value::Str(nm), sent]));
+            channel_send(nm, sent);
             seq as u64
         }));
     }

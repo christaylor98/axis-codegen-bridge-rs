@@ -131,11 +131,8 @@ fn next_handle() -> i64 {
 /// directory entry is durable. Returns the opaque handle. Panics on any OS
 /// error.
 #[track_caller]
-pub fn logbuf_open(arg: Value) -> Value {
-    let path = match arg {
-        Value::Str(h) => get_str(h),
-        other => panic!("logbuf_open: expected Text path, got {:?}", other),
-    };
+pub fn logbuf_open(path: std::sync::Arc<str>) -> Value {
+    let path = get_str(path);
     let file = OpenOptions::new()
         .append(true)
         .create(true)
@@ -175,22 +172,7 @@ pub fn logbuf_open(arg: Value) -> Value {
 /// Spike 1 enforces no cap, so this never returns -1 — the Int return simply
 /// must not foreclose it. Rotation itself is out of scope for Spike 1.
 #[track_caller]
-pub fn logbuf_append(args: Value) -> Value {
-    let (h, data) = match args {
-        Value::Tuple(es) if es.len() == 2 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("logbuf_append: expected Tuple(Int, Bytes), got {:?}", other),
-    };
-    let h = match h {
-        Value::Int(n) => n,
-        other => panic!("logbuf_append: arg 0 expected Int handle, got {:?}", other),
-    };
-    let data = match data {
-        Value::Bytes(b) => b,
-        other => panic!("logbuf_append: arg 1 expected Bytes, got {:?}", other),
-    };
+pub fn logbuf_append(h: i64, data: Vec<u8>) -> Value {
     LOGS.with(|logs| {
         let mut logs = logs.borrow_mut();
         let lb = logs
@@ -210,11 +192,7 @@ pub fn logbuf_append(args: Value) -> Value {
 /// across the fsync — the file and buffer are thread-owned. Panics on any OS
 /// error.
 #[track_caller]
-pub fn logbuf_sync(arg: Value) -> Value {
-    let h = match arg {
-        Value::Int(n) => n,
-        other => panic!("logbuf_sync: expected Int handle, got {:?}", other),
-    };
+pub fn logbuf_sync(h: i64) -> Value {
     LOGS.with(|logs| {
         let mut logs = logs.borrow_mut();
         let lb = logs
@@ -255,11 +233,7 @@ pub fn logbuf_sync(arg: Value) -> Value {
 /// loss, never corrupt") — no more, no less. A sync with an empty buffer is a
 /// no-op, same as `logbuf_sync`. Panics on any OS error.
 #[track_caller]
-pub fn logbuf_flush(arg: Value) -> Value {
-    let h = match arg {
-        Value::Int(n) => n,
-        other => panic!("logbuf_flush: expected Int handle, got {:?}", other),
-    };
+pub fn logbuf_flush(h: i64) -> Value {
     LOGS.with(|logs| {
         let mut logs = logs.borrow_mut();
         let lb = logs
@@ -325,7 +299,7 @@ pub fn wal_fast_batch_write(arg: Value) -> Value {
             panic!("wal_fast_batch_write: handle 1 not open on this thread (janitor must logbuf_open first)")
         });
         let mut total: u64 = 0;
-        for item in &items {
+        for item in items.iter() {
             let bytes = match item {
                 Value::Bytes(b) => b,
                 other => panic!("wal_fast_batch_write: expected Bytes item, got {:?}", other),
@@ -351,26 +325,7 @@ pub fn wal_fast_batch_write(arg: Value) -> Value {
 /// (from the file). Operates on the calling thread's own buffer/file. Panics on
 /// unknown handle, negative bounds, or OS error.
 #[track_caller]
-pub fn logbuf_read(args: Value) -> Value {
-    let (h, off, len) = match args {
-        Value::Tuple(es) if es.len() == 3 => {
-            let mut it = es.into_iter();
-            (it.next().unwrap(), it.next().unwrap(), it.next().unwrap())
-        }
-        other => panic!("logbuf_read: expected Tuple(Int, Int, Int), got {:?}", other),
-    };
-    let h = match h {
-        Value::Int(n) => n,
-        other => panic!("logbuf_read: arg 0 expected Int handle, got {:?}", other),
-    };
-    let off = match off {
-        Value::Int(n) => n,
-        other => panic!("logbuf_read: arg 1 expected Int offset, got {:?}", other),
-    };
-    let len = match len {
-        Value::Int(n) => n,
-        other => panic!("logbuf_read: arg 2 expected Int len, got {:?}", other),
-    };
+pub fn logbuf_read(h: i64, off: i64, len: i64) -> Value {
     if off < 0 || len < 0 {
         panic!("logbuf_read: negative offset={} or len={}", off, len);
     }
@@ -415,11 +370,7 @@ pub fn logbuf_read(args: Value) -> Value {
 /// Current total logical length: bytes synced to the file plus bytes still
 /// buffered, for the calling thread's handle. Panics on unknown handle.
 #[track_caller]
-pub fn logbuf_len(arg: Value) -> Value {
-    let h = match arg {
-        Value::Int(n) => n,
-        other => panic!("logbuf_len: expected Int handle, got {:?}", other),
-    };
+pub fn logbuf_len(h: i64) -> Value {
     LOGS.with(|logs| {
         let logs = logs.borrow();
         let lb = logs

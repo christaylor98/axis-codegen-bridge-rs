@@ -918,6 +918,258 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     // args are resolved via pool_kinds, not native_types), but the entry
     // still needs one placeholder per arg so the arg-count check matches.
     m.insert("loop_count",        vec![Int, Value, Value]);
+
+    // AXVERITY_RAWMEM_CALL_CONVENTION_V1 batch-1 crate-wide conversion
+    // (2026-08-14): str_ops.rs, list.rs/tuple.rs/option.rs, arith.rs
+    // remainder/bool_ops.rs/hash.rs, bytes_codec.rs/bytes_io.rs/process.rs/
+    // channels.rs remainder.
+    m.insert("str_len",           vec![Text]);
+    m.insert("str_char_at",       vec![Text, Int]);
+    m.insert("str_char",          vec![Text, Int]);
+    m.insert("str_char_code",     vec![Text, Int]);
+    m.insert("str_slice",         vec![Text, Int, Int]);
+    m.insert("str_split",         vec![Text, Text]);
+    m.insert("str_starts_with",   vec![Text, Text]);
+    m.insert("str_ends_with",     vec![Text, Text]);
+    m.insert("str_trim",          vec![Text]);
+    m.insert("str_contains",      vec![Text, Text]);
+    m.insert("str_eq",            vec![Text, Text]);
+    m.insert("text_eq",           vec![Text, Text]);
+    m.insert("text_lt",           vec![Text, Text]);
+    m.insert("text_lte",          vec![Text, Text]);
+    m.insert("text_gt",           vec![Text, Text]);
+    m.insert("text_gte",          vec![Text, Text]);
+    m.insert("str_lt",            vec![Text, Text]);
+    m.insert("str_lte",           vec![Text, Text]);
+    m.insert("str_gt",            vec![Text, Text]);
+    m.insert("str_gte",           vec![Text, Text]);
+    m.insert("str_index_of",      vec![Text, Text]);
+    m.insert("str_before",        vec![Text, Text]);
+    m.insert("str_after",         vec![Text, Text]);
+    m.insert("str_between",       vec![Text, Text, Text]);
+    m.insert("bool_to_str",       vec![Bool]);
+    m.insert("chr",               vec![Int]);
+    m.insert("str_cmp",           vec![Text, Text]);
+    m.insert("ord",               vec![Text]);
+    m.insert("str_join",          vec![Value, Text]);
+    m.insert("str_replace",       vec![Text, Text, Text]);
+    m.insert("str_repeat",        vec![Text, Int]);
+    m.insert("str_to_upper",      vec![Text]);
+    m.insert("str_to_lower",      vec![Text]);
+    m.insert("str_pad_left",      vec![Text, Int, Text]);
+    m.insert("str_pad_right",     vec![Text, Int, Text]);
+    m.insert("list_cons",         vec![Value, Value]);
+    m.insert("list_get_at",       vec![Value, Int]);
+    m.insert("list_concat",       vec![Value, Value]);
+    m.insert("list_str_len_lte_if_some", vec![Value, Int, Int]);
+    m.insert("list_get_println_if_some", vec![Value, Int]);
+    m.insert("ctor_field",        vec![Value, Int]);
+    m.insert("int_div",           vec![Int, Int]);
+    m.insert("int_div_checked",   vec![Int, Int]);
+    m.insert("int_mod",           vec![Int, Int]);
+    m.insert("value_eq",          vec![Value, Value]);
+    // `__eq__` is a registered alias for the same Rust symbol (value_eq) —
+    // must carry its own table entry keyed by its own registered name, same
+    // class of bug the empty-target_name int_add test failure surfaced.
+    m.insert("__eq__",            vec![Value, Value]);
+    m.insert("int_abs",           vec![Int]);
+    m.insert("int_min",           vec![Int, Int]);
+    m.insert("int_max",           vec![Int, Int]);
+    m.insert("int_clamp",         vec![Int, Int, Int]);
+    m.insert("celsius_to_fahrenheit", vec![Int]);
+    m.insert("fahrenheit_to_celsius", vec![Int]);
+    m.insert("is_positive",       vec![Int]);
+    m.insert("int_eq",            vec![Int, Int]);
+    m.insert("int_lte",           vec![Int, Int]);
+    m.insert("int_gt",            vec![Int, Int]);
+    m.insert("int_gte",           vec![Int, Int]);
+    m.insert("seq",               vec![Value, Value]);
+    m.insert("bool_and",          vec![Value, Value]);
+    m.insert("bool_or",           vec![Value, Value]);
+    m.insert("hash256_parse",     vec![Text]);
+    m.insert("bytes_concat",      vec![Bytes, Bytes]);
+    m.insert("bytes_slice",       vec![Bytes, Int, Int]);
+    m.insert("bytes_get",         vec![Bytes, Int]);
+    m.insert("bytes_push",        vec![Bytes, Int]);
+    m.insert("int16_be_encode",   vec![Int]);
+    m.insert("int32_be_encode",   vec![Int]);
+    m.insert("text_to_bytes",     vec![Text]);
+    m.insert("fs_write_bytes",    vec![Text, Bytes]);
+    m.insert("bytes_hash",        vec![Bytes]);
+    m.insert("bytes_to_text",     vec![Bytes]);
+    m.insert("proc_sleep",        vec![Int]);
+    m.insert("sleep",             vec![Int]);
+    m.insert("channel_send",      vec![Text, Value]);
+    m.insert("channel_depth",     vec![Text]);
+    m.insert("event_subscribe",   vec![Text]);
+    m.insert("bchan_len",         vec![Text]);
+    m.insert("bchan_drain",       vec![Text, Int, Int]);
+
+    // AXVERITY_RAWMEM_CALL_CONVENTION_V1 batch-2 crate-wide conversion
+    // (2026-08-14): ir_constructors.rs/ir_accessors.rs, io.rs/net.rs/tty.rs,
+    // registry.rs/cursor.rs/transitions.rs/scratch.rs, contradicts.rs/
+    // hotmem.rs/qhm.rs/pkindex.rs/pgbshape.rs/oneshot.rs/walshard.rs/
+    // rawmem.rs remainder, walindex.rs/fieldidx.rs/logbuf.rs/slablock.rs/
+    // mmapseg.rs, indexer.rs/hotwrite_batch.rs/adjacency.rs + 14 small files.
+    m.insert("ir_make_int_lit",   vec![Int]);
+    m.insert("ir_make_bool_lit",  vec![Bool]);
+    m.insert("ir_make_var",       vec![Text]);
+    m.insert("ir_make_lam",       vec![Text, Value]);
+    m.insert("ir_make_let",       vec![Text, Value, Value]);
+    m.insert("ir_make_if",        vec![Value, Value, Value]);
+    m.insert("ir_make_app",       vec![Value, Value]);
+    m.insert("ir_make_call",      vec![Text, Value]);
+    m.insert("ir_subst",          vec![Text, Value, Value]);
+    m.insert("ir_rename",         vec![Text, Text, Value]);
+    m.insert("ir_write_bundle",   vec![Value, Text]);
+    m.insert("ir_read_bundle",    vec![Text]);
+    m.insert("ir_build_program_from_spec", vec![Text]);
+    m.insert("ir_build_fold_from_spec",    vec![Text]);
+    m.insert("fs_read_text",      vec![Text]);
+    m.insert("fs_read_last_line", vec![Text]);
+    m.insert("fs_write_text",     vec![Text, Text]);
+    m.insert("fs_append_text",    vec![Text, Text]);
+    m.insert("fs_append_text_durable", vec![Text, Text]);
+    m.insert("fs_file_exists",    vec![Text]);
+    m.insert("fs_list_dir",       vec![Text]);
+    m.insert("pg_emit_datarow1",  vec![Int, Text]);
+    m.insert("pg_stream_rows",    vec![Int, Text]);
+    m.insert("tcp_listen",        vec![Int]);
+    m.insert("tcp_listen_shared", vec![Int]);
+    m.insert("tcp_connect",       vec![Text, Int]);
+    m.insert("tcp_accept",        vec![Int]);
+    m.insert("tcp_set_read_timeout", vec![Int, Int]);
+    m.insert("tcp_read",          vec![Int]);
+    m.insert("tcp_write",         vec![Int, Bytes]);
+    m.insert("tcp_close",         vec![Int]);
+    m.insert("tty_raw_on",        vec![Int]);
+    m.insert("cursor_append",     vec![Int, Text]);
+    m.insert("cursor_get",        vec![Int]);
+    m.insert("cursor_len",        vec![Int]);
+    m.insert("cursor_close",      vec![Int]);
+    m.insert("cursor_load",       vec![Text]);
+    m.insert("cursor_line",       vec![Int, Int]);
+    m.insert("cursor_sort",       vec![Text, Text]);
+    m.insert("set_add",           vec![Text, Text]);
+    m.insert("set_has",           vec![Text, Text]);
+    m.insert("set_len",           vec![Text]);
+    m.insert("set_clear",         vec![Text]);
+    m.insert("map_put",           vec![Text, Text, Text]);
+    m.insert("map_get",           vec![Text, Text]);
+    m.insert("map_len",           vec![Text]);
+    m.insert("map_clear",         vec![Text]);
+    m.insert("contradicts_open",     vec![Text]);
+    m.insert("contradicts_rebuild",  vec![Int, Text]);
+    m.insert("contradicts_has",      vec![Int, Text, Text]);
+    m.insert("contradicts_any",      vec![Int, Text]);
+    m.insert("contradicts_warm",     vec![Text]);
+    m.insert("contradicts_any_warm", vec![Text]);
+    m.insert("hotmem_read",       vec![Int]);
+    m.insert("qhm_put",           vec![Text, Bytes]);
+    m.insert("qhm_get",           vec![Text]);
+    m.insert("pkidx_open",        vec![Text]);
+    m.insert("pkidx_has",         vec![Int, Text]);
+    m.insert("pkidx_get",         vec![Int, Text]);
+    m.insert("pkidx_rebuild",     vec![Int, Text]);
+    m.insert("pgb_parse_shape",   vec![Text]);
+    m.insert("pgb_bind_capture",  vec![Bytes]);
+    m.insert("pgb_record",        vec![Bytes]);
+    m.insert("oneshot_wait",         vec![Int]);
+    m.insert("oneshot_wait_timeout", vec![Int, Int]);
+    m.insert("oneshot_signal",       vec![Int]);
+    m.insert("wal_shard_set",     vec![Text]);
+    m.insert("cell_load_raw",     vec![Int]);
+    m.insert("mem_read_raw",      vec![Int, Int, Int]);
+    m.insert("mem_free_raw",      vec![Int, Int]);
+    m.insert("walidx_open",       vec![Text]);
+    m.insert("walidx_insert",     vec![Int, Text, Int, Int, Int]);
+    m.insert("walidx_has",        vec![Int, Text]);
+    m.insert("walidx_get",        vec![Int, Text]);
+    m.insert("walidx_snapshot",   vec![Int, Text]);
+    m.insert("walidx_rebuild",    vec![Int, Text, Text]);
+    m.insert("walidx_replay",     vec![Int, Text]);
+    m.insert("walidx_res_get",    vec![Text, Text, Text, Text]);
+    m.insert("walidx_res_scope",  vec![Text]);
+    m.insert("fieldidx_open",     vec![Text]);
+    m.insert("fieldidx_insert",   vec![Int, Text, Text, Text]);
+    m.insert("fieldidx_get",      vec![Int, Text, Text]);
+    m.insert("fieldidx_snapshot", vec![Int, Text]);
+    m.insert("fieldidx_rebuild",  vec![Int, Text, Text]);
+    m.insert("fieldidx_replay",   vec![Int, Text]);
+    m.insert("fieldidx_res_get",  vec![Text, Text, Text, Text, Text]);
+    m.insert("fieldidx_res_scope", vec![Text]);
+    m.insert("logbuf_open",       vec![Text]);
+    m.insert("logbuf_append",     vec![Int, Bytes]);
+    m.insert("logbuf_sync",       vec![Int]);
+    m.insert("logbuf_flush",      vec![Int]);
+    m.insert("logbuf_read",       vec![Int, Int, Int]);
+    m.insert("logbuf_len",        vec![Int]);
+    m.insert("slab_open",         vec![Text, Int, Int]);
+    m.insert("slab_append",       vec![Int, Bytes]);
+    m.insert("slab_tick",         vec![Int]);
+    m.insert("slab_seal",         vec![Int]);
+    m.insert("slab_stats",        vec![Int]);
+    m.insert("slab_sealed",       vec![Int]);
+    m.insert("mmapseg_open",      vec![Text, Int]);
+    m.insert("mmapseg_append",    vec![Int, Bytes]);
+    m.insert("mmapseg_read",      vec![Int, Int]);
+    m.insert("mmapseg_msync",     vec![Int]);
+    m.insert("mmapseg_frontier",  vec![Int]);
+    m.insert("mmapseg_flush_file", vec![Text]);
+    m.insert("idxseg_lookup",     vec![Text, Int]);
+    m.insert("index_rebuild_dir", vec![Text]);
+    m.insert("hotwrite_batch_run",   vec![Int, Int, Int]);
+    m.insert("hotwrite_batch_run_c_durable", vec![Text, Int, Int, Int]);
+    m.insert("hotwrite_batch_run_c", vec![Int, Int, Int]);
+    m.insert("adj_build",         vec![Text]);
+    m.insert("adj_get",           vec![Text, Text]);
+    m.insert("slab_shadow_submit", vec![Bytes, Text]);
+    m.insert("reclog_submit",     vec![Bytes, Text, Bytes]);
+    m.insert("fs_prealloc",       vec![Text, Int]);
+    m.insert("wal_write_seg",     vec![Text, Int]);
+    m.insert("nameptr_set",       vec![Text, Text]);
+    m.insert("nameptr_get",       vec![Text]);
+    m.insert("frame_stream",      vec![Text]);
+    m.insert("contentidx_put",    vec![Text, Bytes]);
+    m.insert("contentidx_get",    vec![Text]);
+    m.insert("bindidx_put",       vec![Text, Text]);
+    m.insert("bindidx_get",       vec![Text]);
+    m.insert("ack_register",      vec![Text, Int]);
+    m.insert("ack_signal_block",  vec![Text, Int]);
+    m.insert("sqlite_ro_tsv",     vec![Text, Text, Text]);
+    m.insert("fs_read_range",     vec![Text, Int, Int]);
+    m.insert("gcidx_get",         vec![Text]);
+    m.insert("chunk_file",        vec![Text]);
+
+    // AXVERITY_RAWMEM_CALL_CONVENTION_V1 batch-3 crate-wide conversion
+    // (2026-08-14): graphcore's frozen store-machinery surface — pg_store.rs,
+    // block_flush.rs/hotblk.rs/hotblk_pool.rs, hotblk_recover.rs, rawblk.rs.
+    // Converted conservatively; anything with graceful-degradation/lenient
+    // multi-shape input or FnRef/HOF-callee usage was deliberately left
+    // boxed (block_flush_write, tsmark.rs's whole gated-telemetry family,
+    // rawblk_frame, derive_stat/derive_stat_flush) — do not convert those.
+    m.insert("hotblk_recover_open",         vec![Text]);
+    m.insert("hotblk_recover_rebuild",      vec![Int]);
+    m.insert("hotblk_recover_pk_get",       vec![Int, Text]);
+    m.insert("hotblk_recover_has_hash",     vec![Int, Text]);
+    m.insert("hotblk_recover_dump_pk",      vec![Int]);
+    m.insert("hotblk_recover_dump_hashes",  vec![Int]);
+    m.insert("hotblk_recover_stats",        vec![Int]);
+    m.insert("hotblk_pool_put",   vec![Text, Int, Int]);
+    m.insert("hotblk_pool_take",  vec![Text]);
+    m.insert("hotblk_get",        vec![Int]);
+    m.insert("hotblk_set",        vec![Int, Int]);
+    m.insert("pg_bytes_put",      vec![Text, Bytes]);
+    m.insert("pg_bytes_get",      vec![Text]);
+    m.insert("pg_obj_block_put",  vec![Bytes, Text]);
+    m.insert("pg_log_append",     vec![Text]);
+    m.insert("pg_anchor_set",     vec![Text]);
+    m.insert("hotblk_dir_guard",  vec![Text]);
+    m.insert("rawblk_recover_open",        vec![Text]);
+    m.insert("rawblk_recover_rebuild",     vec![Int]);
+    m.insert("rawblk_recover_stats",       vec![Int]);
+    m.insert("rawblk_recover_dump_pk",     vec![Int]);
+    m.insert("rawblk_recover_dump_hashes", vec![Int]);
     m
 }
 

@@ -94,27 +94,11 @@ fn env_i64(key: &str, default: i64) -> i64 {
 /// janitor dead; counted, never blocking), -1 = shadow disabled. The caller
 /// (pg_exec_insert, post-ack) discards the return either way.
 #[track_caller]
-pub fn slab_shadow_submit(args: Value) -> Value {
-    let (bytes, name) = match args {
-        Value::Tuple(mut es) if es.len() == 2 => {
-            let name = es.pop().unwrap();
-            let bytes = es.pop().unwrap();
-            (bytes, name)
-        }
-        other => panic!("slab_shadow_submit: expected Tuple(Bytes, Text), got {:?}", other),
-    };
+pub fn slab_shadow_submit(bytes: Vec<u8>, name: std::sync::Arc<str>) -> Value {
     if !enabled() {
         return Value::Int(-1);
     }
-    match &bytes {
-        Value::Bytes(_) => {}
-        other => panic!("slab_shadow_submit: arg 0 expected Bytes, got {:?}", other),
-    }
-    match &name {
-        Value::Str(_) => {}
-        other => panic!("slab_shadow_submit: arg 1 expected Text, got {:?}", other),
-    }
-    let item = Value::Tuple(vec![Value::Int(mono_nanos()), bytes, name]);
+    let item = Value::Tuple(vec![Value::Int(mono_nanos()), Value::Bytes(bytes), Value::Str(name)]);
     if bounded_try_send(SHADOW_CHAN, item) {
         SUBMITTED.fetch_add(1, Ordering::Relaxed);
         Value::Int(1)
@@ -144,11 +128,7 @@ fn init_state() -> ShadowState {
     let sla_us = env_i64("AXVERITY_SLAB_SHADOW_SLA_US", 5_000);
     std::fs::create_dir_all(&dir)
         .unwrap_or_else(|e| panic!("slab_shadow: mkdir {}: {}", dir, e));
-    let slab_h = match slab_open(Value::Tuple(vec![
-        Value::Str(intern_str(&format!("{}/slab", dir))),
-        Value::Int(sla_us),
-        Value::Int(0),
-    ])) {
+    let slab_h = match slab_open(intern_str(&format!("{}/slab", dir)), sla_us, 0) {
         Value::Int(h) => h,
         other => panic!("slab_shadow: slab_open returned {:?}", other),
     };
@@ -192,7 +172,7 @@ pub fn slab_shadow_flush_once(_: Value) -> Value {
                 Value::Str(h) => get_str(&h),
                 other => panic!("slab_shadow_flush_once: field 2 expected Text, got {:?}", other),
             };
-            match slab_append(Value::Tuple(vec![Value::Int(state.slab_h), bytes])) {
+            match slab_append(state.slab_h, bytes.as_bytes()) {
                 Value::Int(_) => {}
                 other => panic!("slab_shadow_flush_once: slab_append returned {:?}", other),
             }
@@ -200,7 +180,7 @@ pub fn slab_shadow_flush_once(_: Value) -> Value {
                 .unwrap_or_else(|e| panic!("slab_shadow: measure write: {}", e));
         }
         let t0 = Instant::now();
-        let ticked = match slab_tick(Value::Int(state.slab_h)) {
+        let ticked = match slab_tick(state.slab_h) {
             Value::Int(r) => r,
             other => panic!("slab_shadow_flush_once: slab_tick returned {:?}", other),
         };
@@ -268,10 +248,7 @@ mod tests {
     }
 
     fn submit(bytes: &[u8], name: &str) -> i64 {
-        match slab_shadow_submit(Value::Tuple(vec![
-            Value::Bytes(bytes.to_vec()),
-            Value::Str(intern_str(name)),
-        ])) {
+        match slab_shadow_submit(bytes.to_vec(), intern_str(name)) {
             Value::Int(r) => r,
             other => panic!("submit returned {:?}", other),
         }

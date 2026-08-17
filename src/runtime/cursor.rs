@@ -82,19 +82,6 @@ fn next_handle() -> i64 {
     })
 }
 
-fn arg_int(v: &Value, who: &str, i: usize) -> i64 {
-    match v {
-        Value::Int(n) => *n,
-        other => panic!("{}: arg {} expected Int, got {:?}", who, i, other),
-    }
-}
-fn arg_str(v: &Value, who: &str, i: usize) -> String {
-    match v {
-        Value::Str(h) => get_str(h),
-        other => panic!("{}: arg {} expected Text, got {:?}", who, i, other),
-    }
-}
-
 /// `cursor_open(label: Text) -> Int`
 ///
 /// Allocate a fresh empty cursor in THIS thread's table and return its handle.
@@ -122,13 +109,8 @@ pub fn cursor_open(arg: Value) -> Value {
 /// push, no re-copy of the prior contents, no syscall, no lock. This is the hot
 /// per-step op that replaces `str_concat(accumulator, chunk)` in the loop state.
 #[track_caller]
-pub fn cursor_append(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 2 => es,
-        other => panic!("cursor_append: expected Tuple(Int, Text), got {:?}", other),
-    };
-    let h = arg_int(&es[0], "cursor_append", 0);
-    let chunk = arg_str(&es[1], "cursor_append", 1);
+pub fn cursor_append(h: i64, chunk: std::sync::Arc<str>) -> Value {
+    let chunk = chunk.to_string();
     CURS.with(|c| {
         let mut c = c.borrow_mut();
         let buf = c
@@ -147,8 +129,7 @@ pub fn cursor_append(args: Value) -> Value {
 /// once. An unknown handle yields "" (a closed/never-opened cursor reads empty)
 /// rather than panicking, so a caller need not special-case the empty result.
 #[track_caller]
-pub fn cursor_get(arg: Value) -> Value {
-    let h = arg_int(&arg, "cursor_get", 0);
+pub fn cursor_get(h: i64) -> Value {
     CURS.with(|c| {
         let c = c.borrow();
         let out = match c.get(&h) {
@@ -165,8 +146,7 @@ pub fn cursor_get(arg: Value) -> Value {
 /// calls), or 0 for an unknown/closed handle. Note this is the CHUNK count, not
 /// the byte length — `str_len(cursor_get(h))` gives the byte length.
 #[track_caller]
-pub fn cursor_len(arg: Value) -> Value {
-    let h = arg_int(&arg, "cursor_len", 0);
+pub fn cursor_len(h: i64) -> Value {
     CURS.with(|c| {
         let c = c.borrow();
         let n = c.get(&h).map(|buf| buf.len() as i64).unwrap_or(0);
@@ -181,8 +161,7 @@ pub fn cursor_len(arg: Value) -> Value {
 /// long-lived pg_server worker opens one cursor per query, so without this the
 /// thread-local map would grow unbounded across queries.
 #[track_caller]
-pub fn cursor_close(arg: Value) -> Value {
-    let h = arg_int(&arg, "cursor_close", 0);
+pub fn cursor_close(h: i64) -> Value {
     CURS.with(|c| {
         c.borrow_mut().remove(&h);
     });
@@ -205,8 +184,7 @@ pub fn cursor_close(arg: Value) -> Value {
 /// stored chunk is the line WITHOUT its `\n`), so a cursor walk is byte-identical
 /// to the threaded walk.
 #[track_caller]
-pub fn cursor_load(arg: Value) -> Value {
-    let text = arg_str(&arg, "cursor_load", 0);
+pub fn cursor_load(text: std::sync::Arc<str>) -> Value {
     let lines: Vec<String> = text.split_terminator('\n').map(|l| l.to_string()).collect();
     let h = next_handle();
     CURS.with(|c| {
@@ -223,13 +201,7 @@ pub fn cursor_load(arg: Value) -> Value {
 /// unknown/closed handle yields "" (so a walk that overruns reads empty rather
 /// than panicking).
 #[track_caller]
-pub fn cursor_line(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 2 => es,
-        other => panic!("cursor_line: expected Tuple(Int, Int), got {:?}", other),
-    };
-    let h = arg_int(&es[0], "cursor_line", 0);
-    let i = arg_int(&es[1], "cursor_line", 1);
+pub fn cursor_line(h: i64, i: i64) -> Value {
     CURS.with(|c| {
         let c = c.borrow();
         let out = match c.get(&h) {
@@ -262,19 +234,13 @@ pub fn cursor_line(args: Value) -> Value {
 /// so the compiler may legitimately CSE two identical calls (harmless: same
 /// input → same sorted output).
 #[track_caller]
-pub fn cursor_sort(args: Value) -> Value {
-    let es = match args {
-        Value::Tuple(es) if es.len() == 2 => es,
-        other => panic!("cursor_sort: expected Tuple(Text, Text), got {:?}", other),
-    };
-    let keyed = arg_str(&es[0], "cursor_sort", 0);
-    let dir = arg_str(&es[1], "cursor_sort", 1);
+pub fn cursor_sort(keyed: std::sync::Arc<str>, dir: std::sync::Arc<str>) -> Value {
     let mut lines: Vec<&str> = keyed.split_terminator('\n').collect();
     // Key = text before the first TAB (whole line if none), compared bytewise.
     fn key(l: &str) -> &str {
         l.split_once('\t').map(|(k, _)| k).unwrap_or(l)
     }
-    if dir == "1" {
+    if dir.as_ref() == "1" {
         lines.sort_by(|a, b| key(b).cmp(key(a))); // DESC, stable → ties keep input order
     } else {
         lines.sort_by(|a, b| key(a).cmp(key(b))); // ASC, stable → ties keep input order
@@ -305,27 +271,27 @@ mod tests {
     fn open_append_get_len_close() {
         let c = cursor_open(s("t"));
         let hd = h(&c);
-        assert_eq!(cursor_len(Value::Int(hd)), Value::Int(0));
-        cursor_append(Value::Tuple(vec![Value::Int(hd), s("a\n")]));
-        cursor_append(Value::Tuple(vec![Value::Int(hd), s("bb\n")]));
-        assert_eq!(cursor_len(Value::Int(hd)), Value::Int(2));
-        match cursor_get(Value::Int(hd)) {
+        assert_eq!(cursor_len(hd), Value::Int(0));
+        cursor_append(hd, intern_str("a\n"));
+        cursor_append(hd, intern_str("bb\n"));
+        assert_eq!(cursor_len(hd), Value::Int(2));
+        match cursor_get(hd) {
             Value::Str(sh) => assert_eq!(get_str(&sh), "a\nbb\n"),
             _ => panic!(),
         }
         // get is non-destructive
-        match cursor_get(Value::Int(hd)) {
+        match cursor_get(hd) {
             Value::Str(sh) => assert_eq!(get_str(&sh), "a\nbb\n"),
             _ => panic!(),
         }
-        cursor_close(Value::Int(hd));
+        cursor_close(hd);
         // after close: empty read, zero len, idempotent close
-        match cursor_get(Value::Int(hd)) {
+        match cursor_get(hd) {
             Value::Str(sh) => assert_eq!(get_str(&sh), ""),
             _ => panic!(),
         }
-        assert_eq!(cursor_len(Value::Int(hd)), Value::Int(0));
-        cursor_close(Value::Int(hd));
+        assert_eq!(cursor_len(hd), Value::Int(0));
+        cursor_close(hd);
     }
 
     #[test]
@@ -333,18 +299,18 @@ mod tests {
         let a = h(&cursor_open(s("a")));
         let b = h(&cursor_open(s("b")));
         assert_ne!(a, b);
-        cursor_append(Value::Tuple(vec![Value::Int(a), s("A")]));
-        cursor_append(Value::Tuple(vec![Value::Int(b), s("B")]));
-        match cursor_get(Value::Int(a)) {
+        cursor_append(a, intern_str("A"));
+        cursor_append(b, intern_str("B"));
+        match cursor_get(a) {
             Value::Str(sh) => assert_eq!(get_str(&sh), "A"),
             _ => panic!(),
         }
-        match cursor_get(Value::Int(b)) {
+        match cursor_get(b) {
             Value::Str(sh) => assert_eq!(get_str(&sh), "B"),
             _ => panic!(),
         }
-        cursor_close(Value::Int(a));
-        cursor_close(Value::Int(b));
+        cursor_close(a);
+        cursor_close(b);
     }
 
     #[test]
@@ -356,7 +322,7 @@ mod tests {
         let this_first = h(&cursor_open(s("y")));
         assert_eq!(other_first, 1);
         assert_eq!(this_first, 1); // independent counters
-        cursor_close(Value::Int(this_first));
+        cursor_close(this_first);
     }
 
     fn gs(v: Value) -> String {
@@ -369,31 +335,31 @@ mod tests {
     #[test]
     fn load_line_count_close() {
         // LF-terminated: trailing \n is a terminator, not a separator.
-        let hd = h(&cursor_load(s("a\nbb\nccc\n")));
-        assert_eq!(cursor_len(Value::Int(hd)), Value::Int(3));
-        assert_eq!(gs(cursor_line(Value::Tuple(vec![Value::Int(hd), Value::Int(0)]))), "a");
-        assert_eq!(gs(cursor_line(Value::Tuple(vec![Value::Int(hd), Value::Int(1)]))), "bb");
-        assert_eq!(gs(cursor_line(Value::Tuple(vec![Value::Int(hd), Value::Int(2)]))), "ccc");
+        let hd = h(&cursor_load(intern_str("a\nbb\nccc\n")));
+        assert_eq!(cursor_len(hd), Value::Int(3));
+        assert_eq!(gs(cursor_line(hd, 0)), "a");
+        assert_eq!(gs(cursor_line(hd, 1)), "bb");
+        assert_eq!(gs(cursor_line(hd, 2)), "ccc");
         // out of range and unknown handle read empty (no panic)
-        assert_eq!(gs(cursor_line(Value::Tuple(vec![Value::Int(hd), Value::Int(3)]))), "");
-        assert_eq!(gs(cursor_line(Value::Tuple(vec![Value::Int(hd), Value::Int(-1)]))), "");
-        assert_eq!(gs(cursor_line(Value::Tuple(vec![Value::Int(99999), Value::Int(0)]))), "");
-        cursor_close(Value::Int(hd));
+        assert_eq!(gs(cursor_line(hd, 3)), "");
+        assert_eq!(gs(cursor_line(hd, -1)), "");
+        assert_eq!(gs(cursor_line(99999, 0)), "");
+        cursor_close(hd);
     }
 
     #[test]
     fn load_empty_and_no_trailing_newline() {
-        let e = h(&cursor_load(s("")));
-        assert_eq!(cursor_len(Value::Int(e)), Value::Int(0));
-        cursor_close(Value::Int(e));
-        let nt = h(&cursor_load(s("x\ny"))); // no trailing \n
-        assert_eq!(cursor_len(Value::Int(nt)), Value::Int(2));
-        assert_eq!(gs(cursor_line(Value::Tuple(vec![Value::Int(nt), Value::Int(1)]))), "y");
-        cursor_close(Value::Int(nt));
+        let e = h(&cursor_load(intern_str("")));
+        assert_eq!(cursor_len(e), Value::Int(0));
+        cursor_close(e);
+        let nt = h(&cursor_load(intern_str("x\ny"))); // no trailing \n
+        assert_eq!(cursor_len(nt), Value::Int(2));
+        assert_eq!(gs(cursor_line(nt, 1)), "y");
+        cursor_close(nt);
     }
 
     fn sort(keyed: &str, dir: &str) -> String {
-        gs(cursor_sort(Value::Tuple(vec![s(keyed), s(dir)])))
+        gs(cursor_sort(intern_str(keyed), intern_str(dir)))
     }
 
     #[test]

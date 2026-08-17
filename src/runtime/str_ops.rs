@@ -1,11 +1,8 @@
 use super::value::{Value, intern_str, get_str};
 
 #[track_caller]
-pub fn str_len(s: Value) -> Value {
-    match s {
-        Value::Str(h) => Value::Int(get_str(h).chars().count() as i64),
-        _ => panic!("str_len: expected Str"),
-    }
+pub fn str_len(s: std::sync::Arc<str>) -> Value {
+    Value::Int(get_str(&s).chars().count() as i64)
 }
 
 #[track_caller]
@@ -15,146 +12,77 @@ pub fn str_concat(a: std::sync::Arc<str>, b: std::sync::Arc<str>) -> Value {
 
 /// Checked character access. Returns Option(Str).
 #[track_caller]
-pub fn str_char_at(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => {
-            let h = match &es[0] { Value::Str(h) => h.clone(), _ => panic!("str_char_at: expected Str") };
-            let idx = match &es[1] { Value::Int(n) => *n, _ => panic!("str_char_at: expected Int index") };
-            if idx < 0 { return super::option::option_none(); }
-            let chars: Vec<char> = get_str(h).chars().collect();
-            match chars.get(idx as usize) {
-                Some(c) => super::option::option_some(Value::Str(intern_str(&c.to_string()))),
-                None    => super::option::option_none(),
-            }
-        }
-        _ => panic!("str_char_at: expected Tuple(Str, Int)"),
+pub fn str_char_at(s: std::sync::Arc<str>, idx: i64) -> Value {
+    if idx < 0 { return super::option::option_none(); }
+    let chars: Vec<char> = get_str(&s).chars().collect();
+    match chars.get(idx as usize) {
+        Some(c) => super::option::option_some(Value::Str(intern_str(&c.to_string()))),
+        None    => super::option::option_none(),
     }
 }
 
 /// Unchecked character access. Panics on out-of-bounds.
 #[track_caller]
-pub fn str_char(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => {
-            let h   = match &es[0] { Value::Str(h) => h.clone(), _ => panic!("str_char: expected Str") };
-            let idx = match &es[1] { Value::Int(n) => *n as usize, _ => panic!("str_char: expected Int") };
-            let chars: Vec<char> = get_str(h).chars().collect();
-            Value::Str(intern_str(&chars[idx].to_string()))
-        }
-        _ => panic!("str_char: expected Tuple(Str, Int)"),
-    }
+pub fn str_char(s: std::sync::Arc<str>, idx: i64) -> Value {
+    let chars: Vec<char> = get_str(&s).chars().collect();
+    Value::Str(intern_str(&chars[idx as usize].to_string()))
 }
 
 #[track_caller]
-pub fn str_char_code(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => {
-            let h   = match &es[0] { Value::Str(h) => h.clone(), _ => panic!("str_char_code: expected Str") };
-            let idx = match &es[1] { Value::Int(n) => *n as usize, _ => panic!("str_char_code: expected Int") };
-            let chars: Vec<char> = get_str(h).chars().collect();
-            Value::Int(chars[idx] as u32 as i64)
-        }
-        _ => panic!("str_char_code: expected Tuple(Str, Int)"),
-    }
+pub fn str_char_code(s: std::sync::Arc<str>, idx: i64) -> Value {
+    let chars: Vec<char> = get_str(&s).chars().collect();
+    Value::Int(chars[idx as usize] as u32 as i64)
 }
 
 #[track_caller]
-pub fn str_slice(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 3 => {
-            let h     = match &es[0] { Value::Str(h) => h.clone(), _ => panic!("str_slice: expected Str") };
-            let start = match &es[1] { Value::Int(n) => *n as usize, _ => panic!("str_slice: expected Int start") };
-            let end   = match &es[2] { Value::Int(n) => *n as usize, _ => panic!("str_slice: expected Int end") };
-            let s = get_str(h);
-            let chars: Vec<char> = s.chars().collect();
-            let end = end.min(chars.len());
-            let slice: String = chars[start..end].iter().collect();
-            Value::Str(intern_str(&slice))
-        }
-        _ => panic!("str_slice: expected Tuple(Str, Int, Int)"),
-    }
+pub fn str_slice(s: std::sync::Arc<str>, start: i64, end: i64) -> Value {
+    let start = start as usize;
+    let text = get_str(&s);
+    let chars: Vec<char> = text.chars().collect();
+    let end = (end as usize).min(chars.len());
+    let slice: String = chars[start..end].iter().collect();
+    Value::Str(intern_str(&slice))
 }
 
 #[track_caller]
-pub fn str_split(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-            (Value::Str(content_h), Value::Str(delim_h)) => {
-                let content = get_str(content_h);
-                let delim   = get_str(delim_h);
-                let parts: Vec<Value> = content.split(delim.as_str())
-                    .map(|s| Value::Str(intern_str(s)))
-                    .collect();
-                Value::List(parts)
-            }
-            _ => panic!("str_split: expected two Str values"),
-        },
-        _ => panic!("str_split: expected Tuple(Str, Str)"),
-    }
+pub fn str_split(content: std::sync::Arc<str>, delim: std::sync::Arc<str>) -> Value {
+    let content = get_str(&content);
+    let delim   = get_str(&delim);
+    let parts: Vec<Value> = content.split(delim.as_str())
+        .map(|s| Value::Str(intern_str(s)))
+        .collect();
+    Value::List(parts)
 }
 
 #[track_caller]
-pub fn str_starts_with(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-            (Value::Str(hay_h), Value::Str(pre_h)) => {
-                Value::Bool(get_str(hay_h).starts_with(get_str(pre_h).as_str()))
-            }
-            _ => panic!("str_starts_with: expected two Str values"),
-        },
-        _ => panic!("str_starts_with: expected Tuple(Str, Str)"),
-    }
+pub fn str_starts_with(hay: std::sync::Arc<str>, pre: std::sync::Arc<str>) -> Value {
+    Value::Bool(get_str(&hay).starts_with(get_str(&pre).as_str()))
 }
 
 #[track_caller]
-pub fn str_ends_with(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-            (Value::Str(hay_h), Value::Str(suf_h)) => {
-                Value::Bool(get_str(hay_h).ends_with(get_str(suf_h).as_str()))
-            }
-            _ => panic!("str_ends_with: expected two Str values"),
-        },
-        _ => panic!("str_ends_with: expected Tuple(Str, Str)"),
-    }
+pub fn str_ends_with(hay: std::sync::Arc<str>, suf: std::sync::Arc<str>) -> Value {
+    Value::Bool(get_str(&hay).ends_with(get_str(&suf).as_str()))
 }
 
 #[track_caller]
-pub fn str_trim(s: Value) -> Value {
-    match s {
-        Value::Str(h) => Value::Str(intern_str(get_str(h).trim())),
-        _ => panic!("str_trim: expected Str"),
-    }
+pub fn str_trim(s: std::sync::Arc<str>) -> Value {
+    Value::Str(intern_str(get_str(&s).trim()))
 }
 
 #[track_caller]
-pub fn str_contains(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-            (Value::Str(hay_h), Value::Str(need_h)) => {
-                Value::Bool(get_str(hay_h).contains(get_str(need_h).as_str()))
-            }
-            _ => panic!("str_contains: expected two Str values"),
-        },
-        _ => panic!("str_contains: expected Tuple(Str, Str)"),
-    }
+pub fn str_contains(hay: std::sync::Arc<str>, need: std::sync::Arc<str>) -> Value {
+    Value::Bool(get_str(&hay).contains(get_str(&need).as_str()))
 }
 
 #[track_caller]
-pub fn str_eq(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-            (Value::Str(a), Value::Str(b)) => Value::Bool(get_str(a) == get_str(b)),
-            _ => panic!("str_eq: expected two Str values"),
-        },
-        _ => panic!("str_eq: expected Tuple(Str, Str)"),
-    }
+pub fn str_eq(a: std::sync::Arc<str>, b: std::sync::Arc<str>) -> Value {
+    Value::Bool(get_str(&a) == get_str(&b))
 }
 
 /// text_eq(Text, Text) -> Bool. axis-canonical alias for str_eq (different
 /// registry name, identical semantics — Text is the canonical type label).
 #[track_caller]
-pub fn text_eq(args: Value) -> Value { str_eq(args) }
+pub fn text_eq(a: std::sync::Arc<str>, b: std::sync::Arc<str>) -> Value { str_eq(a, b) }
 
 /// text_lt/text_lte/text_gt/text_gte(Text, Text) -> Bool — lexicographic
 /// ordering by Unicode scalar value (Rust's `str` Ord, i.e. UTF-8 byte order).
@@ -162,14 +90,8 @@ pub fn text_eq(args: Value) -> Value { str_eq(args) }
 macro_rules! text_cmp_op {
     ($name:ident, $op:tt) => {
         #[track_caller]
-        pub fn $name(args: Value) -> Value {
-            match args {
-                Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-                    (Value::Str(a), Value::Str(b)) => Value::Bool(get_str(a) $op get_str(b)),
-                    _ => panic!(concat!(stringify!($name), ": expected two Str values")),
-                },
-                _ => panic!(concat!(stringify!($name), ": expected Tuple(Str, Str)")),
-            }
+        pub fn $name(a: std::sync::Arc<str>, b: std::sync::Arc<str>) -> Value {
+            Value::Bool(get_str(&a) $op get_str(&b))
         }
     };
 }
@@ -183,110 +105,70 @@ text_cmp_op!(text_gte, >=);
 /// runtime), mirroring the str_eq/text_eq pairing — str_ is the surface name,
 /// text_ the canonical registry name.
 #[track_caller]
-pub fn str_lt(args: Value) -> Value { text_lt(args) }
+pub fn str_lt(a: std::sync::Arc<str>, b: std::sync::Arc<str>) -> Value { text_lt(a, b) }
 #[track_caller]
-pub fn str_lte(args: Value) -> Value { text_lte(args) }
+pub fn str_lte(a: std::sync::Arc<str>, b: std::sync::Arc<str>) -> Value { text_lte(a, b) }
 #[track_caller]
-pub fn str_gt(args: Value) -> Value { text_gt(args) }
+pub fn str_gt(a: std::sync::Arc<str>, b: std::sync::Arc<str>) -> Value { text_gt(a, b) }
 #[track_caller]
-pub fn str_gte(args: Value) -> Value { text_gte(args) }
+pub fn str_gte(a: std::sync::Arc<str>, b: std::sync::Arc<str>) -> Value { text_gte(a, b) }
 
 /// Returns the char-index of the first occurrence of needle in haystack, or -1 if not found.
 #[track_caller]
-pub fn str_index_of(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-            (Value::Str(hay_h), Value::Str(need_h)) => {
-                let hay    = get_str(hay_h);
-                let needle = get_str(need_h);
-                let idx = hay.find(needle.as_str())
-                    .map(|byte_pos| hay[..byte_pos].chars().count() as i64)
-                    .unwrap_or(-1);
-                Value::Int(idx)
-            }
-            _ => panic!("str_index_of: expected two Str values"),
-        },
-        _ => panic!("str_index_of: expected Tuple(Str, Str)"),
-    }
+pub fn str_index_of(hay: std::sync::Arc<str>, need: std::sync::Arc<str>) -> Value {
+    let hay    = get_str(&hay);
+    let needle = get_str(&need);
+    let idx = hay.find(needle.as_str())
+        .map(|byte_pos| hay[..byte_pos].chars().count() as i64)
+        .unwrap_or(-1);
+    Value::Int(idx)
 }
 
 #[track_caller]
-pub fn str_before(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-            (Value::Str(sh), Value::Str(dh)) => {
-                let s = get_str(sh);
-                let d = get_str(dh);
-                let result = s.split_once(d.as_str())
-                    .map(|(before, _)| before)
-                    .unwrap_or(s.as_str());
-                Value::Str(intern_str(result))
-            }
-            _ => panic!("str_before: expected two Str values"),
-        },
-        _ => panic!("str_before: expected Tuple(Str, Str)"),
-    }
+pub fn str_before(s: std::sync::Arc<str>, d: std::sync::Arc<str>) -> Value {
+    let s = get_str(&s);
+    let d = get_str(&d);
+    let result = s.split_once(d.as_str())
+        .map(|(before, _)| before)
+        .unwrap_or(s.as_str());
+    Value::Str(intern_str(result))
 }
 
 #[track_caller]
-pub fn str_after(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-            (Value::Str(sh), Value::Str(dh)) => {
-                let s = get_str(sh);
-                let d = get_str(dh);
-                let result = s.split_once(d.as_str())
-                    .map(|(_, after)| after)
-                    .unwrap_or("");
-                Value::Str(intern_str(result))
-            }
-            _ => panic!("str_after: expected two Str values"),
-        },
-        _ => panic!("str_after: expected Tuple(Str, Str)"),
-    }
+pub fn str_after(s: std::sync::Arc<str>, d: std::sync::Arc<str>) -> Value {
+    let s = get_str(&s);
+    let d = get_str(&d);
+    let result = s.split_once(d.as_str())
+        .map(|(_, after)| after)
+        .unwrap_or("");
+    Value::Str(intern_str(result))
 }
 
 #[track_caller]
-pub fn str_between(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 3 => match (&es[0], &es[1], &es[2]) {
-            (Value::Str(sh), Value::Str(start_h), Value::Str(end_h)) => {
-                let s = get_str(sh);
-                let start = get_str(start_h);
-                let end = get_str(end_h);
-                let after_start = s.split_once(start.as_str())
-                    .map(|(_, after)| after)
-                    .unwrap_or(s.as_str());
-                let result = after_start.split_once(end.as_str())
-                    .map(|(before, _)| before)
-                    .unwrap_or(after_start);
-                Value::Str(intern_str(result))
-            }
-            _ => panic!("str_between: expected three Str values"),
-        },
-        _ => panic!("str_between: expected Tuple(Str, Str, Str)"),
-    }
+pub fn str_between(s: std::sync::Arc<str>, start: std::sync::Arc<str>, end: std::sync::Arc<str>) -> Value {
+    let s = get_str(&s);
+    let start = get_str(&start);
+    let end = get_str(&end);
+    let after_start = s.split_once(start.as_str())
+        .map(|(_, after)| after)
+        .unwrap_or(s.as_str());
+    let result = after_start.split_once(end.as_str())
+        .map(|(before, _)| before)
+        .unwrap_or(after_start);
+    Value::Str(intern_str(result))
 }
 
 /// bool_to_str: Bool → Text. Returns "true" or "false".
 #[track_caller]
-pub fn bool_to_str(v: Value) -> Value {
-    match v {
-        Value::Bool(b) => Value::Str(intern_str(if b { "true" } else { "false" })),
-        _ => panic!("bool_to_str: expected Bool, got {:?}", v),
-    }
+pub fn bool_to_str(b: bool) -> Value {
+    Value::Str(intern_str(if b { "true" } else { "false" }))
 }
 
 /// chr: takes Int (Unicode code point), returns single-char Str.
 #[track_caller]
-pub fn chr(v: Value) -> Value {
-    match v {
-        Value::Int(n) => {
-            let c = char::from_u32(n as u32).unwrap_or('\0');
-            Value::Str(intern_str(&c.to_string()))
-        }
-        _ => panic!("chr: expected Int, got {:?}", v),
-    }
+pub fn chr(n: i64) -> Value {
+    let c = char::from_u32(n as u32).unwrap_or('\0');
+    Value::Str(intern_str(&c.to_string()))
 }
 
 /// `str_cmp(a, b) -> Int` — BYTE-order comparison (memcmp semantics, the
@@ -297,70 +179,46 @@ pub fn chr(v: Value) -> Value {
 /// per-char comparison loops over an alphabet text because no ordering
 /// primitive existed.
 #[track_caller]
-pub fn str_cmp(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() == 2 => {
-            let a = match &es[0] {
-                Value::Str(h) => get_str(h),
-                other => panic!("str_cmp: expected Str, got {:?}", other),
-            };
-            let b = match &es[1] {
-                Value::Str(h) => get_str(h),
-                other => panic!("str_cmp: expected Str, got {:?}", other),
-            };
-            let r = match a.as_bytes().cmp(b.as_bytes()) {
-                std::cmp::Ordering::Less => -1,
-                std::cmp::Ordering::Equal => 0,
-                std::cmp::Ordering::Greater => 1,
-            };
-            Value::Int(r)
-        }
-        other => panic!("str_cmp: expected Tuple(Text, Text), got {:?}", other),
-    }
+pub fn str_cmp(a: std::sync::Arc<str>, b: std::sync::Arc<str>) -> Value {
+    let a = get_str(&a);
+    let b = get_str(&b);
+    let r = match a.as_bytes().cmp(b.as_bytes()) {
+        std::cmp::Ordering::Less => -1,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => 1,
+    };
+    Value::Int(r)
 }
 
 /// `ord(s) -> Int` — the Unicode code point of the FIRST char of `s`; -1 for
 /// the empty string. The inverse of `chr` (same precedent as str_cmp).
 #[track_caller]
-pub fn ord(v: Value) -> Value {
-    match v {
-        Value::Str(h) => {
-            let s = get_str(&h);
-            match s.chars().next() {
-                Some(c) => Value::Int(c as i64),
-                None => Value::Int(-1),
-            }
-        }
-        other => panic!("ord: expected Text, got {:?}", other),
+pub fn ord(s: std::sync::Arc<str>) -> Value {
+    let s = get_str(&s);
+    match s.chars().next() {
+        Some(c) => Value::Int(c as i64),
+        None => Value::Int(-1),
     }
 }
 
 /// `str_join(list, sep) -> Text` — join a `ValueList(Text)` with `sep`.
 #[track_caller]
-pub fn str_join(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() == 2 => {
-            let sep = match &es[1] {
+pub fn str_join(list: Value, sep: std::sync::Arc<str>) -> Value {
+    let sep = get_str(&sep);
+    let parts: Vec<String> = match list {
+        Value::List(items) => items
+            .iter()
+            .map(|v| match v {
                 Value::Str(h) => get_str(h),
-                other => panic!("str_join: expected Str for sep, got {:?}", other),
-            };
-            let parts: Vec<String> = match &es[0] {
-                Value::List(items) => items
-                    .iter()
-                    .map(|v| match v {
-                        Value::Str(h) => get_str(h),
-                        other => panic!(
-                            "str_join: ValueList element must be Str, got {:?}",
-                            other
-                        ),
-                    })
-                    .collect(),
-                other => panic!("str_join: expected ValueList of Str, got {:?}", other),
-            };
-            Value::Str(intern_str(&parts.join(&sep)))
-        }
-        _ => panic!("str_join: expected Tuple(ValueList, Text), got {:?}", args),
-    }
+                other => panic!(
+                    "str_join: ValueList element must be Str, got {:?}",
+                    other
+                ),
+            })
+            .collect(),
+        other => panic!("str_join: expected ValueList of Str, got {:?}", other),
+    };
+    Value::Str(intern_str(&parts.join(&sep)))
 }
 
 // ── Phase 3 — text emit helpers (BRIDGE_FOREIGN_FN_FNREF_M1) ─────────────────
@@ -368,114 +226,64 @@ pub fn str_join(args: Value) -> Value {
 /// `str_replace(s, from, to) -> Text` — replace every occurrence of `from`
 /// in `s` with `to`.
 #[track_caller]
-pub fn str_replace(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() == 3 => match (&es[0], &es[1], &es[2]) {
-            (Value::Str(s), Value::Str(from), Value::Str(to)) => {
-                let result = get_str(s).replace(&get_str(from), &get_str(to));
-                Value::Str(intern_str(&result))
-            }
-            (a, b, c) => panic!(
-                "str_replace: expected three Str values, got ({:?}, {:?}, {:?})",
-                a, b, c
-            ),
-        },
-        _ => panic!("str_replace: expected Tuple(Str, Str, Str), got {:?}", args),
-    }
+pub fn str_replace(s: std::sync::Arc<str>, from: std::sync::Arc<str>, to: std::sync::Arc<str>) -> Value {
+    let result = get_str(&s).replace(&get_str(&from), &get_str(&to));
+    Value::Str(intern_str(&result))
 }
 
 /// `str_repeat(s, n) -> Text` — `n` copies of `s` concatenated.
 #[track_caller]
-pub fn str_repeat(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() == 2 => match (&es[0], &es[1]) {
-            (Value::Str(s), Value::Int(n)) => {
-                let count = if *n > 0 { *n as usize } else { 0 };
-                Value::Str(intern_str(&get_str(s).repeat(count)))
-            }
-            (a, b) => panic!(
-                "str_repeat: expected Tuple(Str, Int), got ({:?}, {:?})",
-                a, b
-            ),
-        },
-        _ => panic!("str_repeat: expected Tuple(Str, Int), got {:?}", args),
-    }
+pub fn str_repeat(s: std::sync::Arc<str>, n: i64) -> Value {
+    let count = if n > 0 { n as usize } else { 0 };
+    Value::Str(intern_str(&get_str(&s).repeat(count)))
 }
 
 /// `str_to_upper(s) -> Text` — ASCII / Unicode uppercase. Idempotent.
 #[track_caller]
-pub fn str_to_upper(v: Value) -> Value {
-    match v {
-        Value::Str(h) => Value::Str(intern_str(&get_str(h).to_uppercase())),
-        other => panic!("str_to_upper: expected Str, got {:?}", other),
-    }
+pub fn str_to_upper(s: std::sync::Arc<str>) -> Value {
+    Value::Str(intern_str(&get_str(&s).to_uppercase()))
 }
 
 /// `str_to_lower(s) -> Text` — ASCII / Unicode lowercase. Idempotent.
 #[track_caller]
-pub fn str_to_lower(v: Value) -> Value {
-    match v {
-        Value::Str(h) => Value::Str(intern_str(&get_str(h).to_lowercase())),
-        other => panic!("str_to_lower: expected Str, got {:?}", other),
-    }
+pub fn str_to_lower(s: std::sync::Arc<str>) -> Value {
+    Value::Str(intern_str(&get_str(&s).to_lowercase()))
 }
 
 /// `str_pad_left(s, width, pad) -> Text` — left-pad `s` with `pad` to total
 /// `width` chars. If `s` is already at least `width` chars long, returns `s`
 /// unchanged. `pad` is repeated and truncated as needed.
 #[track_caller]
-pub fn str_pad_left(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() == 3 => match (&es[0], &es[1], &es[2]) {
-            (Value::Str(s), Value::Int(width), Value::Str(pad)) => {
-                let s_str = get_str(s);
-                let pad_str = get_str(pad);
-                let cur = s_str.chars().count() as i64;
-                if cur >= *width || pad_str.is_empty() {
-                    return Value::Str(s.clone());
-                }
-                let need = (*width - cur) as usize;
-                let mut prefix = String::new();
-                let mut iter = pad_str.chars().cycle();
-                for _ in 0..need {
-                    prefix.push(iter.next().unwrap());
-                }
-                Value::Str(intern_str(&format!("{}{}", prefix, s_str)))
-            }
-            (a, b, c) => panic!(
-                "str_pad_left: expected Tuple(Str, Int, Str), got ({:?}, {:?}, {:?})",
-                a, b, c
-            ),
-        },
-        _ => panic!("str_pad_left: expected Tuple(Str, Int, Str), got {:?}", args),
+pub fn str_pad_left(s: std::sync::Arc<str>, width: i64, pad: std::sync::Arc<str>) -> Value {
+    let s_str = get_str(&s);
+    let pad_str = get_str(&pad);
+    let cur = s_str.chars().count() as i64;
+    if cur >= width || pad_str.is_empty() {
+        return Value::Str(s);
     }
+    let need = (width - cur) as usize;
+    let mut prefix = String::new();
+    let mut iter = pad_str.chars().cycle();
+    for _ in 0..need {
+        prefix.push(iter.next().unwrap());
+    }
+    Value::Str(intern_str(&format!("{}{}", prefix, s_str)))
 }
 
 /// `str_pad_right(s, width, pad) -> Text` — right-pad mirror of `str_pad_left`.
 #[track_caller]
-pub fn str_pad_right(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() == 3 => match (&es[0], &es[1], &es[2]) {
-            (Value::Str(s), Value::Int(width), Value::Str(pad)) => {
-                let s_str = get_str(s);
-                let pad_str = get_str(pad);
-                let cur = s_str.chars().count() as i64;
-                if cur >= *width || pad_str.is_empty() {
-                    return Value::Str(s.clone());
-                }
-                let need = (*width - cur) as usize;
-                let mut suffix = String::new();
-                let mut iter = pad_str.chars().cycle();
-                for _ in 0..need {
-                    suffix.push(iter.next().unwrap());
-                }
-                Value::Str(intern_str(&format!("{}{}", s_str, suffix)))
-            }
-            (a, b, c) => panic!(
-                "str_pad_right: expected Tuple(Str, Int, Str), got ({:?}, {:?}, {:?})",
-                a, b, c
-            ),
-        },
-        _ => panic!("str_pad_right: expected Tuple(Str, Int, Str), got {:?}", args),
+pub fn str_pad_right(s: std::sync::Arc<str>, width: i64, pad: std::sync::Arc<str>) -> Value {
+    let s_str = get_str(&s);
+    let pad_str = get_str(&pad);
+    let cur = s_str.chars().count() as i64;
+    if cur >= width || pad_str.is_empty() {
+        return Value::Str(s);
     }
+    let need = (width - cur) as usize;
+    let mut suffix = String::new();
+    let mut iter = pad_str.chars().cycle();
+    for _ in 0..need {
+        suffix.push(iter.next().unwrap());
+    }
+    Value::Str(intern_str(&format!("{}{}", s_str, suffix)))
 }
