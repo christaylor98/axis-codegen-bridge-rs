@@ -174,3 +174,43 @@ leaked per list construction**, unbounded in construction count. It has
 been reverted out of this tree. Do not re-propose a shared-payload
 candidate without addressing the small-list construction regression, the
 three mutation sites above, and the `Send + Sync` requirement.
+
+## `int_div` / `int_mod` are EUCLIDEAN — this is shared infrastructure
+
+Changed by `AXVERITY_FORMAT_LAND_AND_WIRE_V1` / P0 (2026-08-18) in
+`src/runtime/arith.rs`. **This crate is used by both `axVerity-working`
+and `axVerity-working2`**, so the change is stated here as well as in the
+consuming repo.
+
+`int_div` was `x / y` and `int_mod` was `x % y`, which truncate toward
+zero and return a **negative remainder** for a negative left operand.
+They are now `x.div_euclid(y)` and `x.rem_euclid(y)`: a remainder is
+always in `[0, |y|)`.
+
+**Why.** M1 has no byte-width load. `mem_read_int_raw` is an 8-byte
+**signed** read, so a decoder at a record boundary pulls in the following
+seven bytes, and any of them setting the top bit makes the word negative.
+`int_mod(v, 256)` then returned a negative "byte", which was added to a
+read cursor as a length and drove it below zero —
+`mem_read_int_raw: offset must be >= 0, got -83`. Fixing it at the call
+site would have left the hazard in place for the next decoder.
+
+**Both, not just the remainder.** For a power-of-two divisor, Euclidean
+division *is* an arithmetic shift and Euclidean remainder *is* a bit
+mask, so `int_mod(int_div(v, 256^k), 256)` yields byte `k` of `v`'s
+two's-complement representation for every `k`. Leaving `int_div`
+truncating would make every byte above the lowest silently wrong on a
+negative word.
+
+**Compatibility.** Euclidean and truncated agree exactly on non-negative
+operands. Every pre-existing `int_div`/`int_mod` call site in both M1
+trees was checked and takes a non-negative left operand, so no existing
+caller changed behaviour. `tests/unit_runtime.rs` carries the semantics:
+`test_int_mod_negative_dividend` (now `-7 mod 3 == 2`, with the
+`x == div*y + mod` identity asserted alongside),
+`test_int_mod_byte_extraction_is_unsigned`, and
+`test_int_div_negative_is_arithmetic_shift`.
+
+If you need C-style truncated remainder, it is **not** available as a
+primitive and should not be added without a measured caller that needs
+it — the decoding hazard above is the reason.

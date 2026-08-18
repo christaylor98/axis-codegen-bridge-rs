@@ -52,10 +52,54 @@ fn test_int_mod_exact_divisor() {
     assert_eq!(arith::int_mod(9, 3), Value::Int(0));
 }
 
+// AXVERITY_FORMAT_LAND_AND_WIRE_V1 / P0: int_div and int_mod are EUCLIDEAN.
+// This test previously asserted the truncated result (-1) and is the record of
+// the change: a negative left operand now yields a NON-NEGATIVE remainder, so
+// -7 mod 3 is 2, not -1. See the rationale at arith.rs::int_div.
 #[test]
 fn test_int_mod_negative_dividend() {
     setup();
-    assert_eq!(arith::int_mod(-7, 3), Value::Int(-1));
+    assert_eq!(arith::int_mod(-7, 3), Value::Int(2));
+    // The division identity still holds: x == div*y + mod.
+    assert_eq!(arith::int_div(-7, 3), Value::Int(-3));
+    assert_eq!(-3 * 3 + 2, -7);
+}
+
+/// The P0 hazard itself, at the primitive. `mem_read_int_raw` returns a signed
+/// i64, so a record boundary whose bytes have the top bit set reads back
+/// negative; extracting a byte must still yield a byte.
+#[test]
+fn test_int_mod_byte_extraction_is_unsigned() {
+    setup();
+    // 0xADADADADADADADAD as i64 — the exact word the original panic decoded.
+    let v = 0xADADADADADADADADu64 as i64;
+    assert!(v < 0);
+    // Every byte position, low to high, must come back as 0xAD.
+    let mut shift = 1i64;
+    for k in 0..8 {
+        let byte = match arith::int_mod(
+            match arith::int_div(v, shift) { Value::Int(n) => n, _ => unreachable!() },
+            256,
+        ) {
+            Value::Int(n) => n,
+            _ => unreachable!(),
+        };
+        assert_eq!(byte, 0xAD, "byte {} of {:#x} decoded as {}", k, v, byte);
+        if k < 7 { shift *= 256; }
+    }
+    // And the specific value from the panic message: not -83.
+    assert_eq!(arith::int_mod(v, 256), Value::Int(173));
+}
+
+/// Euclidean division on a power-of-two divisor is an arithmetic shift, which
+/// is the property byte extraction above depends on.
+#[test]
+fn test_int_div_negative_is_arithmetic_shift() {
+    setup();
+    assert_eq!(arith::int_div(-1, 256), Value::Int(-1));
+    assert_eq!(arith::int_div(-256, 256), Value::Int(-1));
+    assert_eq!(arith::int_div(-257, 256), Value::Int(-2));
+    assert_eq!(arith::int_mod(-1, 256), Value::Int(255));
 }
 
 #[test]

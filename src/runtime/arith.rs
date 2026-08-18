@@ -66,10 +66,46 @@ cmp_op!(float_lte, Float, "Float", <=);
 cmp_op!(float_gt,  Float, "Float", >);
 cmp_op!(float_gte, Float, "Float", >=);
 
+// ── int_div / int_mod: EUCLIDEAN, not truncated ───────────────────────────
+// AXVERITY_FORMAT_LAND_AND_WIRE_V1 / P0 (hard-limit FIX_INT_MOD_FIRST).
+//
+// These were `/` and `%`, which truncate toward zero and therefore return a
+// NEGATIVE remainder for a negative left operand. That is a live hazard for
+// every M1 binary decoder, because M1 has no byte-width load: the only way to
+// read a byte is `mem_read_int_raw` (an 8-byte SIGNED i64 read) followed by
+// arithmetic. Any byte with the top bit set at a record boundary makes that
+// word negative, `int_mod(v, 256)` then returns a negative "byte", it is added
+// to a cursor as a varint length, and the cursor walks BACKWARDS off the front
+// of the buffer — surfacing as `mem_read_int_raw: offset must be >= 0, got
+// -83` (0xAD decoded as 173-256). It surfaced only because one probe corpus
+// had random payload bytes; an ASCII structure stream never sets the top bit
+// and never triggers it.
+//
+// Euclidean semantics fix this at the primitive rather than at a call site:
+// `rem_euclid` is always in [0, |y|), so a decoded byte is always a byte.
+//
+// BOTH are changed, and that is deliberate. For a power-of-two divisor
+// Euclidean division is exactly an arithmetic shift and Euclidean remainder is
+// exactly a bit mask, so `int_mod(int_div(v, 256^k), 256)` extracts byte k of
+// v's two's-complement representation correctly at EVERY k — which is what a
+// decoder needs. Fixing only the remainder would leave `int_div` rounding
+// toward zero, so extracting any byte above the lowest would still be silently
+// wrong on a negative word: the same hazard, half-fixed, which is the failure
+// mode the fix exists to prevent.
+//
+// Blast radius, checked rather than assumed: every existing `int_div`/`int_mod`
+// call site in both M1 trees takes a non-negative left operand (loop indices,
+// lengths, elapsed-time deltas, and a hash kept in range by construction), and
+// Euclidean and truncated agree exactly on non-negative operands. No current
+// caller's behaviour changes.
+//
+// Reproduction: experiments/intmod-m1/ sweeps all 256 byte values through a
+// real record boundary in real raw memory. Before this change: 128 failures,
+// first at byte 128, and 0xAD decodes to -83. After: 0 failures.
 #[track_caller]
 pub fn int_div(x: i64, y: i64) -> Value {
     if y == 0 { panic!("int_div: division by zero") }
-    Value::Int(x / y)
+    Value::Int(x.div_euclid(y))
 }
 
 #[track_caller]
@@ -77,14 +113,14 @@ pub fn int_div_checked(x: i64, y: i64) -> Value {
     if y == 0 {
         super::option::option_none()
     } else {
-        super::option::option_some(Value::Int(x / y))
+        super::option::option_some(Value::Int(x.div_euclid(y)))
     }
 }
 
 #[track_caller]
 pub fn int_mod(x: i64, y: i64) -> Value {
     if y == 0 { panic!("int_mod: division by zero") }
-    Value::Int(x % y)
+    Value::Int(x.rem_euclid(y))
 }
 
 // value_eq has a second registered alias `__eq__` -> the SAME Rust symbol
