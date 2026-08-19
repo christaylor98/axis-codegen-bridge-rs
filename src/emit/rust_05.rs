@@ -206,6 +206,8 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("proc_args",  "axis_codegen_bridge::runtime::process::proc_args");
     m.insert("proc_exit",  "axis_codegen_bridge::runtime::process::proc_exit");
     m.insert("proc_sleep", "axis_codegen_bridge::runtime::process::proc_sleep");
+    // AXVERITY_SHIM_BRIDGE_PRIMS_V1 — spawn+wait+exit code (process.rs).
+    m.insert("proc_run",   "axis_codegen_bridge::runtime::process::proc_run");
     m.insert("sleep",      "axis_codegen_bridge::runtime::process::sleep");
     m.insert("now_unix_nanos", "axis_codegen_bridge::runtime::process::now_unix_nanos");
     m.insert("argv",       "axis_codegen_bridge::runtime::process::argv");
@@ -309,6 +311,8 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("bytes_hash",           "axis_codegen_bridge::runtime::bytes_io::bytes_hash");
     m.insert("fs_mkdir_p",           "axis_codegen_bridge::runtime::bytes_io::fs_mkdir_p");
     m.insert("bytes_to_text",        "axis_codegen_bridge::runtime::bytes_io::bytes_to_text");
+    // AXVERITY_SHIM_BRIDGE_PRIMS_V1 — the predicate bytes_to_text lacks.
+    m.insert("bytes_is_utf8",        "axis_codegen_bridge::runtime::bytes_io::bytes_is_utf8");
 
     // ── Postgres-backed durable store (pg_store.rs — AXVERITY_POSTGRES_STORE_SWAP_V1) ─
     // Objects / ledger / anchor live in postgres; postgres's WAL + group commit
@@ -998,6 +1002,11 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("bytes_hash",        vec![Bytes]);
     m.insert("bytes_to_text",     vec![Bytes]);
     m.insert("proc_sleep",        vec![Int]);
+    // AXVERITY_SHIM_BRIDGE_PRIMS_V1. proc_run's argv slot is `Value` for the
+    // same reason str_join's is: a list arrives as a whole Value and the callee
+    // walks it. bytes_is_utf8 mirrors bytes_to_text exactly.
+    m.insert("proc_run",          vec![Text, Value]);
+    m.insert("bytes_is_utf8",     vec![Bytes]);
     m.insert("sleep",             vec![Int]);
     m.insert("channel_send",      vec![Text, Value]);
     m.insert("channel_depth",     vec![Text]);

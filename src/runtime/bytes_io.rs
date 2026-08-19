@@ -218,10 +218,100 @@ pub fn bytes_to_text(b: Vec<u8>) -> Value {
     }
 }
 
+// ── AXVERITY_SHIM_BRIDGE_PRIMS_V1 ────────────────────────────────────────────
+//
+// gap:axverity-shim-query-needs-utf8-predicate.
+//
+// `bytes_is_utf8(b: Bytes) -> Bool`
+//
+// Is `b` valid UTF-8? That is the whole capability, and it exists because
+// `bytes_to_text` above answers the same question by PANICKING (line 217), so a
+// caller holding untrusted bytes has no way to ask before converting. The shim
+// had to answer it in ~90 lines of M1 walking the Unicode lead/continuation
+// table one byte at a time, because M1 has no byte-width load either — a
+// validator built out of `mem_read_raw(ptr, off, 1)`.
+//
+// Deliberately a PREDICATE and not a lossy or validating converter. The
+// converter already exists; what was missing is the question. A
+// `bytes_to_text_checked` returning `""` on invalid input would also have
+// worked, and was rejected: it makes an empty body and a malformed body
+// indistinguishable, which is a decision about error reporting, and those
+// belong to the caller (hard limit NO_ORCHESTRATION_IN_RUST).
+//
+// This accepts exactly what `std::str::from_utf8` accepts, which is exactly
+// what `bytes_to_text` accepts — overlongs, surrogates and out-of-range lead
+// bytes rejected, every valid multi-byte sequence accepted. Sharing the
+// implementation with the converter is the point: a hand-written predicate can
+// drift from the converter it guards, and a predicate that is stricter than its
+// converter silently narrows the accepted surface (the ASCII-only shortcut the
+// shim's own test suite exists to catch).
+#[track_caller]
+pub fn bytes_is_utf8(b: Vec<u8>) -> Value {
+    Value::Bool(std::str::from_utf8(&b).is_ok())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::runtime::value::intern_str;
+
+    fn is_utf8(v: &[u8]) -> bool {
+        match bytes_is_utf8(v.to_vec()) {
+            Value::Bool(b) => b,
+            other => panic!("expected Bool, got {:?}", other),
+        }
+    }
+
+    /// AXVERITY_SHIM_BRIDGE_PRIMS_V1. The predicate must accept EXACTLY what
+    /// `bytes_to_text` accepts. The failure mode this guards is not "rejects
+    /// something valid" in the abstract — it is the ASCII-only shortcut
+    /// (reject every byte >= 0x80), which passes every malformed case below and
+    /// silently narrows the accepted surface to ASCII.
+    #[test]
+    fn bytes_is_utf8_accepts_every_valid_multi_byte_sequence() {
+        assert!(is_utf8(b""), "empty is valid");
+        assert!(is_utf8(b"plain ascii"));
+        assert!(is_utf8("\u{e9}".as_bytes()), "2-byte C3 A9");
+        assert!(is_utf8("\u{20ac}".as_bytes()), "3-byte E2 82 AC");
+        assert!(is_utf8("\u{10348}".as_bytes()), "4-byte F0 90 8D 88");
+        assert!(is_utf8("\u{10ffff}".as_bytes()), "the last scalar value");
+        assert!(is_utf8("\u{7f}\u{80}\u{7ff}\u{800}\u{ffff}".as_bytes()), "every boundary");
+    }
+
+    #[test]
+    fn bytes_is_utf8_rejects_exactly_what_bytes_to_text_panics_on() {
+        assert!(!is_utf8(&[0xFF, 0xFE]), "not a lead byte at all");
+        assert!(!is_utf8(&[0xC0, 0x80]), "overlong 2-byte encoding of U+0000");
+        assert!(!is_utf8(&[0xC1, 0xBF]), "overlong 2-byte encoding of U+007F");
+        assert!(!is_utf8(&[0xE0, 0x80, 0x80]), "overlong 3-byte");
+        assert!(!is_utf8(&[0xED, 0xA0, 0x80]), "U+D800, a UTF-16 surrogate");
+        assert!(!is_utf8(&[0xF0, 0x8F, 0xBF, 0xBF]), "overlong 4-byte");
+        assert!(!is_utf8(&[0xF4, 0x90, 0x80, 0x80]), "beyond U+10FFFF");
+        assert!(!is_utf8(&[0xF5, 0x80, 0x80, 0x80]), "F5..FF is past Unicode");
+        assert!(!is_utf8(&[0xC3]), "lead byte, continuation missing");
+        assert!(!is_utf8(&[0x80]), "bare continuation byte");
+    }
+
+    /// The predicate and the converter must agree on every one of the 256
+    /// single-byte inputs and on a sweep of two-byte ones. This is the arm that
+    /// catches drift: it never asserts what the answer IS, only that both fns
+    /// give the same one.
+    #[test]
+    fn bytes_is_utf8_agrees_with_bytes_to_text_over_a_byte_sweep() {
+        let mut checked = 0usize;
+        for a in 0u16..=255 {
+            for b in 0u16..=255 {
+                let v = vec![a as u8, b as u8];
+                let converts = std::panic::catch_unwind(|| bytes_to_text(v.clone())).is_ok();
+                assert_eq!(
+                    is_utf8(&v), converts,
+                    "predicate and converter disagree on {:02X?}", v
+                );
+                checked += 1;
+            }
+        }
+        assert_eq!(checked, 65536);
+    }
 
     fn bytes(v: Value) -> Vec<u8> {
         match v {
