@@ -614,6 +614,7 @@ fn cmd_build(args: &[String]) {
     cmd.arg(&shim_rs)
        .arg("--edition=2021")
        .arg("-o").arg(&output)
+       .arg("-C").arg("embed-bitcode=no")
        .arg("-C").arg("opt-level=3")
        .arg("-C").arg("strip=debuginfo")
        .arg("--extern").arg(format!("axis_codegen_bridge={}", find_bridge_rlib(&exe_dir).display()))
