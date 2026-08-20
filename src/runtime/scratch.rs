@@ -42,9 +42,9 @@
 //! being STORED for the first time.
 //!
 //! This is the same discipline `u32v.rs` documents, arrived at from the same
-//! measurement. NOTE: `u32v.rs`'s module header still describes `scratch.rs`
-//! as the counter-example that allocates per call. That text is stale as of
-//! this change and was left in place — `u32v.rs` is frozen.
+//! measurement. That module's header used to hold up this one as the
+//! counter-example that allocates per call; it no longer does, and the two
+//! files now describe a single shared pattern rather than a divergence.
 //!
 //! `set_clear` and `map_clear` are deliberately UNCHANGED and still allocate.
 //! They index via `HashMap::remove`, for which no measurement exists; see the
