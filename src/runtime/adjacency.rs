@@ -325,17 +325,21 @@ pub fn adj_build(root: std::sync::Arc<str>) -> Value {
 ///
 /// Builds the projection lazily on first use, from `.` (the binaries resolve
 /// `.axverity` from CWD, same as every other store path).
+///
+/// `dir` and `node` are BORROWED for the comparison and the lookup
+/// (AXVERITY_BRIDGE_GLUE_OPT_SWEEP_V1). Neither was ever stored — both copies
+/// existed only to index a `HashMap<String, _>`, which `String: Borrow<str>`
+/// makes unnecessary. The joined `out` below is genuinely constructed and so
+/// still allocates.
 #[track_caller]
 pub fn adj_get(dir: std::sync::Arc<str>, node: std::sync::Arc<str>) -> Value {
-    let dir = dir.to_string();
-    let node = node.to_string();
     ADJ.with(|a| {
         let mut a = a.borrow_mut();
         if !a.built {
             a.build(".");
         }
-        let map = if dir == "IN" { &a.inn } else { &a.out };
-        let out = match map.get(&node) {
+        let map = if &*dir == "IN" { &a.inn } else { &a.out };
+        let out = match map.get(&*node) {
             Some(list) if !list.is_empty() => {
                 let mut s = list.join("\n");
                 s.push('\n');
