@@ -214,3 +214,81 @@ caller changed behaviour. `tests/unit_runtime.rs` carries the semantics:
 If you need C-style truncated remainder, it is **not** available as a
 primitive and should not be added without a measured caller that needs
 it — the decoding hazard above is the reason.
+
+## Named-handle modules borrow their lookups — shared infrastructure
+
+Landed by `AXVERITY_BRIDGE_GLUE_OPT_SWEEP_V1` (2026-08-20) in
+`scratch.rs`, `nameptr.rs`, `adjacency.rs`. **The write path links these**,
+so the rules are stated here as well as in the consuming repos.
+
+### Index with `&*name`, never `name.to_string()`
+
+Every named-handle entry point indexes its collection with an `&str`
+reborrow of the caller's `Arc<str>` (`String: Borrow<str>`). A `String`
+is allocated **only** where one is genuinely stored — a key being kept
+for the first time. `u32v.rs` established the pattern; the rest now
+follow it. It is the house pattern, not one module's exception.
+
+### Map values and slots are `Arc<str>`, and that is load-bearing
+
+`scratch.rs`'s `MAPS` and `nameptr.rs`'s `ToggleCell.slots` hold
+`Arc<str>`, not `String`, because a `Value::Str` **already is** an
+`Arc<str>` (`value.rs:152-154` — `intern_str` is `Arc::from`; despite
+the name there is no interning). Storing the caller's `Arc` and handing
+it back are both refcount bumps, so a put/get round trip allocates
+nothing.
+
+**The safety argument is structural and must be re-checked if it ever
+stops holding:** sharing the buffer is unobservable only because
+`Arc<str>` is immutable and **no `Arc::get_mut` or `Arc::make_mut`
+exists anywhere in this crate**. Introducing one would make these stores
+aliasing-visible. `Arc<str>` is `Send + Sync`, so
+`VALUE_MUST_STAY_SEND_SYNC` (`value.rs:38-41`) is preserved.
+
+### `set_clear` / `map_clear` still copy, deliberately
+
+They index via `HashMap::remove`, which no measurement covers. A
+borrowed form compiles and is a pure borrow with no insert path — it was
+reported and **not taken**. Do not "finish the job" without a
+measurement.
+
+### Measurement discipline for this crate
+
+**Allocation counts are primary evidence; ns/op corroborates.** The
+unchanged `map_put` fresh path measured 476.66 ns and 568.30 ns in two
+sessions — **~19% apart on identical code**. A cross-session ns
+comparison in this repo is not a comparison. Use a back-to-back run with
+both implementations spliced against the same benches; the bench headers
+in `scratch.rs` and `u32v.rs` say so.
+
+Measured result, per-call allocations, before → after: `map_get`
+hit 4→0, miss 3→0; `map_put` overwrite 3→0, fresh 3→1 (the stored key);
+`set_has` 2→0; `set_add` already-present 2→0; `nameptr_get` hit 3→0.
+
+End to end on the axVerity read tier at 1M triples: rebuild
+**34,562 → 24,708 ms (−28.5%)**, footprint **2,423 → 2,121 B/triple
+(−12.5%, 288 MiB resident)**. Attribution was separated with a third
+build: the allocation work owns **100%** of the footprint gain and ~24%
+of the time gain; `-C opt-level=3` on the generated glue owns ~76% of the
+time gain and **zero** of the footprint gain.
+
+## M1-generated glue compiles at `-C opt-level=3`
+
+The three `rustc` invocations in `src/main.rs` that compile M1-generated
+glue — provider rlib, bundle rlib, and shim+final-link — carry
+`-C opt-level=3`. They previously defaulted to **opt-level 0**, which
+meant every published M1 timing measured the build configuration rather
+than the architecture.
+
+Cost: glue build time **+40% (write path) / +42% (readtier)**, almost
+entirely the rlib stage. It repays inside a single 1M readtier rebuild.
+Small bundles are unaffected — `cli_build_05_test` is unchanged, because
+its time is rustc startup and linking, not optimisation.
+
+`-C embed-bitcode=no` is on all three sites. On the two rlib sites it
+earns its place. On the shim+link site it does **nothing** — that site
+emits an executable, which has no downstream consumer to LTO against, so
+no bitcode is embedded either way (verified: byte-identical artefacts).
+It is kept for consistency. **Do not test this flag by looking for a
+rustc diagnostic** — it is a size-and-time flag and is silent when
+absent.

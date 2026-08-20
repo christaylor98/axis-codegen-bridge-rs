@@ -46,9 +46,10 @@
 //! as the counter-example that allocates per call. That text is stale as of
 //! this change and was left in place — `u32v.rs` is frozen.
 //!
-//! `set_clear` (`:76`) and `map_clear` (`:123`) are deliberately UNCHANGED and
-//! still allocate. They index via `HashMap::remove`, for which no measurement
-//! exists; see the note on each.
+//! `set_clear` and `map_clear` are deliberately UNCHANGED and still allocate.
+//! They index via `HashMap::remove`, for which no measurement exists; see the
+//! note on each. (Line numbers are deliberately omitted here — the previous
+//! citation of these two sites went stale the moment this comment was added.)
 //!
 //! ## Map values are `Arc<str>`, not `String`
 //!

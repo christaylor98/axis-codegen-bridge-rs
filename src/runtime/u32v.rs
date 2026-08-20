@@ -35,14 +35,21 @@
 //! allocated ONLY on the genuine insert path — the first `u32v_push` or
 //! `u32v_new` for a name that does not exist yet.
 //!
-//! This deliberately DIVERGES from `scratch.rs`, which opens every entry point
-//! with `let name = name.to_string()` (`scratch.rs:48, 55, 69, 76, 87, 102,
-//! 116, 123`) and so heap-allocates once per call purely to index a
-//! `HashMap<String, _>`. That is not a stylistic preference: measured at 1M
-//! calls, the copy was 23.31 ns of a 46.66 ns `push` — **50.0% of the call**.
-//! `u32v_get` is on the path of an M1-side binary search, which pays it ~20
-//! times per range lookup, so the divergence is load-bearing rather than
-//! cosmetic.
+//! This was written as a deliberate DIVERGENCE from `scratch.rs`, which at the
+//! time opened every entry point with `let name = name.to_string()` and so
+//! heap-allocated once per call purely to index a `HashMap<String, _>`. That
+//! was not a stylistic preference: measured at 1M calls, the copy was 23.31 ns
+//! of a 46.66 ns `push` — **50.0% of the call**. `u32v_get` is on the path of
+//! an M1-side binary search, which pays it ~20 times per range lookup, so the
+//! divergence was load-bearing rather than cosmetic.
+//!
+//! IT IS NO LONGER A DIVERGENCE. `AXVERITY_BRIDGE_GLUE_OPT_SWEEP_V1` took the
+//! same measurement to `scratch.rs` and `nameptr.rs`, which now borrow their
+//! lookups the same way this module does. Only `set_clear` and `map_clear`
+//! still copy; they index via `HashMap::remove`, which no measurement covers,
+//! and were left as a reported finding rather than changed on inference.
+//! Borrowed lookup is now the house pattern for a named-handle module, not
+//! this file's exception to one.
 //!
 //! ## The surface is APPEND-ONLY PLUS A SEALED SORT
 //!
@@ -112,10 +119,12 @@ pub fn u32v_new(name: std::sync::Arc<str>) -> Value {
 /// a silent wrap would turn an out-of-domain id into a plausible-looking one,
 /// and an id that is wrong-but-plausible is undetectable downstream.
 ///
-/// An unknown name is created empty, matching `set_add`'s
-/// `entry(name).or_default()` (`scratch.rs:49`) in effect — but NOT in
-/// mechanism: `entry()` requires an owned `String` key on every call, whether
-/// or not the name is new. See the module note on borrowed lookup.
+/// An unknown name is created empty, matching `set_add` in `scratch.rs`. That
+/// used to be a match in EFFECT ONLY — `set_add` reached the collection via
+/// `entry(name).or_default()`, which demands an owned `String` key on every
+/// call whether or not the name is new. `AXVERITY_BRIDGE_GLUE_OPT_SWEEP_V1`
+/// moved it to the borrowed `get_mut` form used here, so the two now agree in
+/// mechanism as well. See the module note on borrowed lookup.
 #[track_caller]
 pub fn u32v_push(name: std::sync::Arc<str>, n: i64) -> Value {
     if n < 0 || n > U32_MAX_I64 {
@@ -161,9 +170,9 @@ pub fn u32v_get(name: std::sync::Arc<str>, idx: i64) -> Value {
 
 /// `u32v_len(name) -> Int` — element count; 0 for an unknown name.
 ///
-/// Permissive where `u32v_get` is strict, matching `set_len`
-/// (`scratch.rs:68-71`): a length of zero and an absent name are the same
-/// thing to a caller about to iterate, so there is nothing to distinguish.
+/// Permissive where `u32v_get` is strict, matching `set_len` in `scratch.rs`:
+/// a length of zero and an absent name are the same thing to a caller about to
+/// iterate, so there is nothing to distinguish.
 #[track_caller]
 pub fn u32v_len(name: std::sync::Arc<str>) -> Value {
     VECS.with(|v| {
