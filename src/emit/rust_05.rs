@@ -505,6 +505,17 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("map_get",              "axis_codegen_bridge::runtime::scratch::map_get");
     m.insert("map_len",              "axis_codegen_bridge::runtime::scratch::map_len");
     m.insert("map_clear",            "axis_codegen_bridge::runtime::scratch::map_clear");
+    // ── AXVERITY_U32V_BRIDGE_PRIMITIVE_V1: named, growable, APPEND-ONLY u32
+    //    arrays with one sealed in-place sort (u32v.rs). Thread-local, never
+    //    durable. The surface is deliberately new/push/get/len/sort3 — there is
+    //    no set/insert/remove/truncate/clear, and the only in-place mutation of
+    //    existing elements lives inside sort3. Rotation is a KEY ORDER passed as
+    //    (k0, k1, k2), not logic in the bridge.
+    m.insert("u32v_new",             "axis_codegen_bridge::runtime::u32v::u32v_new");
+    m.insert("u32v_push",            "axis_codegen_bridge::runtime::u32v::u32v_push");
+    m.insert("u32v_get",             "axis_codegen_bridge::runtime::u32v::u32v_get");
+    m.insert("u32v_len",             "axis_codegen_bridge::runtime::u32v::u32v_len");
+    m.insert("u32v_sort3",           "axis_codegen_bridge::runtime::u32v::u32v_sort3");
 
     // ── SQL-facing field index: hot thread-local shard + disposable batched
     //    snapshot (fieldidx.rs — BRIDGE_FIELDIDX_V1, AXVERITY_INSERT_PATH_FASTPATH)
@@ -1067,6 +1078,11 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("map_get",           vec![Text, Text]);
     m.insert("map_len",           vec![Text]);
     m.insert("map_clear",         vec![Text]);
+    m.insert("u32v_new",          vec![Text]);
+    m.insert("u32v_push",         vec![Text, Int]);
+    m.insert("u32v_get",          vec![Text, Int]);
+    m.insert("u32v_len",          vec![Text]);
+    m.insert("u32v_sort3",        vec![Text, Int, Int, Int]);
     m.insert("contradicts_open",     vec![Text]);
     m.insert("contradicts_rebuild",  vec![Int, Text]);
     m.insert("contradicts_has",      vec![Int, Text, Text]);
