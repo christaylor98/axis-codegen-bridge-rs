@@ -34,7 +34,6 @@ pub mod contentidx;
 pub mod qhm;
 pub mod gcidx;
 pub mod prealloc;
-pub mod pwrite;
 pub mod walindex;
 pub mod pkindex;
 pub mod contradicts;

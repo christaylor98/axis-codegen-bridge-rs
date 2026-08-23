@@ -250,7 +250,23 @@ impl Slab {
     /// Seal a block: it MUST already be fsynced (unflushed == 0). Finalizes the
     /// content hash — the one and only point content identity is computed.
     fn seal_block(&mut self, block: Block) -> String {
-        debug_assert_eq!(block.unflushed, 0, "seal requires a flushed block");
+        // ORDERING IS THE WHOLE ARGUMENT: data fsync -> rename -> dir fsync.
+        //
+        // "Seal by rename replaces atomicity" holds only if the block's own
+        // bytes are on stable storage BEFORE the directory entry that publishes
+        // them is made durable. Renaming first would give a durable name
+        // pointing at content that is not there — the same hazard one level up.
+        //
+        // Every caller fsyncs first (sweep and slab_seal both call fsync_block
+        // when unflushed > 0), so this is a real assert and not a debug one:
+        // it is cheap, it is load-bearing, and a future caller that forgets
+        // must fail here rather than produce a store that looks intact.
+        assert_eq!(
+            block.unflushed, 0,
+            "slablock: seal_block called with {} unflushed bytes on {} — data must be \
+             fsynced BEFORE the rename that publishes it",
+            block.unflushed, block.path
+        );
 
         // SEAL BY RENAME — see part_path. The rename is what makes "the file
         // exists" and "the file is complete" the same statement again, so a
