@@ -375,6 +375,26 @@ pub fn slab_append_raw(h: i64, ptr: i64, off: i64, len: i64) -> Value {
         );
     }
     let offset = with_slab(h, |slab| {
+        // A RANGE IS NOT A RECORD, so the pack-tier oversize rule does not
+        // apply to it. `slab_append` deliberately lets a single oversized
+        // RECORD land alone in a fresh block that exceeds capacity — a record
+        // cannot be split, so the alternative is refusing to store it. A range
+        // is an accumulation of many records that the caller chose the bounds
+        // of, and one larger than a block means the caller's flush window is
+        // wrong. Inheriting the record rule here would silently mint
+        // over-capacity blocks instead of saying so.
+        //
+        // Under AXVERITY_EXTENT_WRITE_PATH decision (c) the range is bounded
+        // by the arena, which is exactly one block, so this is unreachable in
+        // correct use — which is the point of checking it.
+        if len > slab.block_bytes {
+            panic!(
+                "slab_append_raw: range of {} bytes exceeds block_bytes {} — a range is an \
+                 accumulation the caller chose the bounds of, not a single record, so the \
+                 oversize-record rule does not apply. Flush more often.",
+                len, slab.block_bytes
+            );
+        }
         let bytes: &[u8] = unsafe {
             let src = (ptr as *const u8).add(off as usize);
             std::slice::from_raw_parts(src, len as usize)
@@ -782,6 +802,34 @@ mod tests {
         let h = open(&d, 1, 1 << 20);
         let buf = vec![0u8; 8];
         append_raw(h, &buf, 0, -1);
+    }
+
+    /// An oversized RANGE is refused, unlike an oversized RECORD which lands
+    /// alone in a fresh block. The two are different things: a record cannot
+    /// be split, a range is a caller-chosen window that can be made smaller.
+    #[test]
+    #[should_panic(expected = "exceeds block_bytes")]
+    fn raw_append_refuses_a_range_larger_than_a_block() {
+        let d = scratch("rawover");
+        let h = open(&d, 1, 1000);
+        let buf = vec![3u8; 1500];
+        append_raw(h, &buf, 0, 1500);
+    }
+
+    /// ...while slab_append's record rule is unchanged: an oversized RECORD
+    /// still lands alone rather than being refused.
+    #[test]
+    fn record_oversize_rule_is_unchanged_by_the_range_guard() {
+        let d = scratch("recover");
+        let h = open(&d, 1, 1000);
+        append(h, &vec![4u8; 1500]);
+        seal(h);
+        assert_eq!(
+            std::fs::read(std::path::Path::new(&d).join("blk-0.bin")).unwrap().len(),
+            1500,
+            "an oversized record still lands alone in a block that exceeds capacity"
+        );
+        let _ = std::fs::remove_dir_all(&d);
     }
 
 }
