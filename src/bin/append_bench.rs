@@ -86,9 +86,37 @@ fn main() {
     }
     let slab_ns = t.elapsed().as_nanos() as f64 / n as f64;
 
+    // ── (c): arena accumulate, then ONE slab_append_raw per flush window.
+    // Flush every `flush_recs` records, which stands in for "on the SLA tick".
+    let flush_recs: usize = 20000;
+    let h2 = as_int(slablock::slab_open(Arc::from(format!("{}/c", dir).as_str()), 200_000, cap));
+    let arena2 = match rawmem::mem_reserve_raw(cap) {
+        axis_codegen_bridge::runtime::value::Value::Tuple(f) => as_int(f[0].clone()),
+        other => panic!("mem_reserve_raw: {:?}", other),
+    };
+    let t = Instant::now();
+    let mut off2: i64 = 0;
+    let mut flushed: i64 = 0;
+    for i in 0..n {
+        if off2 + rec as i64 > cap {
+            if off2 > flushed { slablock::slab_append_raw(h2, arena2, flushed, off2 - flushed); }
+            off2 = 0; flushed = 0;
+        }
+        rawmem::mem_copy_raw(arena2, off2, src_ptr, 0, rec as i64);
+        off2 += rec as i64;
+        if (i + 1) % flush_recs == 0 && off2 > flushed {
+            slablock::slab_append_raw(h2, arena2, flushed, off2 - flushed);
+            flushed = off2;
+        }
+    }
+    if off2 > flushed { slablock::slab_append_raw(h2, arena2, flushed, off2 - flushed); }
+    let c_ns = t.elapsed().as_nanos() as f64 / n as f64;
+
     let floor = slab_ns - vec_ns;
     println!(
-        "rec={} n={}  arena={:.0} ns  vec={:.0} ns  slab={:.0} ns  slab_minus_vec={:.0} ns  slab/arena={:.1}x",
-        rec, n, arena_ns, vec_ns, slab_ns, floor, slab_ns / arena_ns
+        "rec={} n={}  arena={:.0}  vec={:.0}  slab={:.0}  slab-vec={:.0}  optC={:.0} ns/rec  |  slab/arena={:.0}x  optC/arena={:.1}x  slab/optC={:.0}x  optC_MBs={:.0}",
+        rec, n, arena_ns, vec_ns, slab_ns, floor, c_ns,
+        slab_ns / arena_ns, c_ns / arena_ns, slab_ns / c_ns,
+        rec as f64 / c_ns * 1e9 / (1024.0 * 1024.0)
     );
 }

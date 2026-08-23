@@ -340,6 +340,72 @@ pub fn slab_append(h: i64, bytes: Vec<u8>) -> Value {
     Value::Int(offset)
 }
 
+/// `slab_append_raw(h: Int, ptr: Int, off: Int, len: Int) -> Int`
+///
+/// `slab_append`'s twin over memory the caller already owns: append
+/// `[ptr+off, ptr+off+len)` to the handle's active block. Identical semantics —
+/// same rotation rule, same running hash, same never-fsyncs contract — but no
+/// `Value::Bytes` is materialised.
+///
+/// ## Why this exists, and why it is NOT the raw variant that was rejected
+///
+/// AXVERITY_EXTENT_WRITE_PATH step 4 measured a per-record raw append and
+/// killed it: at a 349 B record the `Vec<u8>` is **12 ns of 2,004** — 0.6% —
+/// because the cost is the `write(2)`, not the allocation. A raw call
+/// convention at RECORD granularity buys nothing.
+///
+/// This is the same idea at a different UNIT OF WORK. axVerity-working2's
+/// packer accumulates records into a raw hotframe block and flushes the
+/// accumulated RANGE on an SLA tick, so one call carries what used to be tens
+/// of thousands of records. At that size the `Value::Bytes` cost is no longer
+/// a rounding error — it is a full copy of the range, per flush — while the
+/// `write(2)` it replaces is amortised across every record in it.
+///
+/// So: per record, raw is worthless; per accumulated range, raw is the whole
+/// point. Same name, different unit.
+///
+/// Caller owns the range's validity for the duration of the call — the same
+/// unchecked contract as `mem_read_raw` and `fs_write_raw`.
+#[track_caller]
+pub fn slab_append_raw(h: i64, ptr: i64, off: i64, len: i64) -> Value {
+    if off < 0 || len < 0 {
+        panic!(
+            "slab_append_raw: off and len must be >= 0, got off={}, len={}",
+            off, len
+        );
+    }
+    let offset = with_slab(h, |slab| {
+        let bytes: &[u8] = unsafe {
+            let src = (ptr as *const u8).add(off as usize);
+            std::slice::from_raw_parts(src, len as usize)
+        };
+        let needs_rotation = match slab.active.as_ref() {
+            Some(a) => a.len > 0 && a.len + len > slab.block_bytes,
+            None => false,
+        };
+        if needs_rotation {
+            let full = slab.active.take().expect("checked Some above");
+            slab.full_pending.push(full);
+        }
+        if slab.active.is_none() {
+            let block = slab.mint_block();
+            slab.active = Some(block);
+        }
+        let active = slab.active.as_mut().expect("just minted above");
+        let offset = active.len;
+        active
+            .file
+            .write_all(bytes)
+            .unwrap_or_else(|e| panic!("slab_append_raw: write {}: {}", active.path, e));
+        active.hasher.update(bytes);
+        active.len += len;
+        active.unflushed += len;
+        slab.appends += 1;
+        offset
+    });
+    Value::Int(offset)
+}
+
 /// `slab_tick(h: Int) -> Int`
 ///
 /// The SLA tick. If fewer than `sla_us` microseconds have elapsed since this
@@ -629,4 +695,93 @@ mod tests {
         assert_eq!(stat_field(h, "sealed"), 1, "the small block sealed at rotation sweep");
         assert_eq!(std::fs::read(format!("{}/blk-1.bin", dir)).unwrap(), big);
     }
+
+    fn append_raw(h: i64, buf: &[u8], off: i64, len: i64) -> i64 {
+        match slab_append_raw(h, buf.as_ptr() as i64, off, len) {
+            Value::Int(o) => o,
+            other => panic!("slab_append_raw returned {:?}", other),
+        }
+    }
+
+    fn seal(h: i64) -> String {
+        match slab_seal(h) {
+            Value::Str(s) => get_str(&s),
+            other => panic!("slab_seal returned {:?}", other),
+        }
+    }
+
+    /// A raw-range append is byte-identical to the same bytes appended as
+    /// Value::Bytes — same block content, same content hash. This is the
+    /// property that lets axVerity-working2's write path switch call
+    /// conventions without changing anything it stores.
+    #[test]
+    fn raw_append_matches_bytes_append_content_and_hash() {
+        let da = scratch("rawmatch-a");
+        let db = scratch("rawmatch-b");
+        let ha = open(&da, 1, 1 << 20);
+        let hb = open(&db, 1, 1 << 20);
+
+        let payload: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+        for c in payload.chunks(1500) {
+            append(ha, c);
+        }
+        let mut off = 0i64;
+        while off < payload.len() as i64 {
+            let n = std::cmp::min(1500, payload.len() as i64 - off);
+            append_raw(hb, &payload, off, n);
+            off += n;
+        }
+
+        assert_eq!(seal(ha), seal(hb), "same content hash");
+        let fa = std::fs::read(std::path::Path::new(&da).join("blk-0.bin")).unwrap();
+        let fb = std::fs::read(std::path::Path::new(&db).join("blk-0.bin")).unwrap();
+        assert_eq!(fa, fb, "byte-identical blocks");
+        assert_eq!(fa, payload, "and both equal the source");
+        let _ = std::fs::remove_dir_all(&da);
+        let _ = std::fs::remove_dir_all(&db);
+    }
+
+    /// One raw append carrying an accumulated range hashes identically to the
+    /// same bytes appended record-by-record — the exact substitution step 4's
+    /// decision (c) makes: buffer many records, flush the range once.
+    #[test]
+    fn one_raw_range_equals_many_record_appends() {
+        let da = scratch("rawrange-a");
+        let db = scratch("rawrange-b");
+        let ha = open(&da, 1, 1 << 20);
+        let hb = open(&db, 1, 1 << 20);
+        let payload: Vec<u8> = (0..9000u32).map(|i| (i % 251) as u8).collect();
+        for c in payload.chunks(37) {
+            append(ha, c);
+        }
+        append_raw(hb, &payload, 0, payload.len() as i64);
+        assert_eq!(seal(ha), seal(hb), "243 record appends == 1 range append");
+        let _ = std::fs::remove_dir_all(&da);
+        let _ = std::fs::remove_dir_all(&db);
+    }
+
+    /// A raw append rotates on the same rule as a Bytes append and never
+    /// splits its range across two blocks.
+    #[test]
+    fn raw_append_rotates_without_splitting() {
+        let d = scratch("rawrot");
+        let h = open(&d, 1, 1000);
+        let buf = vec![7u8; 600];
+        append_raw(h, &buf, 0, 600);
+        append_raw(h, &buf, 0, 600);
+        seal(h);
+        assert_eq!(std::fs::read(std::path::Path::new(&d).join("blk-0.bin")).unwrap().len(), 600);
+        assert_eq!(std::fs::read(std::path::Path::new(&d).join("blk-1.bin")).unwrap().len(), 600);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    #[should_panic(expected = "must be >= 0")]
+    fn raw_append_rejects_negative_len() {
+        let d = scratch("rawneg");
+        let h = open(&d, 1, 1 << 20);
+        let buf = vec![0u8; 8];
+        append_raw(h, &buf, 0, -1);
+    }
+
 }

@@ -272,6 +272,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("fs_write_bytes",       "axis_codegen_bridge::runtime::bytes_io::fs_write_bytes");
     m.insert("fs_write_raw",         "axis_codegen_bridge::runtime::bytes_io::fs_write_raw");
     m.insert("fs_pwrite_raw",        "axis_codegen_bridge::runtime::pwrite::fs_pwrite_raw");
+    m.insert("slab_append_raw",      "axis_codegen_bridge::runtime::slablock::slab_append_raw");
     m.insert("fs_sync_dir",          "axis_codegen_bridge::runtime::pwrite::fs_sync_dir");
     m.insert("fs_read_bytes",        "axis_codegen_bridge::runtime::bytes_io::fs_read_bytes");
     // ── Seek / range read (seek.rs — BRIDGE_SEEK_V1, spike:axverity-spike1) ─────
@@ -910,6 +911,7 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("mem_read_int_raw",  vec![Int, Int]);
     m.insert("fs_write_raw",      vec![Text, Int, Int, Int]);
     m.insert("fs_pwrite_raw",     vec![Text, Int, Int, Int, Int, Int]);
+    m.insert("slab_append_raw",   vec![Int, Int, Int, Int]);
     m.insert("fs_sync_dir",       vec![Text]);
     m.insert("argv_get",          vec![Int]);
     m.insert("bytes_len",         vec![Bytes]);
