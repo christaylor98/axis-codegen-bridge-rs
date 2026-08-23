@@ -202,6 +202,20 @@ impl Slab {
         let seq = self.next_seq;
         self.next_seq += 1;
         let path = part_path(&self.dir, seq);
+
+        // AXVERITY_EXTENT_WRITE_PATH 5d — DISCARD AN ORPHANED .part FIRST.
+        //
+        // A crash leaves the active block as a `.part`. slab_open resumes from
+        // the highest SEALED block, so the next run mints that same seq again —
+        // and this open is `.append(true)`, so without the removal it would
+        // append fresh records ONTO the dead run's partial bytes. Measured as
+        // "5 blocks failed to decode" in the SIGKILL suite.
+        //
+        // Discarding is correct, not merely convenient: a `.part` was never
+        // renamed, so no reader has ever been able to see it and nothing can
+        // reference its contents. It is unreachable bytes by construction.
+        let _ = std::fs::remove_file(&path);
+
         super::prealloc::fs_prealloc(intern_str(&path), self.block_bytes);
         let file = OpenOptions::new()
             .append(true)
@@ -317,6 +331,32 @@ pub fn slab_open(dir: std::sync::Arc<str>, sla_us: i64, block_bytes: i64) -> Val
     let block_bytes = if block_bytes > 0 { block_bytes } else { DEFAULT_BLOCK_BYTES };
     std::fs::create_dir_all(&dir)
         .unwrap_or_else(|e| panic!("slab_open: mkdir {}: {}", dir, e));
+
+    // AXVERITY_EXTENT_WRITE_PATH 5d — RESUME, do not restart.
+    //
+    // next_seq began at 0 on every open, which is exactly the B1 defect
+    // axVerity-working2 already paid for once: a run starting at 0 lands its
+    // block-0 on the previous run's and records are silently overwritten. It
+    // was invisible while slablock had no callers.
+    //
+    // Highest existing block-<n>.bin in this directory, +1. Only SEALED blocks
+    // count: a `.part` is by definition not a durable block, and counting one
+    // would let a crashed run's leftover advance the sequence past a block that
+    // was never completed.
+    let resume = std::fs::read_dir(&dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter_map(|e| {
+                    let n = e.file_name().to_string_lossy().into_owned();
+                    n.strip_prefix("block-")
+                        .and_then(|r| r.strip_suffix(".bin"))
+                        .and_then(|d| d.parse::<i64>().ok())
+                })
+                .max()
+                .map(|m| m + 1)
+                .unwrap_or(0)
+        })
+        .unwrap_or(0);
     let h = NEXT.with(|n| {
         let h = n.get();
         n.set(h + 1);
@@ -329,7 +369,7 @@ pub fn slab_open(dir: std::sync::Arc<str>, sla_us: i64, block_bytes: i64) -> Val
                 dir,
                 sla_us,
                 block_bytes,
-                next_seq: 0,
+                next_seq: resume,
                 active: None,
                 full_pending: Vec::new(),
                 sealed: Vec::new(),
@@ -917,6 +957,48 @@ mod tests {
         slab_tick(h);                 // sweep seals it
         assert!(dir.join("block-0.bin").exists(), "rotated block sealed under its final name");
         assert!(dir.join("block-1.bin.part").exists(), "the active block is still a .part");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A second open of the same directory RESUMES the sequence rather than
+    /// restarting it. Restarting is the B1 defect: run 2's block-0 lands on
+    /// run 1's and records are silently overwritten.
+    #[test]
+    fn a_reopen_resumes_the_sequence_it_does_not_restart() {
+        let d = scratch("resume");
+        let h1 = open(&d, 1, 1000);
+        append(h1, &vec![1u8; 600]);
+        append(h1, &vec![2u8; 600]);   // rotates 0, mints 1
+        seal(h1);
+        let dir = std::path::Path::new(&d);
+        assert!(dir.join("block-0.bin").exists() && dir.join("block-1.bin").exists());
+
+        let h2 = open(&d, 1, 1000);    // fresh handle, same directory
+        append(h2, &vec![3u8; 100]);
+        seal(h2);
+        assert!(dir.join("block-2.bin").exists(), "the reopen minted block 2, not block 0");
+        assert_eq!(std::fs::read(dir.join("block-0.bin")).unwrap(), vec![1u8; 600],
+                   "run 1's block 0 was not overwritten");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// An orphaned `.part` from a crashed run is DISCARDED, not appended to.
+    /// Without this the next run's records land on top of the dead run's
+    /// partial bytes and the block no longer decodes.
+    #[test]
+    fn an_orphaned_part_is_discarded_not_appended_to() {
+        let d = scratch("orphan");
+        let dir = std::path::Path::new(&d);
+        std::fs::create_dir_all(dir).unwrap();
+        // Simulate a crash: a .part with junk in it, no sealed block anywhere.
+        std::fs::write(dir.join("block-0.bin.part"), b"JUNK-FROM-A-DEAD-RUN").unwrap();
+
+        let h = open(&d, 1, 1000);
+        append(h, b"clean");
+        seal(h);
+
+        let got = std::fs::read(dir.join("block-0.bin")).unwrap();
+        assert_eq!(got, b"clean", "the dead run's bytes were discarded, not prepended");
         let _ = std::fs::remove_dir_all(&d);
     }
 
