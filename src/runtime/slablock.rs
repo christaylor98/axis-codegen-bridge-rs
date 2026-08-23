@@ -148,9 +148,38 @@ thread_local! {
     static NEXT: Cell<i64> = const { Cell::new(1) };
 }
 
-fn blk_path(dir: &str, seq: i64) -> String {
-    // Same positional pattern as prealloc.rs::seg_path — path + sequence.
-    format!("{}/blk-{}.bin", dir, seq)
+/// The name a SEALED block takes: `block-<seq>.bin`, matching what
+/// `wp_bid_parse` parses and `rt_dblk_path` computes.
+fn sealed_path(dir: &str, seq: i64) -> String {
+    format!("{}/block-{}.bin", dir, seq)
+}
+
+/// The name a block carries WHILE IT IS BEING WRITTEN.
+///
+/// AXVERITY_EXTENT_WRITE_PATH: SEAL BY RENAME. A block grows in place, so
+/// unlike the old `fs_write_raw` path it is observable while partial — and a
+/// reader cannot tell a partial block from a complete one, because a length
+/// prefix detects a record running past the frontier but not a torn write
+/// whose bytes happen to parse.
+///
+/// Measured alternatives, at the record sizes axVerity actually stores
+/// (av-store's GRAPH/BIND triples are 8-14 bytes):
+///
+///   Slice-4 frame  H(64 hex)|P(10)|V(10)|env|payload   +1050% at 8 B, +600% at 14 B
+///   8-byte trailer varint|payload|hash[0..8]           +112%  at 8 B, +64%  at 14 B
+///   seal by rename                                     +0% space
+///
+/// Both hash schemes pay PER RECORD for a failure mode whose unit is the
+/// RANGE — and slablock already hashes every byte as it appends, so a
+/// per-record hash is a second pass over the same bytes.
+///
+/// Rename costs 2.40 ms (measured: the 16 KiB baseline's temp+rename+parent
+/// fsync, 4.746 ms, minus the extent path's 2.343 ms), paid ONCE PER BLOCK
+/// rather than per record: +103% on a 16 KiB block, +29% at 4 MiB, +11% at
+/// 16 MiB. The mechanism that was too expensive to keep became affordable
+/// precisely because the block-size work made blocks bigger.
+fn part_path(dir: &str, seq: i64) -> String {
+    format!("{}/block-{}.bin.part", dir, seq)
 }
 
 /// Fsync the parent directory of `path` — the reclog/logbuf STRONG discipline
@@ -172,7 +201,7 @@ impl Slab {
     fn mint_block(&mut self) -> Block {
         let seq = self.next_seq;
         self.next_seq += 1;
-        let path = blk_path(&self.dir, seq);
+        let path = part_path(&self.dir, seq);
         super::prealloc::fs_prealloc(intern_str(&path), self.block_bytes);
         let file = OpenOptions::new()
             .append(true)
@@ -208,6 +237,24 @@ impl Slab {
     /// content hash — the one and only point content identity is computed.
     fn seal_block(&mut self, block: Block) -> String {
         debug_assert_eq!(block.unflushed, 0, "seal requires a flushed block");
+
+        // SEAL BY RENAME — see part_path. The rename is what makes "the file
+        // exists" and "the file is complete" the same statement again, so a
+        // reader never has to distinguish a growing block from a finished one.
+        // The parent-directory fsync makes the rename itself durable; it is
+        // paid once per BLOCK here, not once per write as the old
+        // fs_write_raw path paid it.
+        let sealed = sealed_path(&self.dir, block.seq);
+        std::fs::rename(&block.path, &sealed)
+            .unwrap_or_else(|e| panic!("slablock: seal rename {} -> {}: {}", block.path, sealed, e));
+        match File::open(&self.dir) {
+            Ok(d) => d
+                .sync_all()
+                .unwrap_or_else(|e| panic!("slablock: seal fsync dir {}: {}", self.dir, e)),
+            Err(e) => panic!("slablock: seal open dir {}: {}", self.dir, e),
+        }
+        self.dir_fsyncs += 1;
+
         let digest = block.hasher.finalize();
         let hex: String = digest.iter().map(|b| format!("{:02x}", b)).collect();
         let hash = format!("sha256:{}", hex);
@@ -654,9 +701,14 @@ mod tests {
         assert_eq!(cols.next(), Some("0"));
         assert_eq!(cols.next(), Some(expect.as_str()));
         assert_eq!(cols.next(), Some("10"));
-        // Block 0 on disk is exactly the sealed bytes; block 1 holds the rest.
-        assert_eq!(std::fs::read(format!("{}/blk-0.bin", dir)).unwrap(), a);
-        assert_eq!(std::fs::read(format!("{}/blk-1.bin", dir)).unwrap(), b);
+        // Block 0 is SEALED, so it is visible under its final name and holds
+        // exactly the sealed bytes. Block 1 is still active, so it is a .part
+        // and is deliberately NOT visible as block-1.bin — that invisibility is
+        // what replaces fs_write_raw's temp+rename atomicity.
+        assert_eq!(std::fs::read(format!("{}/block-0.bin", dir)).unwrap(), a);
+        assert!(!std::path::Path::new(&format!("{}/block-1.bin", dir)).exists(),
+                "an unsealed block must not be visible under its final name");
+        assert_eq!(std::fs::read(format!("{}/block-1.bin.part", dir)).unwrap(), b);
     }
 
     #[test]
@@ -713,7 +765,8 @@ mod tests {
         assert_eq!(append(h, &big), 0, "oversize record starts its own block");
         slab_tick(h);
         assert_eq!(stat_field(h, "sealed"), 1, "the small block sealed at rotation sweep");
-        assert_eq!(std::fs::read(format!("{}/blk-1.bin", dir)).unwrap(), big);
+        // The oversize record's own block is still active, hence still a .part.
+        assert_eq!(std::fs::read(format!("{}/block-1.bin.part", dir)).unwrap(), big);
     }
 
     fn append_raw(h: i64, buf: &[u8], off: i64, len: i64) -> i64 {
@@ -753,8 +806,8 @@ mod tests {
         }
 
         assert_eq!(seal(ha), seal(hb), "same content hash");
-        let fa = std::fs::read(std::path::Path::new(&da).join("blk-0.bin")).unwrap();
-        let fb = std::fs::read(std::path::Path::new(&db).join("blk-0.bin")).unwrap();
+        let fa = std::fs::read(std::path::Path::new(&da).join("block-0.bin")).unwrap();
+        let fb = std::fs::read(std::path::Path::new(&db).join("block-0.bin")).unwrap();
         assert_eq!(fa, fb, "byte-identical blocks");
         assert_eq!(fa, payload, "and both equal the source");
         let _ = std::fs::remove_dir_all(&da);
@@ -790,8 +843,8 @@ mod tests {
         append_raw(h, &buf, 0, 600);
         append_raw(h, &buf, 0, 600);
         seal(h);
-        assert_eq!(std::fs::read(std::path::Path::new(&d).join("blk-0.bin")).unwrap().len(), 600);
-        assert_eq!(std::fs::read(std::path::Path::new(&d).join("blk-1.bin")).unwrap().len(), 600);
+        assert_eq!(std::fs::read(std::path::Path::new(&d).join("block-0.bin")).unwrap().len(), 600);
+        assert_eq!(std::fs::read(std::path::Path::new(&d).join("block-1.bin")).unwrap().len(), 600);
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -825,10 +878,45 @@ mod tests {
         append(h, &vec![4u8; 1500]);
         seal(h);
         assert_eq!(
-            std::fs::read(std::path::Path::new(&d).join("blk-0.bin")).unwrap().len(),
+            std::fs::read(std::path::Path::new(&d).join("block-0.bin")).unwrap().len(),
             1500,
             "an oversized record still lands alone in a block that exceeds capacity"
         );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A block is INVISIBLE under its final name until it is sealed, and
+    /// appears complete the instant it is. This is what replaces the
+    /// atomicity that fs_write_raw's temp+rename used to provide and that
+    /// growing a file in place gives up.
+    #[test]
+    fn a_block_is_only_visible_under_its_final_name_once_sealed() {
+        let d = scratch("sealrename");
+        let h = open(&d, 1, 1000);
+        let dir = std::path::Path::new(&d);
+        append(h, &vec![1u8; 400]);
+        slab_tick(h);
+        assert!(dir.join("block-0.bin.part").exists(), "in-progress block is a .part");
+        assert!(!dir.join("block-0.bin").exists(), "and is NOT visible under its final name");
+        seal(h);
+        assert!(dir.join("block-0.bin").exists(), "sealing publishes it");
+        assert!(!dir.join("block-0.bin.part").exists(), "and the .part is gone");
+        assert_eq!(std::fs::read(dir.join("block-0.bin")).unwrap().len(), 400);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Rotation seals through the same path, so a full block published by a
+    /// sweep is named like any other sealed block.
+    #[test]
+    fn rotation_publishes_under_the_sealed_name() {
+        let d = scratch("rotname");
+        let h = open(&d, 1, 1000);
+        let dir = std::path::Path::new(&d);
+        append(h, &vec![2u8; 600]);
+        append(h, &vec![3u8; 600]);   // rotates block 0 into full_pending
+        slab_tick(h);                 // sweep seals it
+        assert!(dir.join("block-0.bin").exists(), "rotated block sealed under its final name");
+        assert!(dir.join("block-1.bin.part").exists(), "the active block is still a .part");
         let _ = std::fs::remove_dir_all(&d);
     }
 

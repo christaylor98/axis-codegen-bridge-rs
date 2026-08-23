@@ -322,7 +322,11 @@ mod tests {
         .join()
         .unwrap();
         assert_eq!(n, 10);
-        let slab_bin = std::fs::read(format!("{}/slab/blk-0.bin", dir)).unwrap();
+        // AXVERITY_EXTENT_WRITE_PATH: an unsealed block is a `.part` and only
+        // takes its final `block-<seq>.bin` name at seal — that rename is what
+        // replaces the atomicity a growing file gives up. This block is still
+        // active, so it is read under the in-progress name.
+        let slab_bin = std::fs::read(format!("{}/slab/block-0.bin.part", dir)).unwrap();
         assert_eq!(slab_bin.len(), 8 * 10, "all 10 rows appended to the shadow block");
         let measure = std::fs::read_to_string(
             std::fs::read_dir(&dir)
