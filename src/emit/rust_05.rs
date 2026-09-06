@@ -1226,6 +1226,8 @@ fn classify_pool_entry(
     registry: &HashMap<Hash256, String>,
     name_to_path: &HashMap<&'static str, &'static str>,
     xbundle: &HashMap<Hash256, String>,
+    arg_kind_table: &HashMap<&'static str, Vec<ArgKind>>,
+    native_call_table: &HashMap<&'static str, Vec<NativeArgType>>,
 ) -> Result<PoolKind, String> {
     let dh = &entry.def_hash;
     if dh == &[0u8; 32] {
@@ -1295,8 +1297,31 @@ fn classify_pool_entry(
         }
         let mut id: Hash256 = [0u8; 32];
         id.copy_from_slice(&entry.payload);
+        // A builtin resolved to a bare Rust fn path is legal as a `fn(Value) ->
+        // Value` callee only if it isn't itself a HOF (AXLANG_HOF_NATIVE_CALLEE_
+        // ADAPTER_V2: a HOF's own signature never matches the callee slot, and
+        // giving it a `_vfn` adapter would be wrong — its arg positions aren't
+        // native scalars) and, when it uses the native multi-arg calling
+        // convention (AXVERITY_RAWMEM_CALL_CONVENTION_V1), routes through a
+        // generated `{name}_vfn` adapter instead of the bare path, since the
+        // native signature never matches `fn(Value) -> Value` directly.
+        let fn_ref_kind = |name: &str, path: &'static str| -> Result<PoolKind, String> {
+            if arg_kind_table.contains_key(name) {
+                return Err(format!(
+                    "type gate: '{}' is a higher-order fn (has its own Fn-typed \
+                     arg slots) and cannot be used as another HOF's callee \
+                     (HOF_NOT_A_CALLEE)",
+                    name
+                ));
+            }
+            if native_call_table.contains_key(name) {
+                return Ok(PoolKind::FnRef(format!("{}_vfn", name)));
+            }
+            Ok(PoolKind::FnRef(path.to_string()))
+        };
         if let Some(&path) = builtin.get(&id) {
-            return Ok(PoolKind::FnRef(path.to_string()));
+            let name = path.rsplit("::").next().unwrap_or(path);
+            return fn_ref_kind(name, path);
         }
         // Composite M1 fn referenced as fn_ref: resolve to a safe wrapper
         // around the xbundle extern. The extern is `unsafe extern "C-unwind" fn`
@@ -1308,7 +1333,7 @@ fn classify_pool_entry(
         }
         if let Some(name) = registry.get(&id) {
             if let Some(&path) = name_to_path.get(name.as_str()) {
-                return Ok(PoolKind::FnRef(path.to_string()));
+                return fn_ref_kind(name.as_str(), path);
             }
             return Err(format!(
                 "Fn-typed pool entry resolves to registry name '{}' (identity {}) but \
@@ -1971,6 +1996,9 @@ pub fn emit_rust_lib_from_bundle(
         }
     }
 
+    let arg_kind_table = fn_arg_kinds();
+    let native_call_table = native_call_fn_arg_types();
+
     // Collect the distinct §5b extern symbols this bundle calls (for the extern block)
     let mut extern_syms: Vec<String> = Vec::new();
     let mut seen_extern: std::collections::HashSet<Hash256> = std::collections::HashSet::new();
@@ -2030,6 +2058,60 @@ pub fn emit_rust_lib_from_bundle(
         out.push_str("\n");
     }
 
+    // AXLANG_HOF_NATIVE_CALLEE_ADAPTER_V2: a native-convention builtin (its
+    // Rust signature is `f(a, b, ...)` with native scalar params, not
+    // `fn(Value) -> Value`) used as a Fn-typed callee needs a `{name}_vfn`
+    // adapter, mirroring the `{sym}_xfn` wrapper above. Mirrors
+    // classify_pool_entry's own resolution (builtin map, then registry ->
+    // name_to_path) so the set of names emitted here is exactly the set
+    // classify_pool_entry routed to `{name}_vfn`.
+    let mut vfn_syms: Vec<(String, &'static str)> = Vec::new();
+    let mut seen_vfn: std::collections::HashSet<Hash256> = std::collections::HashSet::new();
+    for entry in &bundle.constant_pool {
+        if entry.def_hash != fn_th || entry.payload.len() != 32 {
+            continue;
+        }
+        let mut id: Hash256 = [0u8; 32];
+        id.copy_from_slice(&entry.payload);
+        if !seen_vfn.insert(id) {
+            continue;
+        }
+        if let Some(&path) = builtin.get(&id) {
+            let name = path.rsplit("::").next().unwrap_or(path);
+            if native_call_table.contains_key(name) {
+                vfn_syms.push((name.to_string(), path));
+            }
+        } else if let Some(name) = registry_identity_map.get(&id) {
+            if let Some(&path) = name_to_path.get(name.as_str()) {
+                if native_call_table.contains_key(name.as_str()) {
+                    vfn_syms.push((name.clone(), path));
+                }
+            }
+        }
+    }
+    if !vfn_syms.is_empty() {
+        for (name, path) in &vfn_syms {
+            let types = &native_call_table[name.as_str()];
+            let body = if types.len() == 1 {
+                format!("{}(v.{}())", path, types[0].accessor())
+            } else {
+                let args = types
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| format!("es[{}].{}()", i, t.accessor()))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "match v {{ Value::Tuple(es) if es.len() == {n} => {path}({args}), \
+                     other => panic!(\"{name}_vfn: expected a {n}-tuple, got {{:?}}\", other) }}",
+                    n = types.len(), path = path, args = args, name = name,
+                )
+            };
+            out.push_str(&format!("fn {name}_vfn(v: Value) -> Value {{ {body} }}\n", name = name, body = body));
+        }
+        out.push_str("\n");
+    }
+
     // Emit main function
     out.push_str(&format!(
         "#[no_mangle]\npub extern \"C-unwind\" fn {}(args: Value) -> Value {{\n",
@@ -2047,6 +2129,8 @@ pub fn emit_rust_lib_from_bundle(
             registry_identity_map,
             &name_to_path,
             xbundle_providers,
+            &arg_kind_table,
+            &native_call_table,
         )
         .map_err(|e| format!("pool[{}]: {}", i, e))?;
         pool_kinds.push(kind);
@@ -2114,8 +2198,6 @@ pub fn emit_rust_lib_from_bundle(
     // elsewhere (shared between arms, referenced by `cond`, or used outside
     // any `CIf`) stay hoisted at the unconditional top level, exactly as
     // before.
-    let arg_kind_table = fn_arg_kinds();
-    let native_call_table = native_call_fn_arg_types();
     let branch_paths = compute_branch_paths(bundle, pure_det)?;
     let scope_groups = group_by_scope(bundle.nodes.len(), &branch_paths);
     out.push_str(&render_scope(

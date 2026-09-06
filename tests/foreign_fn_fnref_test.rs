@@ -8,6 +8,7 @@
 
 use axis_codegen_bridge::core_ir_05::{
     fn_type_hash, int_type_hash, encode_int_payload, sha256_bytes,
+    serialiser::create_core_bundle_05,
     ConstantPoolEntry, CoreBundle, Node, NodeRef,
 };
 use axis_codegen_bridge::emit::rust_05::emit_rust_lib_from_bundle;
@@ -15,7 +16,34 @@ use axis_codegen_bridge::runtime::iter;
 use axis_codegen_bridge::runtime::str_ops;
 use axis_codegen_bridge::runtime::value::{init_runtime, intern_str, Value};
 use std::collections::HashMap;
+use std::process::Command;
 use std::sync::atomic::{AtomicI64, Ordering};
+use tempfile::TempDir;
+
+fn bridge_bin() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_axis-codegen-bridge"))
+}
+
+/// Build `bundle` via the real CLI (`--exe`) and return the trimmed stdout of
+/// running it — exercises the full emit -> rustc -> link -> run pipeline, not
+/// just the in-process emitter.
+fn build_and_run(bundle: &CoreBundle, stem: &str) -> String {
+    let dir = TempDir::new().unwrap();
+    let bytes = create_core_bundle_05(bundle);
+    let fixture = dir.path().join(format!("{}.coreir", stem));
+    std::fs::write(&fixture, &bytes).unwrap();
+    let exe_out = dir.path().join(stem);
+
+    let status = Command::new(bridge_bin())
+        .args(["build", fixture.to_str().unwrap(), "--out", exe_out.to_str().unwrap(), "--exe"])
+        .status()
+        .expect("bridge failed to run");
+    assert!(status.success(), "{} --exe build failed", stem);
+
+    let output = Command::new(&exe_out).output().expect("failed to run exe");
+    assert!(output.status.success(), "{} exe exited non-zero", stem);
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
 
 fn setup() { init_runtime(); }
 
@@ -378,5 +406,122 @@ fn fn_slot_emits_native_multi_arg_call() {
         !src.contains("Value::Tuple(vec![pool_0.clone(), axis_codegen_bridge"),
         "Fn ref must not be tuple-packed, got src:\n{}",
         src
+    );
+}
+
+// ── AXLANG_HOF_NATIVE_CALLEE_ADAPTER_V2 — native-convention builtin as HOF callee ──
+
+/// T1: `any(range(0,3), is_positive)` — `is_positive` is a native-convention
+/// leaf (`fn(i64) -> Value`), illegal as a `fn(Value) -> Value` callee before
+/// the `_vfn` adapter. Full CLI round trip (emit -> rustc -> link -> run).
+#[test]
+fn hof_native_callee_arity1() {
+    let range_id = sha256_bytes(b"range");
+    let any_id = sha256_bytes(b"any");
+    let is_positive_id = sha256_bytes(b"is_positive");
+
+    let bundle = CoreBundle {
+        version: "0.5".into(),
+        constant_pool: vec![
+            ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(0) },
+            ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(3) },
+            ConstantPoolEntry { def_hash: fn_type_hash(), payload: is_positive_id.to_vec() },
+        ],
+        nodes: vec![
+            Node::CCall { target_identity: range_id, target_name: "range".into(), args: vec![NodeRef::Pool(0), NodeRef::Pool(1)] },
+            Node::CCall { target_identity: any_id, target_name: "any".into(), args: vec![NodeRef::Node(0), NodeRef::Pool(2)] },
+        ],
+        result: NodeRef::Node(1),
+    };
+
+    assert_eq!(build_and_run(&bundle, "hof_native_arity1"), "true");
+}
+
+/// T2: `fold(range(0,4), 0, int_add)` — `int_add` is a native-convention
+/// 2-arg leaf (`fn(i64, i64) -> Value`); the adapter must destructure the
+/// `Value::Tuple(acc, elem)` `fold` threads into `step`.
+#[test]
+fn hof_native_callee_arity2_fold() {
+    let range_id = sha256_bytes(b"range");
+    let fold_id = sha256_bytes(b"fold");
+    let int_add_id = sha256_bytes(b"int_add");
+
+    let bundle = CoreBundle {
+        version: "0.5".into(),
+        constant_pool: vec![
+            ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(0) },
+            ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(4) },
+            ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(0) },
+            ConstantPoolEntry { def_hash: fn_type_hash(), payload: int_add_id.to_vec() },
+        ],
+        nodes: vec![
+            Node::CCall { target_identity: range_id, target_name: "range".into(), args: vec![NodeRef::Pool(0), NodeRef::Pool(1)] },
+            Node::CCall { target_identity: fold_id, target_name: "fold".into(), args: vec![NodeRef::Node(0), NodeRef::Pool(2), NodeRef::Pool(3)] },
+        ],
+        result: NodeRef::Node(1),
+    };
+
+    assert_eq!(build_and_run(&bundle, "hof_native_arity2_fold"), "6");
+}
+
+/// T2b: `loop_count(3, -5, int_abs)` — `int_abs` is a native-convention 1-arg
+/// leaf used as `loop_count`'s `step`, which threads a bare `Value` (not a
+/// tuple) — same `_vfn` adapter shape as T1's `any`/`is_positive`.
+#[test]
+fn hof_native_callee_arity1_loop_count() {
+    let loop_count_id = sha256_bytes(b"loop_count");
+    let int_abs_id = sha256_bytes(b"int_abs");
+
+    let bundle = CoreBundle {
+        version: "0.5".into(),
+        constant_pool: vec![
+            ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(3) },
+            ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(-5) },
+            ConstantPoolEntry { def_hash: fn_type_hash(), payload: int_abs_id.to_vec() },
+        ],
+        nodes: vec![
+            Node::CCall { target_identity: loop_count_id, target_name: "loop_count".into(), args: vec![NodeRef::Pool(0), NodeRef::Pool(1), NodeRef::Pool(2)] },
+        ],
+        result: NodeRef::Node(0),
+    };
+
+    assert_eq!(build_and_run(&bundle, "hof_native_arity1_loop_count"), "5");
+}
+
+/// T3: a HOF (`foreach`) used as another HOF's callee must be rejected at
+/// emit time with a named error, not given a (wrong) `_vfn` adapter.
+#[test]
+fn type_gate_rejects_hof_as_callee() {
+    let any_id = sha256_bytes(b"any");
+    let foreach_id = sha256_bytes(b"foreach");
+
+    let bundle = CoreBundle {
+        version: "0.5".into(),
+        constant_pool: vec![
+            // pool[0]: placeholder "list" — Data slot, content irrelevant to the gate.
+            ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(0) },
+            // pool[1]: Fn ref to `foreach` — itself a HOF, illegal as a callee.
+            ConstantPoolEntry { def_hash: fn_type_hash(), payload: foreach_id.to_vec() },
+        ],
+        nodes: vec![Node::CCall {
+            target_identity: any_id,
+            target_name: "any".into(),
+            args: vec![NodeRef::Pool(0), NodeRef::Pool(1)],
+        }],
+        result: NodeRef::Node(0),
+    };
+
+    let err = emit_rust_lib_from_bundle(
+        &bundle,
+        "hof_as_callee_smoke",
+        &HashMap::new(),
+        &HashMap::new(),
+        &std::collections::HashSet::new(), &std::collections::HashSet::new(),
+    )
+    .expect_err("emit should reject a HOF used as another HOF's callee");
+    assert!(
+        err.contains("HOF_NOT_A_CALLEE"),
+        "expected HOF_NOT_A_CALLEE type-gate error, got: {}",
+        err
     );
 }
