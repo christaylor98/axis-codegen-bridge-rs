@@ -133,6 +133,37 @@ pub fn flat_map(list: Value, callee: fn(Value) -> Value) -> Value {
     }
 }
 
+/// `filter(xs, pred) -> ValueList` — keep only elements where `pred` returns
+/// truthy. Mirrors `any`'s single-arg-predicate shape; unlike `any`/`all` it
+/// returns a `List`, not a `Bool`.
+#[track_caller]
+pub fn filter(list: Value, pred: fn(Value) -> Value) -> Value {
+    match list {
+        Value::List(items) => {
+            let out: Vec<Value> = items
+                .into_iter()
+                .filter(|item| truthy(&pred(item.clone())))
+                .collect();
+            Value::List(out)
+        }
+        other => panic!("filter: expected List, got {:?}", other),
+    }
+}
+
+/// `map(xs, callee) -> ValueList` — transform each element via `callee`.
+/// Mirrors `flat_map`'s single-arg-callee shape but does not flatten —
+/// `callee`'s return is pushed as-is, one in, one out.
+#[track_caller]
+pub fn map(list: Value, callee: fn(Value) -> Value) -> Value {
+    match list {
+        Value::List(items) => {
+            let out: Vec<Value> = items.into_iter().map(callee).collect();
+            Value::List(out)
+        }
+        other => panic!("map: expected List, got {:?}", other),
+    }
+}
+
 /// `any(xs, pred) -> Bool` — true if any element makes `pred` return truthy.
 #[track_caller]
 pub fn any(list: Value, pred: fn(Value) -> Value) -> Value {

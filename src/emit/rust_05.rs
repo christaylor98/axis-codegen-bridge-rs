@@ -142,6 +142,8 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
 
     // Phase 2 — P1 iteration / list vocabulary.
     m.insert("flat_map",    "axis_codegen_bridge::runtime::iter::flat_map");
+    m.insert("filter",      "axis_codegen_bridge::runtime::iter::filter");
+    m.insert("map",         "axis_codegen_bridge::runtime::iter::map");
     m.insert("any",         "axis_codegen_bridge::runtime::iter::any");
     m.insert("all",         "axis_codegen_bridge::runtime::iter::all");
     m.insert("find_index",  "axis_codegen_bridge::runtime::iter::find_index");
@@ -838,6 +840,8 @@ fn fn_arg_kinds() -> HashMap<&'static str, Vec<ArgKind>> {
     let mut m: HashMap<&'static str, Vec<ArgKind>> = HashMap::new();
     m.insert("foreach",    vec![Data, FnRef]);
     m.insert("flat_map",   vec![Data, FnRef]);
+    m.insert("filter",     vec![Data, FnRef]);
+    m.insert("map",        vec![Data, FnRef]);
     m.insert("any",        vec![Data, FnRef]);
     m.insert("all",        vec![Data, FnRef]);
     m.insert("find_index", vec![Data, FnRef]);
