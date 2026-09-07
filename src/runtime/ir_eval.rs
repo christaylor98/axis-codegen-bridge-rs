@@ -460,6 +460,7 @@ fn dispatch_table() -> &'static HashMap<&'static str, PrimFn> {
         m.insert("list_nil",        super::list::list_nil);
         m.insert("list_cons",       list_cons_w);
         m.insert("list_len",        super::list::list_len);
+        m.insert("text_list_len",   super::list::list_len);
         m.insert("list_get",        list_get_w);
         m.insert("list_get_at",             list_get_at_w);
         m.insert("list_get_println_if_some",   list_get_println_if_some_w);
@@ -470,6 +471,7 @@ fn dispatch_table() -> &'static HashMap<&'static str, PrimFn> {
         m.insert("list_head",       super::list::list_head);
         m.insert("list_tail",       super::list::list_tail);
         m.insert("list_is_empty",   super::list::list_is_empty);
+        m.insert("text_list_is_empty", super::list::list_is_empty);
 
         // Tuple / Ctor
         m.insert("tuple_field",     tuple_field_w);

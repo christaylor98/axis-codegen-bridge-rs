@@ -106,6 +106,11 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("list_nil",      "axis_codegen_bridge::runtime::list::list_nil");
     m.insert("list_cons",     "axis_codegen_bridge::runtime::list::list_cons");
     m.insert("list_len",      "axis_codegen_bridge::runtime::list::list_len");
+    // text_list_len: the TextList-typed length, renamed from list_len when
+    // list_len was redeclared for ValueList (AXREG_VALUELIST_VOCABULARY_V1).
+    // One agnostic Rust fn backs both names — it matches on Value::List and
+    // never inspects the element type.
+    m.insert("text_list_len", "axis_codegen_bridge::runtime::list::list_len");
     m.insert("list_get",      "axis_codegen_bridge::runtime::list::list_get");
     m.insert("list_get_at",              "axis_codegen_bridge::runtime::list::list_get_at");
     m.insert("list_get_println_if_some",   "axis_codegen_bridge::runtime::list::list_get_println_if_some");
@@ -116,6 +121,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("list_head",     "axis_codegen_bridge::runtime::list::list_head");
     m.insert("list_tail",     "axis_codegen_bridge::runtime::list::list_tail");
     m.insert("list_is_empty", "axis_codegen_bridge::runtime::list::list_is_empty");
+    m.insert("text_list_is_empty", "axis_codegen_bridge::runtime::list::list_is_empty");
     m.insert("list_of_1",     "axis_codegen_bridge::runtime::list::list_of_1");
     m.insert("list_of_2",     "axis_codegen_bridge::runtime::list::list_of_2");
     m.insert("list_of_3",     "axis_codegen_bridge::runtime::list::list_of_3");
