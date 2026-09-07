@@ -611,6 +611,48 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("mem_copy_raw",         "axis_codegen_bridge::runtime::rawmem::mem_copy_raw");
     m.insert("mem_write_int_raw",    "axis_codegen_bridge::runtime::rawmem::mem_write_int_raw");
     m.insert("mem_read_int_raw",     "axis_codegen_bridge::runtime::rawmem::mem_read_int_raw");
+    // ─── BEGIN GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / symbol_map ───
+    // Monomorphic list vocabulary. Every row aliases an ALREADY-EXISTING
+    // element-agnostic Rust fn — declaration, not implementation.
+    // Keyed by the REGISTRY name, as `__eq__`/`value_eq` requires.
+    m.insert("int_list_nil",                      "axis_codegen_bridge::runtime::list::list_nil");
+    m.insert("text_list_nil",                     "axis_codegen_bridge::runtime::list::list_nil");
+    m.insert("bool_list_nil",                     "axis_codegen_bridge::runtime::list::list_nil");
+    m.insert("int_list_cons",                     "axis_codegen_bridge::runtime::list::list_cons");
+    m.insert("text_list_cons",                    "axis_codegen_bridge::runtime::list::list_cons");
+    m.insert("bool_list_cons",                    "axis_codegen_bridge::runtime::list::list_cons");
+    m.insert("int_list_head",                     "axis_codegen_bridge::runtime::list::list_head");
+    m.insert("text_list_head",                    "axis_codegen_bridge::runtime::list::list_head");
+    m.insert("bool_list_head",                    "axis_codegen_bridge::runtime::list::list_head");
+    m.insert("int_list_tail",                     "axis_codegen_bridge::runtime::list::list_tail");
+    m.insert("text_list_tail",                    "axis_codegen_bridge::runtime::list::list_tail");
+    m.insert("bool_list_tail",                    "axis_codegen_bridge::runtime::list::list_tail");
+    m.insert("int_list_len",                      "axis_codegen_bridge::runtime::list::list_len");
+    m.insert("bool_list_len",                     "axis_codegen_bridge::runtime::list::list_len");
+    m.insert("int_list_is_empty",                 "axis_codegen_bridge::runtime::list::list_is_empty");
+    m.insert("bool_list_is_empty",                "axis_codegen_bridge::runtime::list::list_is_empty");
+    m.insert("int_list_filter",                   "axis_codegen_bridge::runtime::iter::filter");
+    m.insert("text_list_filter",                  "axis_codegen_bridge::runtime::iter::filter");
+    m.insert("bool_list_filter",                  "axis_codegen_bridge::runtime::iter::filter");
+    m.insert("int_list_fold_int",                 "axis_codegen_bridge::runtime::iter::fold");
+    m.insert("int_list_fold_text",                "axis_codegen_bridge::runtime::iter::fold");
+    m.insert("int_list_fold_bool",                "axis_codegen_bridge::runtime::iter::fold");
+    m.insert("text_list_fold_int",                "axis_codegen_bridge::runtime::iter::fold");
+    m.insert("text_list_fold_text",               "axis_codegen_bridge::runtime::iter::fold");
+    m.insert("text_list_fold_bool",               "axis_codegen_bridge::runtime::iter::fold");
+    m.insert("bool_list_fold_int",                "axis_codegen_bridge::runtime::iter::fold");
+    m.insert("bool_list_fold_text",               "axis_codegen_bridge::runtime::iter::fold");
+    m.insert("bool_list_fold_bool",               "axis_codegen_bridge::runtime::iter::fold");
+    m.insert("int_list_map_int",                  "axis_codegen_bridge::runtime::iter::map");
+    m.insert("int_list_map_text",                 "axis_codegen_bridge::runtime::iter::map");
+    m.insert("int_list_map_bool",                 "axis_codegen_bridge::runtime::iter::map");
+    m.insert("text_list_map_int",                 "axis_codegen_bridge::runtime::iter::map");
+    m.insert("text_list_map_text",                "axis_codegen_bridge::runtime::iter::map");
+    m.insert("text_list_map_bool",                "axis_codegen_bridge::runtime::iter::map");
+    m.insert("bool_list_map_int",                 "axis_codegen_bridge::runtime::iter::map");
+    m.insert("bool_list_map_text",                "axis_codegen_bridge::runtime::iter::map");
+    m.insert("bool_list_map_bool",                "axis_codegen_bridge::runtime::iter::map");
+    // ─── END GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / symbol_map ───
 
     m
 }
@@ -862,6 +904,32 @@ fn fn_arg_kinds() -> HashMap<&'static str, Vec<ArgKind>> {
     // Async: `wait` takes its handler in a single Fn callee slot. The handler is
     // invoked synchronously within wait's own frame (CLOSURE_RULE_HARD).
     m.insert("wait", vec![FnRef]);
+    // ─── BEGIN GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / fn_arg_kinds ───
+    // Monomorphic list vocabulary. Every row aliases an ALREADY-EXISTING
+    // element-agnostic Rust fn — declaration, not implementation.
+    // Keyed by the REGISTRY name, as `__eq__`/`value_eq` requires.
+    m.insert("int_list_filter",         vec![Data, FnRef]);
+    m.insert("text_list_filter",        vec![Data, FnRef]);
+    m.insert("bool_list_filter",        vec![Data, FnRef]);
+    m.insert("int_list_fold_int",       vec![Data, Data, FnRef]);
+    m.insert("int_list_fold_text",      vec![Data, Data, FnRef]);
+    m.insert("int_list_fold_bool",      vec![Data, Data, FnRef]);
+    m.insert("text_list_fold_int",      vec![Data, Data, FnRef]);
+    m.insert("text_list_fold_text",     vec![Data, Data, FnRef]);
+    m.insert("text_list_fold_bool",     vec![Data, Data, FnRef]);
+    m.insert("bool_list_fold_int",      vec![Data, Data, FnRef]);
+    m.insert("bool_list_fold_text",     vec![Data, Data, FnRef]);
+    m.insert("bool_list_fold_bool",     vec![Data, Data, FnRef]);
+    m.insert("int_list_map_int",        vec![Data, FnRef]);
+    m.insert("int_list_map_text",       vec![Data, FnRef]);
+    m.insert("int_list_map_bool",       vec![Data, FnRef]);
+    m.insert("text_list_map_int",       vec![Data, FnRef]);
+    m.insert("text_list_map_text",      vec![Data, FnRef]);
+    m.insert("text_list_map_bool",      vec![Data, FnRef]);
+    m.insert("bool_list_map_int",       vec![Data, FnRef]);
+    m.insert("bool_list_map_text",      vec![Data, FnRef]);
+    m.insert("bool_list_map_bool",      vec![Data, FnRef]);
+    // ─── END GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / fn_arg_kinds ───
     m
 }
 
@@ -1207,6 +1275,14 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("rawblk_recover_stats",       vec![Int]);
     m.insert("rawblk_recover_dump_pk",     vec![Int]);
     m.insert("rawblk_recover_dump_hashes", vec![Int]);
+    // ─── BEGIN GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / native_call_fn_arg_types ───
+    // Monomorphic list vocabulary. Every row aliases an ALREADY-EXISTING
+    // element-agnostic Rust fn — declaration, not implementation.
+    // Keyed by the REGISTRY name, as `__eq__`/`value_eq` requires.
+    m.insert("int_list_cons",           vec![Value, Value]);
+    m.insert("text_list_cons",          vec![Value, Value]);
+    m.insert("bool_list_cons",          vec![Value, Value]);
+    // ─── END GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / native_call_fn_arg_types ───
     m
 }
 
