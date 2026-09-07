@@ -2010,8 +2010,28 @@ pub fn emit_rust_lib_from_bundle(
     let native_call_table = native_call_fn_arg_types();
 
     // Collect the distinct §5b extern symbols this bundle calls (for the extern block)
+    //
+    // SELF-EXCLUSION: this bundle's own export is `ax_fn_<sha256(fn_name)>`,
+    // defined further down. A fn that calls itself — directly, or via a fn-ref
+    // to itself — appears in its own callee set, and `xbundle_providers` maps
+    // every provider in the closure including this one. Declaring it here
+    // would put an `extern` declaration and the definition of the same symbol
+    // in one module:
+    //
+    //   error[E0428]: the name `ax_fn_<hex>` is defined multiple times
+    //
+    // which made every self-recursive fn unlinkable. The definition is in
+    // scope for callers within this module, so skipping the extern loses
+    // nothing: a direct self-call and the `{sym}_xfn` fn-ref wrapper both
+    // resolve to it.
+    //
+    // Seeding the visited set is what excludes it — the identity is treated as
+    // already-emitted, so both the CCall scan and the Fn-pool scan below skip
+    // it without either needing a special case.
+    let self_identity = sha256_bytes(fn_name.as_bytes());
     let mut extern_syms: Vec<String> = Vec::new();
     let mut seen_extern: std::collections::HashSet<Hash256> = std::collections::HashSet::new();
+    seen_extern.insert(self_identity);
     for node in &bundle.nodes {
         if let Node::CCall { target_identity, .. } = node {
             if let Some(sym) = xbundle_providers.get(target_identity) {
