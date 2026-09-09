@@ -612,8 +612,11 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("mem_write_int_raw",    "axis_codegen_bridge::runtime::rawmem::mem_write_int_raw");
     m.insert("mem_read_int_raw",     "axis_codegen_bridge::runtime::rawmem::mem_read_int_raw");
     // ─── BEGIN GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / symbol_map ───
-    // Monomorphic list vocabulary. Every row aliases an ALREADY-EXISTING
-    // element-agnostic Rust fn — declaration, not implementation.
+    // Monomorphic list vocabulary. Most rows alias an ALREADY-EXISTING
+    // element-agnostic Rust fn — declaration, not implementation. The
+    // value_list_to_*_list rows (M1_VALUELIST_NARROWING_V1) are the
+    // exception: narrowing must inspect elements, so those point at new
+    // Rust written for this intent, not an alias.
     // Keyed by the REGISTRY name, as `__eq__`/`value_eq` requires.
     m.insert("int_list_nil",                      "axis_codegen_bridge::runtime::list::list_nil");
     m.insert("text_list_nil",                     "axis_codegen_bridge::runtime::list::list_nil");
@@ -652,6 +655,9 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("bool_list_map_int",                 "axis_codegen_bridge::runtime::iter::map");
     m.insert("bool_list_map_text",                "axis_codegen_bridge::runtime::iter::map");
     m.insert("bool_list_map_bool",                "axis_codegen_bridge::runtime::iter::map");
+    m.insert("value_list_to_int_list",            "axis_codegen_bridge::runtime::list::value_list_to_int_list");
+    m.insert("value_list_to_text_list",           "axis_codegen_bridge::runtime::list::value_list_to_text_list");
+    m.insert("value_list_to_bool_list",           "axis_codegen_bridge::runtime::list::value_list_to_bool_list");
     // ─── END GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / symbol_map ───
 
     m
@@ -905,8 +911,11 @@ fn fn_arg_kinds() -> HashMap<&'static str, Vec<ArgKind>> {
     // invoked synchronously within wait's own frame (CLOSURE_RULE_HARD).
     m.insert("wait", vec![FnRef]);
     // ─── BEGIN GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / fn_arg_kinds ───
-    // Monomorphic list vocabulary. Every row aliases an ALREADY-EXISTING
-    // element-agnostic Rust fn — declaration, not implementation.
+    // Monomorphic list vocabulary. Most rows alias an ALREADY-EXISTING
+    // element-agnostic Rust fn — declaration, not implementation. The
+    // value_list_to_*_list rows (M1_VALUELIST_NARROWING_V1) are the
+    // exception: narrowing must inspect elements, so those point at new
+    // Rust written for this intent, not an alias.
     // Keyed by the REGISTRY name, as `__eq__`/`value_eq` requires.
     m.insert("int_list_filter",         vec![Data, FnRef]);
     m.insert("text_list_filter",        vec![Data, FnRef]);
@@ -1276,8 +1285,11 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("rawblk_recover_dump_pk",     vec![Int]);
     m.insert("rawblk_recover_dump_hashes", vec![Int]);
     // ─── BEGIN GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / native_call_fn_arg_types ───
-    // Monomorphic list vocabulary. Every row aliases an ALREADY-EXISTING
-    // element-agnostic Rust fn — declaration, not implementation.
+    // Monomorphic list vocabulary. Most rows alias an ALREADY-EXISTING
+    // element-agnostic Rust fn — declaration, not implementation. The
+    // value_list_to_*_list rows (M1_VALUELIST_NARROWING_V1) are the
+    // exception: narrowing must inspect elements, so those point at new
+    // Rust written for this intent, not an alias.
     // Keyed by the REGISTRY name, as `__eq__`/`value_eq` requires.
     m.insert("int_list_cons",           vec![Value, Value]);
     m.insert("text_list_cons",          vec![Value, Value]);

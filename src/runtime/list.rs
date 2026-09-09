@@ -1,5 +1,73 @@
 use super::value::{Value, get_str};
 
+// ── M1_VALUELIST_NARROWING_V1 ─────────────────────────────────────────────
+//
+// Every other fn in this file is element-agnostic: `Value::List(Vec<Value>)`
+// is a single untyped vector, and every op above is a match on the List tag
+// that never inspects an element. A narrowing conversion is the first
+// operation that must — it exists to reject a ValueList whose elements are
+// not all the target tag, and NO_DEFAULTING_EVER means there is no arm that
+// substitutes a value or silently drops a mismatched one: a bad element is a
+// panic, not a computation.
+//
+// The panic must name the offending index and the actual tag found (Chris's
+// binding requirement on this intent) — "expected Int" alone tells a caller
+// nothing about WHERE the list went wrong, the same defect as int_div's bare
+// "division by zero".
+
+fn value_tag_name(v: &Value) -> &'static str {
+    match v {
+        Value::Int(_) => "Int",
+        Value::Bool(_) => "Bool",
+        Value::Str(_) => "Text",
+        Value::Unit => "Unit",
+        Value::Tuple(_) => "Tuple",
+        Value::List(_) => "List",
+        Value::Ctor { .. } => "Ctor",
+        Value::Dec(_) => "Dec",
+        Value::Float(_) => "Float",
+        Value::Bytes(_) => "Bytes",
+    }
+}
+
+/// Shared element-inspecting loop behind all three `value_list_to_*_list`
+/// narrowing fns. An empty list narrows unconditionally and vacuously: the
+/// target type comes from which of the three callers you reached, not from
+/// inspecting contents, so there is no element-type ambiguity for an empty
+/// list to get wrong.
+#[track_caller]
+fn narrow_value_list(fn_name: &str, expected: &str, list: Value, is_expected: fn(&Value) -> bool) -> Value {
+    match list {
+        Value::List(items) => {
+            for (idx, item) in items.iter().enumerate() {
+                if !is_expected(item) {
+                    panic!(
+                        "{fn_name}: element {idx} is {actual}, expected {expected}",
+                        actual = value_tag_name(item)
+                    );
+                }
+            }
+            Value::List(items)
+        }
+        other => panic!("{fn_name}: expected ValueList, got {actual}", actual = value_tag_name(&other)),
+    }
+}
+
+#[track_caller]
+pub fn value_list_to_int_list(list: Value) -> Value {
+    narrow_value_list("value_list_to_int_list", "Int", list, |v| matches!(v, Value::Int(_)))
+}
+
+#[track_caller]
+pub fn value_list_to_text_list(list: Value) -> Value {
+    narrow_value_list("value_list_to_text_list", "Text", list, |v| matches!(v, Value::Str(_)))
+}
+
+#[track_caller]
+pub fn value_list_to_bool_list(list: Value) -> Value {
+    narrow_value_list("value_list_to_bool_list", "Bool", list, |v| matches!(v, Value::Bool(_)))
+}
+
 #[track_caller]
 pub fn list_nil(_: Value) -> Value {
     Value::List(vec![])
