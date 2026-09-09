@@ -68,6 +68,32 @@ pub fn value_list_to_bool_list(list: Value) -> Value {
     narrow_value_list("value_list_to_bool_list", "Bool", list, |v| matches!(v, Value::Bool(_)))
 }
 
+/// Scalar sibling of `narrow_value_list`: checks a single `Value`'s tag
+/// instead of walking a list's elements.
+#[track_caller]
+fn narrow_value(fn_name: &str, expected: &str, v: Value, is_expected: fn(&Value) -> bool) -> Value {
+    if is_expected(&v) {
+        v
+    } else {
+        panic!("{fn_name}: expected {expected}, got {actual}", actual = value_tag_name(&v));
+    }
+}
+
+#[track_caller]
+pub fn value_to_int(v: Value) -> Value {
+    narrow_value("value_to_int", "Int", v, |v| matches!(v, Value::Int(_)))
+}
+
+#[track_caller]
+pub fn value_to_text(v: Value) -> Value {
+    narrow_value("value_to_text", "Text", v, |v| matches!(v, Value::Str(_)))
+}
+
+#[track_caller]
+pub fn value_to_bool(v: Value) -> Value {
+    narrow_value("value_to_bool", "Bool", v, |v| matches!(v, Value::Bool(_)))
+}
+
 #[track_caller]
 pub fn list_nil(_: Value) -> Value {
     Value::List(vec![])

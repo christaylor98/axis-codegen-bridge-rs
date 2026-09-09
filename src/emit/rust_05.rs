@@ -660,6 +660,14 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("value_list_to_bool_list",           "axis_codegen_bridge::runtime::list::value_list_to_bool_list");
     // ─── END GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / symbol_map ───
 
+    // Scalar sibling of the ValueList narrowing family (M1_VALUE_SCALAR_NARROWING_V1):
+    // checked narrowing from a single Value down to a concrete primitive, for a
+    // dynamically-dispatched ir_eval result whose caller already knows the expected
+    // tag. Panics naming the actual tag found on mismatch, same as value_list_to_*_list.
+    m.insert("value_to_int",                      "axis_codegen_bridge::runtime::list::value_to_int");
+    m.insert("value_to_text",                     "axis_codegen_bridge::runtime::list::value_to_text");
+    m.insert("value_to_bool",                     "axis_codegen_bridge::runtime::list::value_to_bool");
+
     m
 }
 
