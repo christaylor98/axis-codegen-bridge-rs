@@ -123,6 +123,9 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("list_is_empty", "axis_codegen_bridge::runtime::list::list_is_empty");
     m.insert("text_list_is_empty", "axis_codegen_bridge::runtime::list::list_is_empty");
     m.insert("list_of_1",     "axis_codegen_bridge::runtime::list::list_of_1");
+    // int_to_singleton: ValueList-typed HOF-callback contract over the same
+    // one-element-list runtime as list_of_1 (axis-bridge.axreg).
+    m.insert("int_to_singleton", "axis_codegen_bridge::runtime::list::list_of_1");
     m.insert("list_of_2",     "axis_codegen_bridge::runtime::list::list_of_2");
     m.insert("list_of_3",     "axis_codegen_bridge::runtime::list::list_of_3");
 
@@ -243,33 +246,9 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("bridge_to_float", "axis_codegen_bridge::runtime::coerce::bridge_to_float");
 
     // IR constructors / accessors (kept for backward compat)
-    m.insert("ir_make_int_lit",  "axis_codegen_bridge::runtime::ir_constructors::ir_make_int_lit");
-    m.insert("ir_make_bool_lit", "axis_codegen_bridge::runtime::ir_constructors::ir_make_bool_lit");
-    m.insert("ir_make_unit_lit", "axis_codegen_bridge::runtime::ir_constructors::ir_make_unit_lit");
-    m.insert("ir_make_var",      "axis_codegen_bridge::runtime::ir_constructors::ir_make_var");
-    m.insert("ir_make_lam",      "axis_codegen_bridge::runtime::ir_constructors::ir_make_lam");
-    m.insert("ir_make_let",      "axis_codegen_bridge::runtime::ir_constructors::ir_make_let");
-    m.insert("ir_make_if",       "axis_codegen_bridge::runtime::ir_constructors::ir_make_if");
-    m.insert("ir_make_app",      "axis_codegen_bridge::runtime::ir_constructors::ir_make_app");
-    m.insert("ir_make_call",     "axis_codegen_bridge::runtime::ir_constructors::ir_make_call");
     m.insert("ir_write_bundle",  "axis_codegen_bridge::runtime::ir_constructors::ir_write_bundle");
     m.insert("ir_read_bundle",   "axis_codegen_bridge::runtime::ir_constructors::ir_read_bundle");
     m.insert("ir_bundle_view",   "axis_codegen_bridge::runtime::ir_constructors::ir_bundle_view");
-    m.insert("ir_subst",         "axis_codegen_bridge::runtime::ir_constructors::ir_subst");
-    m.insert("ir_rename",        "axis_codegen_bridge::runtime::ir_constructors::ir_rename");
-    m.insert("ir_free_vars",     "axis_codegen_bridge::runtime::ir_constructors::ir_free_vars");
-    m.insert("ir_eval",          "axis_codegen_bridge::runtime::ir_eval::ir_eval");
-    m.insert("ir_apply",         "axis_codegen_bridge::runtime::ir_eval::ir_apply");
-    m.insert("ir_get_kind",      "axis_codegen_bridge::runtime::ir_accessors::ir_get_kind");
-    m.insert("ir_get_name",      "axis_codegen_bridge::runtime::ir_accessors::ir_get_name");
-    m.insert("ir_get_int_val",   "axis_codegen_bridge::runtime::ir_accessors::ir_get_int_val");
-    m.insert("ir_get_fn",        "axis_codegen_bridge::runtime::ir_accessors::ir_get_fn");
-    m.insert("ir_get_arg",       "axis_codegen_bridge::runtime::ir_accessors::ir_get_arg");
-    m.insert("ir_get_body",      "axis_codegen_bridge::runtime::ir_accessors::ir_get_body");
-    m.insert("ir_get_value",     "axis_codegen_bridge::runtime::ir_accessors::ir_get_value");
-    m.insert("ir_get_cond",      "axis_codegen_bridge::runtime::ir_accessors::ir_get_cond");
-    m.insert("ir_get_then",      "axis_codegen_bridge::runtime::ir_accessors::ir_get_then");
-    m.insert("ir_get_else",      "axis_codegen_bridge::runtime::ir_accessors::ir_get_else");
 
     // ── Hash (BRIDGE_HASH_PRIMITIVE_M1 — resolves hld:axverity-hash-dependency) ─
     m.insert("content_hash",  "axis_codegen_bridge::runtime::hash::content_hash");
@@ -1128,20 +1107,8 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     // hotmem.rs/qhm.rs/pkindex.rs/pgbshape.rs/oneshot.rs/walshard.rs/
     // rawmem.rs remainder, walindex.rs/fieldidx.rs/logbuf.rs/slablock.rs/
     // mmapseg.rs, indexer.rs/hotwrite_batch.rs/adjacency.rs + 14 small files.
-    m.insert("ir_make_int_lit",   vec![Int]);
-    m.insert("ir_make_bool_lit",  vec![Bool]);
-    m.insert("ir_make_var",       vec![Text]);
-    m.insert("ir_make_lam",       vec![Text, Value]);
-    m.insert("ir_make_let",       vec![Text, Value, Value]);
-    m.insert("ir_make_if",        vec![Value, Value, Value]);
-    m.insert("ir_make_app",       vec![Value, Value]);
-    m.insert("ir_make_call",      vec![Text, Value]);
-    m.insert("ir_subst",          vec![Text, Value, Value]);
-    m.insert("ir_rename",         vec![Text, Text, Value]);
     m.insert("ir_write_bundle",   vec![Value, Text]);
     m.insert("ir_read_bundle",    vec![Text]);
-    m.insert("ir_build_program_from_spec", vec![Text]);
-    m.insert("ir_build_fold_from_spec",    vec![Text]);
     m.insert("fs_read_text",      vec![Text]);
     m.insert("fs_read_last_line", vec![Text]);
     m.insert("fs_write_text",     vec![Text, Text]);
