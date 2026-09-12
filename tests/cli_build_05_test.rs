@@ -851,57 +851,110 @@ fn build_iftest_exe(dir: &TempDir, cond: bool, stem: &str) -> std::path::PathBuf
     out
 }
 
-// ── BRANCH_SCOPING_V1 tripwire ────────────────────────────────────────────────
+// ── ORPHAN_IS_TOP_LEVEL_V1 ───────────────────────────────────────────────────
 //
-// A node with no data-dependency consumer, sitting after `cond` and before a
-// `CIf` whose `then_` is a bare pool ref, cannot be soundly attributed to
-// `then` vs `else` by position alone (see `compute_branch_paths`'s doc
-// comment in src/emit/rust_05.rs). The build must refuse this shape rather
-// than silently defaulting the orphan to unconditional top-level emission.
-// Not reachable from M1 today — this locks in that the day it becomes
-// reachable, the build fails loudly instead of silently mis-scoping.
-#[test]
-fn test_orphan_before_unanchored_cif_then_is_rejected() {
-    let bundle = CoreBundle {
+// A node with no data-dependency consumer is unconditional and top-level:
+// evaluated once, on every call, in node-index order. Its position relative to
+// a `CIf` means nothing — scope is carried by consumer edges and by nothing
+// else (see `CoreBundle`'s docs and `compute_branch_paths` in emit/rust_05.rs).
+//
+// This is the shape a positional tripwire used to refuse: an orphan sitting
+// between the `CIf`'s cond anchor and the `CIf`, whose `then_` is a bare pool
+// ref. Ordinary AI3 emits it for a top-level discarded effect written after
+// the condition's binding — `let c = ...; let a = eff(); let v = if c {...}`.
+// The check was unsound in both directions (a statement reorder made the same
+// program pass, and the mirror `then_`-node/`else_`-pool shape was never
+// tested at all), so it was removed. These tests pin what must hold instead:
+// the orphan effect fires EXACTLY ONCE, in BOTH branches, and in program order
+// ahead of the `CIf`'s own effects.
+
+/// `fn(cond) -> Bool { let _ = fs_append_text(log, "orphan\n"); if !cond { true } else { false } }`
+/// laid out so the orphan lands in the window the old tripwire scanned:
+/// node[0] is the `CIf`'s cond anchor, node[1] is the orphan, node[2] is the
+/// `CIf` — whose `then_`/`else_` are both bare pool refs.
+fn make_orphan_before_cif_bundle(log_path: &str, cond: bool) -> CoreBundle {
+    CoreBundle {
         version: "0.5".to_string(),
         constant_pool: vec![
-            ConstantPoolEntry { def_hash: bool_type_hash(), payload: encode_bool_payload(true) },
+            ConstantPoolEntry { def_hash: bool_type_hash(), payload: encode_bool_payload(cond) },
+            ConstantPoolEntry { def_hash: axis_codegen_bridge::core_ir_05::text_type_hash(), payload: encode_text_payload(log_path) },
+            ConstantPoolEntry { def_hash: axis_codegen_bridge::core_ir_05::text_type_hash(), payload: encode_text_payload("orphan\n") },
             ConstantPoolEntry { def_hash: bool_type_hash(), payload: encode_bool_payload(true) },
             ConstantPoolEntry { def_hash: bool_type_hash(), payload: encode_bool_payload(false) },
         ],
         nodes: vec![
-            // node[0]: bool_not(pool[0]) — CIf's cond; a real anchor.
+            // node[0]: bool_not(pool[0]) — the CIf's cond, a real anchor.
             Node::CCall {
                 target_identity: sha256_bytes(b"bool_not"),
                 target_name: "bool_not".to_string(),
                 args: vec![NodeRef::Pool(0)],
             },
-            // node[1]: io_println() — zero consumers (an orphan/discarded
-            // value), positioned between cond's anchor (node[0]) and the CIf
-            // (node[2]) below.
+            // node[1]: fs_append_text(log, "orphan\n") — zero consumers.
             Node::CCall {
-                target_identity: sha256_bytes(b"io_println"),
-                target_name: "io_println".to_string(),
-                args: vec![],
+                target_identity: sha256_bytes(b"fs_append_text"),
+                target_name: "fs_append_text".to_string(),
+                args: vec![NodeRef::Pool(1), NodeRef::Pool(2)],
             },
-            // node[2]: if node[0] { pool[1] } else { pool[2] } — `then_` is a
-            // bare pool ref, so there's no anchor to prove node[1] belongs to
-            // `then` rather than `else` (or vice versa).
+            // node[2]: if node[0] { pool[3] } else { pool[4] } — both arms bare
+            // pool refs, so there is no anchor pinning a then/else boundary.
             Node::CIf {
                 cond:  NodeRef::Node(0),
-                then_: NodeRef::Pool(1),
-                else_: NodeRef::Pool(2),
+                then_: NodeRef::Pool(3),
+                else_: NodeRef::Pool(4),
             },
         ],
         result: NodeRef::Node(2),
-    };
+    }
+}
 
-    let result = axis_codegen_bridge::emit::rust_05::emit_rust_lib_from_bundle(
-        &bundle, "ambiguous_orphan", &std::collections::HashMap::new(), &std::collections::HashMap::new(),
-        &std::collections::HashSet::new(), &std::collections::HashSet::new(),
+/// Builds and runs the bundle above, returning (stdout, log file contents).
+fn run_orphan_before_cif(cond: bool, stem: &str) -> (String, String) {
+    let dir = TempDir::new().unwrap();
+    let log_path = dir.path().join("orphan.log");
+    let bundle = make_orphan_before_cif_bundle(log_path.to_str().unwrap(), cond);
+    let fixture = write_05_bundle(&dir, &format!("{}.coreir", stem), &bundle);
+    let out = dir.path().join(stem);
+
+    let status = Command::new(bridge())
+        .args([
+            "build", fixture.to_str().unwrap(),
+            "--out", out.to_str().unwrap(),
+            "--exe",
+        ])
+        .status()
+        .expect("bridge failed to run");
+    assert!(
+        status.success(),
+        "orphan-before-CIf is a legal bundle shape and must build (cond={})",
+        cond
     );
-    let err = result.expect_err("ambiguous orphan-before-unanchored-CIf shape must be rejected");
-    assert!(err.contains("BRANCH_SCOPING_V1"), "expected BRANCH_SCOPING_V1 tripwire message, got: {}", err);
+
+    let output = Command::new(&out).output().expect("failed to run exe");
+    let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+    (String::from_utf8_lossy(&output.stdout).trim().to_string(), log)
+}
+
+#[test]
+fn test_orphan_before_unanchored_cif_runs_unconditionally_then_branch() {
+    // cond=false → bool_not gives true → then-arm taken.
+    let (stdout, log) = run_orphan_before_cif(false, "orphan_then");
+    assert_eq!(stdout, "true", "expected the then-arm value, got: {:?}", stdout);
+    assert_eq!(
+        log, "orphan\n",
+        "the orphan effect must run exactly once even when the then-arm is taken"
+    );
+}
+
+#[test]
+fn test_orphan_before_unanchored_cif_runs_unconditionally_else_branch() {
+    // cond=true → bool_not gives false → else-arm taken. Same orphan, same
+    // single firing: it is top-level, not attributed to either arm.
+    let (stdout, log) = run_orphan_before_cif(true, "orphan_else");
+    assert_eq!(stdout, "false", "expected the else-arm value, got: {:?}", stdout);
+    assert_eq!(
+        log, "orphan\n",
+        "the orphan effect must run exactly once even when the else-arm is taken"
+    );
 }
 
 #[test]

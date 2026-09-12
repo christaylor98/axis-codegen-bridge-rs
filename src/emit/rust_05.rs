@@ -1505,19 +1505,32 @@ fn longest_common_prefix(paths: &[ScopePath]) -> ScopePath {
 /// Compute each node's required `ScopePath`, processed from the last node
 /// down to the first so every consumer's scope is already known.
 ///
-/// Errs on the one shape this analysis cannot soundly resolve: a
-/// zero-consumer ("orphan") node — a discarded value, e.g. `let _ = eff();
-/// tail` — sitting inside a `CIf` whose `then_` is a bare pool ref (no
-/// anchor to pin exactly where "then" ends and "else" begins). As of
-/// 2026-07-15 M1's `IfExpr` branches ARE `Body` (they can hold a let-chain),
-/// but the compiler now threads every discarded branch effect into the arm's
-/// result via `seq(eff, result)` (`nf_lowering.rs` `seq_scope_arm_effects`),
-/// so a branch orphan is given a consumer edge before it ever reaches this
-/// analysis — no orphan-in-branch is emitted from M1. This check therefore
-/// stays dormant for M1 today, and exists so that if some producer ever emits
-/// a raw un-threaded orphan under a pool-ref branch, the build fails loudly
-/// right here instead of silently hoisting it to top level and reintroducing
-/// BRANCH_SCOPING_V1's exact bug for that one node.
+/// ORPHAN_IS_TOP_LEVEL_V1 — a zero-consumer ("orphan") node, i.e. a discarded
+/// value such as `let _ = eff(); tail`, is **unconditional and top-level**,
+/// evaluated in node-index order. That is the IR's defined meaning for a node
+/// with no consumer edge, not a fallback: see `core_ir_05`'s `CoreBundle`
+/// docs, which state it as a producer contract.
+///
+/// The corollary a producer must honour: an arm-local discarded effect MUST be
+/// given a consumer edge inside its arm, because scope is carried by
+/// data-dependency edges and by nothing else. M1/AI3 does this in
+/// `nf_lowering.rs` `seq_scope_arm_effects` (called on both arms at :495/:498),
+/// which threads every unconsumed arm node into that arm's result via
+/// `seq(eff, result)`. Its `branch_scoping_tests` module pins the property,
+/// nested `if`s included.
+///
+/// This function previously carried a positional tripwire that refused to build
+/// when an orphan sat between a `CIf`'s cond anchor and the `CIf` itself, on
+/// the theory that such a node could not be attributed to `then` vs `else`.
+/// It was removed as unsound in both directions. An arm-local orphan and a
+/// top-level orphan lower to byte-identical node sequences — cond, orphan,
+/// `CIf` — so position cannot separate them, and the check rejected ordinary
+/// AI3 programs (a top-level discarded effect written after the condition's
+/// binding) while a mere statement reorder made it pass. It was also
+/// asymmetric: it keyed on `then_` being a bare pool ref, so `then_` pool +
+/// `else_` node was rejected and `then_` node + `else_` pool accepted, for the
+/// same shape. Do not reintroduce a positional form of this check; the
+/// guarantee belongs in the producer, where the arm structure still exists.
 fn compute_branch_paths(
     bundle: &CoreBundle,
     pure_det: &std::collections::HashSet<Hash256>,
@@ -1554,39 +1567,6 @@ fn compute_branch_paths(
         }
     }
 
-    // BRANCH_SCOPING_V1 tripwire: an orphan node positioned after `cond`'s
-    // own anchor and before a `CIf` whose `then_` has no anchor cannot be
-    // soundly attributed to `then` vs `else` by position alone (see doc
-    // comment above). Check this BEFORE computing `path`, since an orphan
-    // always defaults to top-level there regardless — the point is to
-    // refuse to build rather than silently accept the ambiguous shape.
-    for (k, node) in bundle.nodes.iter().enumerate() {
-        if let Node::CIf { cond, then_, .. } = node {
-            if !matches!(then_, NodeRef::Node(_)) {
-                if let NodeRef::Node(cond_anchor) = cond {
-                    for i in (*cond_anchor as usize + 1)..k {
-                        if uses[i].is_empty() {
-                            return Err(format!(
-                                "BRANCH_SCOPING_V1: node[{i}] has no data-dependency consumer \
-                                 (a discarded value) and sits between CIf node[{k}]'s cond and \
-                                 its own position, but node[{k}]'s `then_` is a bare pool ref with \
-                                 no anchor to pin the then/else boundary — whether node[{i}] belongs \
-                                 to the then-arm or the else-arm cannot be determined from graph \
-                                 position alone. Refusing to build rather than silently defaulting \
-                                 node[{i}] to unconditional top-level emission (which could re-run \
-                                 its effect in the wrong branch, or on every call). This bundle shape \
-                                 is not reachable from M1 today; if a new producer emits it, extend \
-                                 the branch-scoping analysis (or the IR) to carry explicit sequencing \
-                                 before removing this check.",
-                                i = i, k = k
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     let mut path: Vec<ScopePath> = (0..n).map(|_| Vec::new()).collect();
     for i in (0..n).rev() {
         let required: Vec<ScopePath> = uses[i]
@@ -1607,9 +1587,11 @@ fn compute_branch_paths(
             })
             .collect();
         // A node with no recorded uses has no consumer edge to anchor a
-        // scope to. The tripwire above already refused any case where this
-        // matters; anything reaching here is a genuinely safe top-level
-        // orphan (e.g. a discarded value preceding an unrelated `CIf`).
+        // scope to, so its `required` set is empty and `longest_common_prefix`
+        // yields the empty path — unconditional, top-level, ordered by index.
+        // That is ORPHAN_IS_TOP_LEVEL_V1 (see this fn's doc comment), the IR's
+        // defined meaning for such a node, which the producer upholds by
+        // seq-threading any arm-local discarded effect into its arm result.
         path[i] = longest_common_prefix(&required);
         // EFFECT_ORDER_V1: sinking is unconditionally safe only for values.
         // An effectful node written before the `CIf` (its consumers all sit in

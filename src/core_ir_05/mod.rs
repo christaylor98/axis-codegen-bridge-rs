@@ -44,6 +44,27 @@ pub enum Node {
     CDeterminate,
 }
 
+/// ORPHAN_IS_TOP_LEVEL_V1 — scope is carried by data-dependency edges and by
+/// nothing else.
+///
+/// A node with NO consumer edge (not `result`, not an argument of any `CCall`,
+/// not the cond/then_/else_ of any `CIf`) is **unconditional and top-level**:
+/// it is evaluated once, on every call, in node-index order relative to the
+/// other top-level nodes. A node's index position relative to a `CIf` says
+/// nothing about branch membership.
+///
+/// This is a PRODUCER CONTRACT, not merely emitter behaviour. A producer that
+/// wants a discarded side effect to be gated by a branch — `if c { let _ =
+/// eff(); v }` — MUST give it a consumer edge inside that arm, conventionally
+/// by threading it through the arm's result with `seq(eff, result) -> result`.
+/// An un-threaded orphan and a top-level orphan are byte-identical in this IR,
+/// so a consumer cannot recover the distinction and will correctly treat the
+/// effect as unconditional.
+///
+/// The M1/AI3 front end discharges this in `nf_lowering.rs`
+/// `seq_scope_arm_effects`. The emitter side is `compute_branch_paths` in
+/// `emit/rust_05.rs`, whose doc comment records why a positional guess at arm
+/// membership was tried here and removed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CoreBundle {
     pub version: String,
