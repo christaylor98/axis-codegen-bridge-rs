@@ -742,6 +742,18 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("bool_list_or",                      "axis_codegen_bridge::runtime::list::list_any_true");
     m.insert("int_list_range",                    "axis_codegen_bridge::runtime::iter::range");
     m.insert("text_list_join",                    "axis_codegen_bridge::runtime::str_ops::str_join");
+    m.insert("int_list_any",                      "axis_codegen_bridge::runtime::iter::any");
+    m.insert("text_list_any",                     "axis_codegen_bridge::runtime::iter::any");
+    m.insert("bool_list_any",                     "axis_codegen_bridge::runtime::iter::any");
+    m.insert("int_list_all",                      "axis_codegen_bridge::runtime::iter::all");
+    m.insert("text_list_all",                     "axis_codegen_bridge::runtime::iter::all");
+    m.insert("bool_list_all",                     "axis_codegen_bridge::runtime::iter::all");
+    m.insert("int_list_find_index",               "axis_codegen_bridge::runtime::iter::find_index");
+    m.insert("text_list_find_index",              "axis_codegen_bridge::runtime::iter::find_index");
+    m.insert("bool_list_find_index",              "axis_codegen_bridge::runtime::iter::find_index");
+    m.insert("int_list_count",                    "axis_codegen_bridge::runtime::iter::count");
+    m.insert("text_list_count",                   "axis_codegen_bridge::runtime::iter::count");
+    m.insert("bool_list_count",                   "axis_codegen_bridge::runtime::iter::count");
     // ─── END GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / symbol_map ───
 
     // Scalar sibling of the ValueList narrowing family (M1_VALUE_SCALAR_NARROWING_V1):
@@ -1030,6 +1042,18 @@ fn fn_arg_kinds() -> HashMap<&'static str, Vec<ArgKind>> {
     m.insert("bool_list_map_int",       vec![Data, FnRef]);
     m.insert("bool_list_map_text",      vec![Data, FnRef]);
     m.insert("bool_list_map_bool",      vec![Data, FnRef]);
+    m.insert("int_list_any",            vec![Data, FnRef]);
+    m.insert("text_list_any",           vec![Data, FnRef]);
+    m.insert("bool_list_any",           vec![Data, FnRef]);
+    m.insert("int_list_all",            vec![Data, FnRef]);
+    m.insert("text_list_all",           vec![Data, FnRef]);
+    m.insert("bool_list_all",           vec![Data, FnRef]);
+    m.insert("int_list_find_index",     vec![Data, FnRef]);
+    m.insert("text_list_find_index",    vec![Data, FnRef]);
+    m.insert("bool_list_find_index",    vec![Data, FnRef]);
+    m.insert("int_list_count",          vec![Data, FnRef]);
+    m.insert("text_list_count",         vec![Data, FnRef]);
+    m.insert("bool_list_count",         vec![Data, FnRef]);
     // ─── END GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / fn_arg_kinds ───
     m
 }
