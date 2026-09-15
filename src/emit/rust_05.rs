@@ -38,6 +38,22 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("celsius_to_fahrenheit", "axis_codegen_bridge::runtime::arith::celsius_to_fahrenheit");
     m.insert("fahrenheit_to_celsius", "axis_codegen_bridge::runtime::arith::fahrenheit_to_celsius");
     m.insert("is_positive",     "axis_codegen_bridge::runtime::arith::is_positive");
+    m.insert("int_neg",         "axis_codegen_bridge::runtime::arith::int_neg");
+    m.insert("int_ne",          "axis_codegen_bridge::runtime::arith::int_ne");
+    m.insert("int_pow",         "axis_codegen_bridge::runtime::arith::int_pow");
+    m.insert("int_sign",        "axis_codegen_bridge::runtime::arith::int_sign");
+    m.insert("int_is_even",     "axis_codegen_bridge::runtime::arith::int_is_even");
+    m.insert("int_is_odd",      "axis_codegen_bridge::runtime::arith::int_is_odd");
+    m.insert("dec_add",         "axis_codegen_bridge::runtime::arith::dec_add");
+    m.insert("dec_sub",         "axis_codegen_bridge::runtime::arith::dec_sub");
+    m.insert("dec_mul",         "axis_codegen_bridge::runtime::arith::dec_mul");
+    m.insert("dec_neg",         "axis_codegen_bridge::runtime::arith::dec_neg");
+    m.insert("dec_abs",         "axis_codegen_bridge::runtime::arith::dec_abs");
+    m.insert("dec_min",         "axis_codegen_bridge::runtime::arith::dec_min");
+    m.insert("dec_max",         "axis_codegen_bridge::runtime::arith::dec_max");
+    m.insert("dec_round",       "axis_codegen_bridge::runtime::arith::dec_round");
+    m.insert("dec_to_int",      "axis_codegen_bridge::runtime::arith::dec_to_int");
+    m.insert("str_to_dec",      "axis_codegen_bridge::runtime::arith::str_to_dec");
 
     // Comparison
     m.insert("int_lt",   "axis_codegen_bridge::runtime::arith::int_lt");
@@ -1080,6 +1096,18 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("int_lte",           vec![Int, Int]);
     m.insert("int_gt",            vec![Int, Int]);
     m.insert("int_gte",           vec![Int, Int]);
+    m.insert("int_neg",           vec![Int]);
+    m.insert("int_ne",            vec![Int, Int]);
+    m.insert("int_pow",           vec![Int, Int]);
+    m.insert("int_sign",          vec![Int]);
+    m.insert("int_is_even",       vec![Int]);
+    m.insert("int_is_odd",        vec![Int]);
+    // dec_add/sub/mul/neg/abs/min/max/round/to_int stay on the boxed
+    // Value::Tuple convention (like dec_eq/dec_div/dec_to_text) — there is
+    // no NativeArgType::Dec variant, so a Dec-typed arg cannot be listed
+    // here. str_to_dec's arg is Text, not Dec, so it can use the native
+    // convention even though its result is a Dec.
+    m.insert("str_to_dec",        vec![Text]);
     m.insert("seq",               vec![Value, Value]);
     m.insert("bool_and",          vec![Value, Value]);
     m.insert("bool_or",           vec![Value, Value]);

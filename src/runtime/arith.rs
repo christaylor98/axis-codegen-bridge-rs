@@ -1,4 +1,5 @@
 use super::value::Value;
+use rust_decimal::prelude::ToPrimitive as _;
 use rust_decimal::{Decimal, RoundingStrategy};
 
 macro_rules! int_bin_op {
@@ -182,6 +183,38 @@ pub fn int_eq(x: i64, y: i64) -> Value {
     Value::Bool(x == y)
 }
 
+#[track_caller]
+pub fn int_neg(x: i64) -> Value {
+    Value::Int(x.checked_neg().unwrap_or_else(|| panic!("int_neg: overflow negating {}", x)))
+}
+
+#[track_caller]
+pub fn int_ne(x: i64, y: i64) -> Value {
+    Value::Bool(x != y)
+}
+
+#[track_caller]
+pub fn int_pow(base: i64, exp: i64) -> Value {
+    if exp < 0 { panic!("int_pow: negative exponent {}", exp) }
+    let exp: u32 = exp.try_into().unwrap_or_else(|_| panic!("int_pow: exponent {} out of range", exp));
+    Value::Int(base.checked_pow(exp).unwrap_or_else(|| panic!("int_pow: overflow computing {}^{}", base, exp)))
+}
+
+#[track_caller]
+pub fn int_sign(x: i64) -> Value {
+    Value::Int(x.signum())
+}
+
+#[track_caller]
+pub fn int_is_even(x: i64) -> Value {
+    Value::Bool(x.rem_euclid(2) == 0)
+}
+
+#[track_caller]
+pub fn int_is_odd(x: i64) -> Value {
+    Value::Bool(x.rem_euclid(2) == 1)
+}
+
 /// dec_eq(Dec, Dec) -> Bool. Typed exact equality on rust_decimal::Decimal —
 /// the Dec-typed counterpart of int_eq. Decimal equality is exact (no scaling
 /// surprises: 1.0 == 1.00 is true, matching Decimal's PartialEq).
@@ -232,6 +265,117 @@ pub fn dec_to_text(d: Value) -> Value {
         Value::Dec(x) => Value::Str(super::value::intern_str(&x.to_string())),
         _ => panic!("dec_to_text: expected Dec"),
     }
+}
+
+#[track_caller]
+pub fn dec_add(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Dec(x), Value::Dec(y)) => Value::Dec(
+                x.checked_add(*y).unwrap_or_else(|| panic!("dec_add: overflow computing {} + {}", x, y)),
+            ),
+            _ => panic!("dec_add: expected two Dec values"),
+        },
+        _ => panic!("dec_add: expected Tuple(Dec, Dec)"),
+    }
+}
+
+#[track_caller]
+pub fn dec_sub(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Dec(x), Value::Dec(y)) => Value::Dec(
+                x.checked_sub(*y).unwrap_or_else(|| panic!("dec_sub: overflow computing {} - {}", x, y)),
+            ),
+            _ => panic!("dec_sub: expected two Dec values"),
+        },
+        _ => panic!("dec_sub: expected Tuple(Dec, Dec)"),
+    }
+}
+
+#[track_caller]
+pub fn dec_mul(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Dec(x), Value::Dec(y)) => Value::Dec(
+                x.checked_mul(*y).unwrap_or_else(|| panic!("dec_mul: overflow computing {} * {}", x, y)),
+            ),
+            _ => panic!("dec_mul: expected two Dec values"),
+        },
+        _ => panic!("dec_mul: expected Tuple(Dec, Dec)"),
+    }
+}
+
+#[track_caller]
+pub fn dec_neg(d: Value) -> Value {
+    match d {
+        Value::Dec(x) => Value::Dec(-x),
+        _ => panic!("dec_neg: expected Dec"),
+    }
+}
+
+#[track_caller]
+pub fn dec_abs(d: Value) -> Value {
+    match d {
+        Value::Dec(x) => Value::Dec(x.abs()),
+        _ => panic!("dec_abs: expected Dec"),
+    }
+}
+
+#[track_caller]
+pub fn dec_min(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Dec(x), Value::Dec(y)) => Value::Dec(*x.min(y)),
+            _ => panic!("dec_min: expected two Dec values"),
+        },
+        _ => panic!("dec_min: expected Tuple(Dec, Dec)"),
+    }
+}
+
+#[track_caller]
+pub fn dec_max(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Dec(x), Value::Dec(y)) => Value::Dec(*x.max(y)),
+            _ => panic!("dec_max: expected two Dec values"),
+        },
+        _ => panic!("dec_max: expected Tuple(Dec, Dec)"),
+    }
+}
+
+/// dec_round(Dec, Int) -> Dec. Round to `places` decimal places using
+/// MidpointAwayFromZero (matches dec_div's PG-compatible rounding strategy).
+/// Panics on places < 0 — a negative decimal-places count is not meaningful.
+#[track_caller]
+pub fn dec_round(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Dec(x), Value::Int(places)) => {
+                if *places < 0 { panic!("dec_round: places must be >= 0, got {}", places) }
+                Value::Dec(x.round_dp_with_strategy(*places as u32, RoundingStrategy::MidpointAwayFromZero))
+            }
+            _ => panic!("dec_round: expected Tuple(Dec, Int)"),
+        },
+        _ => panic!("dec_round: expected Tuple(Dec, Int)"),
+    }
+}
+
+/// dec_to_int(Dec) -> Int. Truncate toward zero. Panics if the truncated
+/// value is out of i64 range.
+#[track_caller]
+pub fn dec_to_int(d: Value) -> Value {
+    match d {
+        Value::Dec(x) => Value::Int(
+            x.trunc().to_i64().unwrap_or_else(|| panic!("dec_to_int: {} out of i64 range", x)),
+        ),
+        _ => panic!("dec_to_int: expected Dec"),
+    }
+}
+
+#[track_caller]
+pub fn str_to_dec(s: std::sync::Arc<str>) -> Value {
+    Value::Dec(s.parse().unwrap_or_else(|_| panic!("str_to_dec: invalid decimal text {:?}", s)))
 }
 
 /// float_eq(Float, Float) -> Bool. Typed IEEE-754 f64 equality — the Float-typed
