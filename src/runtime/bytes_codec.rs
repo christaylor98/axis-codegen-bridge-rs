@@ -182,6 +182,87 @@ pub fn int32_be_encode(n: i64) -> Value {
 // callers). Its replacement is axVerity's lib/be32_decode.m1. Do not reintroduce
 // a width-named decoder here.
 
+// ── stdlib: bytes (B08-A) ────────────────────────────────────────────────────
+//
+// bytes_empty/bytes_eq/bytes_index_of plus offset-taking BE decoders and the
+// matching int64 encoder. Unlike the retired single-arg int16_be_decode /
+// int32_be_decode above (which required the input to be EXACTLY the field
+// width), these decoders take an explicit byte offset and read a fixed-width
+// signed field out of a larger buffer — a different operation, not a
+// reintroduction of the retired one.
+
+#[track_caller]
+pub fn bytes_empty(_: Value) -> Value {
+    Value::Bytes(Vec::new())
+}
+
+#[track_caller]
+pub fn bytes_eq(a: Vec<u8>, b: Vec<u8>) -> Value {
+    Value::Bool(a == b)
+}
+
+#[track_caller]
+pub fn bytes_index_of(haystack: Vec<u8>, needle: Vec<u8>) -> Value {
+    if needle.is_empty() {
+        return Value::Int(0);
+    }
+    let idx = haystack
+        .windows(needle.len())
+        .position(|w| w == needle.as_slice());
+    Value::Int(idx.map(|i| i as i64).unwrap_or(-1))
+}
+
+fn be_decode_bounds_check(name: &str, len: usize, offset: i64, width: usize) -> usize {
+    if offset < 0 {
+        panic!("{}: negative offset {}", name, offset);
+    }
+    let offset = offset as usize;
+    if offset + width > len {
+        panic!(
+            "{}: offset {} + width {} exceeds Bytes of len {}",
+            name, offset, width, len
+        );
+    }
+    offset
+}
+
+#[track_caller]
+pub fn int16_be_decode(bytes: Vec<u8>, offset: i64) -> Value {
+    let off = be_decode_bounds_check("int16_be_decode", bytes.len(), offset, 2);
+    Value::Int(i16::from_be_bytes([bytes[off], bytes[off + 1]]) as i64)
+}
+
+#[track_caller]
+pub fn int32_be_decode(bytes: Vec<u8>, offset: i64) -> Value {
+    let off = be_decode_bounds_check("int32_be_decode", bytes.len(), offset, 4);
+    Value::Int(i32::from_be_bytes([
+        bytes[off],
+        bytes[off + 1],
+        bytes[off + 2],
+        bytes[off + 3],
+    ]) as i64)
+}
+
+#[track_caller]
+pub fn int64_be_encode(n: i64) -> Value {
+    Value::Bytes(n.to_be_bytes().to_vec())
+}
+
+#[track_caller]
+pub fn int64_be_decode(bytes: Vec<u8>, offset: i64) -> Value {
+    let off = be_decode_bounds_check("int64_be_decode", bytes.len(), offset, 8);
+    Value::Int(i64::from_be_bytes([
+        bytes[off],
+        bytes[off + 1],
+        bytes[off + 2],
+        bytes[off + 3],
+        bytes[off + 4],
+        bytes[off + 5],
+        bytes[off + 6],
+        bytes[off + 7],
+    ]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
