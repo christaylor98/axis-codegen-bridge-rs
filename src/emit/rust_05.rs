@@ -183,6 +183,16 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("list_of_2",     "axis_codegen_bridge::runtime::list::list_of_2");
     m.insert("list_of_3",     "axis_codegen_bridge::runtime::list::list_of_3");
 
+    // stdlib: list (B06-A) — new agnostic Rust, kind leaf.
+    m.insert("list_contains",  "axis_codegen_bridge::runtime::list::list_contains");
+    m.insert("list_index_of",  "axis_codegen_bridge::runtime::list::list_index_of");
+    m.insert("list_sort",      "axis_codegen_bridge::runtime::list::list_sort");
+    m.insert("list_min",       "axis_codegen_bridge::runtime::list::list_min");
+    m.insert("list_max",       "axis_codegen_bridge::runtime::list::list_max");
+    m.insert("list_sum",       "axis_codegen_bridge::runtime::list::list_sum");
+    m.insert("list_all_true",  "axis_codegen_bridge::runtime::list::list_all_true");
+    m.insert("list_any_true",  "axis_codegen_bridge::runtime::list::list_any_true");
+
     // Tuple / constructor
     m.insert("tuple_field", "axis_codegen_bridge::runtime::tuple::tuple_field");
     m.insert("ctor_field",  "axis_codegen_bridge::runtime::tuple::ctor_field");
@@ -715,6 +725,23 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("value_list_to_int_list",            "axis_codegen_bridge::runtime::list::value_list_to_int_list");
     m.insert("value_list_to_text_list",           "axis_codegen_bridge::runtime::list::value_list_to_text_list");
     m.insert("value_list_to_bool_list",           "axis_codegen_bridge::runtime::list::value_list_to_bool_list");
+    m.insert("int_list_contains",                 "axis_codegen_bridge::runtime::list::list_contains");
+    m.insert("text_list_contains",                "axis_codegen_bridge::runtime::list::list_contains");
+    m.insert("bool_list_contains",                "axis_codegen_bridge::runtime::list::list_contains");
+    m.insert("int_list_index_of",                 "axis_codegen_bridge::runtime::list::list_index_of");
+    m.insert("text_list_index_of",                "axis_codegen_bridge::runtime::list::list_index_of");
+    m.insert("bool_list_index_of",                "axis_codegen_bridge::runtime::list::list_index_of");
+    m.insert("int_list_sort",                     "axis_codegen_bridge::runtime::list::list_sort");
+    m.insert("text_list_sort",                    "axis_codegen_bridge::runtime::list::list_sort");
+    m.insert("int_list_min",                      "axis_codegen_bridge::runtime::list::list_min");
+    m.insert("text_list_min",                     "axis_codegen_bridge::runtime::list::list_min");
+    m.insert("int_list_max",                      "axis_codegen_bridge::runtime::list::list_max");
+    m.insert("text_list_max",                     "axis_codegen_bridge::runtime::list::list_max");
+    m.insert("int_list_sum",                      "axis_codegen_bridge::runtime::list::list_sum");
+    m.insert("bool_list_and",                     "axis_codegen_bridge::runtime::list::list_all_true");
+    m.insert("bool_list_or",                      "axis_codegen_bridge::runtime::list::list_any_true");
+    m.insert("int_list_range",                    "axis_codegen_bridge::runtime::iter::range");
+    m.insert("text_list_join",                    "axis_codegen_bridge::runtime::str_ops::str_join");
     // ─── END GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / symbol_map ───
 
     // Scalar sibling of the ValueList narrowing family (M1_VALUE_SCALAR_NARROWING_V1):
@@ -1149,6 +1176,11 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("int_div_checked",   vec![Int, Int]);
     m.insert("int_mod",           vec![Int, Int]);
     m.insert("value_eq",          vec![Value, Value]);
+    // stdlib: list (B06-A) — 2-arg native fns; single-arg list_sort/min/max/
+    // sum/all_true/any_true need no row (1-arg boxed convention already
+    // emits `f(x)`, per the doc comment on this table above).
+    m.insert("list_contains",     vec![Value, Value]);
+    m.insert("list_index_of",     vec![Value, Value]);
     // `__eq__` is a registered alias for the same Rust symbol (value_eq) —
     // must carry its own table entry keyed by its own registered name, same
     // class of bug the empty-target_name int_add test failure surfaced.
@@ -1388,6 +1420,13 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("int_list_concat",         vec![Value, Value]);
     m.insert("text_list_concat",        vec![Value, Value]);
     m.insert("bool_list_concat",        vec![Value, Value]);
+    m.insert("int_list_contains",       vec![Value, Value]);
+    m.insert("text_list_contains",      vec![Value, Value]);
+    m.insert("bool_list_contains",      vec![Value, Value]);
+    m.insert("int_list_index_of",       vec![Value, Value]);
+    m.insert("text_list_index_of",      vec![Value, Value]);
+    m.insert("bool_list_index_of",      vec![Value, Value]);
+    m.insert("text_list_join",          vec![Value, Text]);
     // ─── END GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / native_call_fn_arg_types ───
     m
 }
