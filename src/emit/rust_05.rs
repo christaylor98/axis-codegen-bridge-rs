@@ -60,15 +60,21 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("value_eq", "axis_codegen_bridge::runtime::arith::value_eq");
 
     // Unit / sequence helpers (§5b bootstrap functions)
+    // `unit_id` is dispatch-load-bearing: tests/async_build_link_test.rs links
+    // a hand-built bundle that names it directly as a Fn-ref pool entry, with
+    // no registry loaded at all — bridge_builtin_map is its only resolution
+    // path. `const_unit` and `seq_unit` had no caller anywhere in this crate,
+    // the axVerity trees, or the lab (stdlib(B01) audit, 2026-09-15) — rows
+    // removed; `cargo test --release` was run with both variants to confirm.
     m.insert("unit_id",    "axis_codegen_bridge::runtime::arith::unit_id");
-    m.insert("const_unit", "axis_codegen_bridge::runtime::arith::unit_id");
-    m.insert("seq_unit",   "axis_codegen_bridge::runtime::arith::seq_unit");
     m.insert("seq",        "axis_codegen_bridge::runtime::arith::seq");
 
     // Boolean
     m.insert("bool_and",    "axis_codegen_bridge::runtime::bool_ops::bool_and");
     m.insert("bool_or",     "axis_codegen_bridge::runtime::bool_ops::bool_or");
     m.insert("bool_not",    "axis_codegen_bridge::runtime::bool_ops::bool_not");
+    m.insert("bool_eq",     "axis_codegen_bridge::runtime::bool_ops::bool_eq");
+    m.insert("bool_xor",    "axis_codegen_bridge::runtime::bool_ops::bool_xor");
     m.insert("bool_to_str", "axis_codegen_bridge::runtime::str_ops::bool_to_str");
 
     // Test assertion (identity = sha256("assert") — BRIDGE_TESTKIT_FINALIZE_V1)
@@ -1077,6 +1083,8 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("seq",               vec![Value, Value]);
     m.insert("bool_and",          vec![Value, Value]);
     m.insert("bool_or",           vec![Value, Value]);
+    m.insert("bool_eq",           vec![Value, Value]);
+    m.insert("bool_xor",          vec![Value, Value]);
     m.insert("hash256_parse",     vec![Text]);
     m.insert("bytes_concat",      vec![Bytes, Bytes]);
     m.insert("bytes_slice",       vec![Bytes, Int, Int]);

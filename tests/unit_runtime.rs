@@ -1,5 +1,5 @@
 use axis_codegen_bridge::runtime::value::{Value, intern_str, get_tag_name, init_runtime};
-use axis_codegen_bridge::runtime::{arith, str_ops, list, registry};
+use axis_codegen_bridge::runtime::{arith, str_ops, list, registry, bool_ops};
 use std::sync::Mutex;
 use tempfile::NamedTempFile;
 
@@ -412,6 +412,37 @@ fn test_bool_to_str_true() {
 fn test_bool_to_str_false() {
     setup();
     assert_eq!(str_ops::bool_to_str(false), s("false"));
+}
+
+// ── stdlib(B01): assert / bool_eq / bool_xor ─────────────────────────────────
+
+#[test]
+fn test_assert_true_returns_unit() {
+    setup();
+    assert_eq!(bool_ops::ax_assert(Value::Bool(true)), Value::Unit);
+}
+
+#[test]
+#[should_panic(expected = "assertion failed")]
+fn test_assert_false_panics() {
+    setup();
+    bool_ops::ax_assert(Value::Bool(false));
+}
+
+#[test]
+fn test_bool_eq() {
+    setup();
+    assert_eq!(bool_ops::bool_eq(Value::Bool(true), Value::Bool(true)), Value::Bool(true));
+    assert_eq!(bool_ops::bool_eq(Value::Bool(true), Value::Bool(false)), Value::Bool(false));
+    assert_eq!(bool_ops::bool_eq(Value::Bool(false), Value::Bool(false)), Value::Bool(true));
+}
+
+#[test]
+fn test_bool_xor() {
+    setup();
+    assert_eq!(bool_ops::bool_xor(Value::Bool(true), Value::Bool(false)), Value::Bool(true));
+    assert_eq!(bool_ops::bool_xor(Value::Bool(true), Value::Bool(true)), Value::Bool(false));
+    assert_eq!(bool_ops::bool_xor(Value::Bool(false), Value::Bool(false)), Value::Bool(false));
 }
 
 // ── text_eq / text_lt (axis.axreg canonical names) ───────────────────────────

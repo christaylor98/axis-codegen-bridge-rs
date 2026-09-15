@@ -24,3 +24,13 @@ pub fn bool_or(a: Value, b: Value) -> Value {
 pub fn bool_not(v: Value) -> Value {
     Value::Bool(!truthy(&v))
 }
+
+#[track_caller]
+pub fn bool_eq(a: Value, b: Value) -> Value {
+    Value::Bool(truthy(&a) == truthy(&b))
+}
+
+#[track_caller]
+pub fn bool_xor(a: Value, b: Value) -> Value {
+    Value::Bool(truthy(&a) != truthy(&b))
+}
