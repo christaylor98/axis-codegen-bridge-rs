@@ -182,31 +182,6 @@ pub fn int32_be_encode(n: i64) -> Value {
 // callers). Its replacement is axVerity's lib/be32_decode.m1. Do not reintroduce
 // a width-named decoder here.
 
-// ── stdlib: bytes (B08-A) ────────────────────────────────────────────────────
-//
-// bytes_empty / bytes_eq / bytes_index_of.
-
-#[track_caller]
-pub fn bytes_empty(_: Value) -> Value {
-    Value::Bytes(Vec::new())
-}
-
-#[track_caller]
-pub fn bytes_eq(a: Vec<u8>, b: Vec<u8>) -> Value {
-    Value::Bool(a == b)
-}
-
-#[track_caller]
-pub fn bytes_index_of(haystack: Vec<u8>, needle: Vec<u8>) -> Value {
-    if needle.is_empty() {
-        return Value::Int(0);
-    }
-    let idx = haystack
-        .windows(needle.len())
-        .position(|w| w == needle.as_slice());
-    Value::Int(idx.map(|i| i as i64).unwrap_or(-1))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

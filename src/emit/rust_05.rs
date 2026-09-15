@@ -30,6 +30,37 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("int_div_checked", "axis_codegen_bridge::runtime::arith::int_div_checked");
     m.insert("int_mod",         "axis_codegen_bridge::runtime::arith::int_mod");
     m.insert("int_to_str",      "axis_codegen_bridge::runtime::arith::int_to_str");
+    // ── dec_*: Decimal arithmetic. Bridge-owned (Chris, 2026-09-16: the dec
+    // primitives stay in the bridge); see runtime/arith.rs.
+    m.insert("dec_add",       "axis_codegen_bridge::runtime::arith::dec_add");
+    m.insert("dec_sub",       "axis_codegen_bridge::runtime::arith::dec_sub");
+    m.insert("dec_mul",       "axis_codegen_bridge::runtime::arith::dec_mul");
+    m.insert("dec_neg",       "axis_codegen_bridge::runtime::arith::dec_neg");
+    m.insert("dec_abs",       "axis_codegen_bridge::runtime::arith::dec_abs");
+    m.insert("dec_min",       "axis_codegen_bridge::runtime::arith::dec_min");
+    m.insert("dec_max",       "axis_codegen_bridge::runtime::arith::dec_max");
+    m.insert("dec_round",     "axis_codegen_bridge::runtime::arith::dec_round");
+    m.insert("dec_to_int",    "axis_codegen_bridge::runtime::arith::dec_to_int");
+    m.insert("str_to_dec",    "axis_codegen_bridge::runtime::arith::str_to_dec");
+    // ── float_*: IEEE-754 f64 arithmetic. Bridge-owned (Chris, 2026-09-16:
+    // the float primitives stay in the bridge); see runtime/arith.rs.
+    m.insert("float_add",     "axis_codegen_bridge::runtime::arith::float_add");
+    m.insert("float_sub",     "axis_codegen_bridge::runtime::arith::float_sub");
+    m.insert("float_mul",     "axis_codegen_bridge::runtime::arith::float_mul");
+    m.insert("float_div",     "axis_codegen_bridge::runtime::arith::float_div");
+    m.insert("float_neg",     "axis_codegen_bridge::runtime::arith::float_neg");
+    m.insert("float_abs",     "axis_codegen_bridge::runtime::arith::float_abs");
+    m.insert("float_sqrt",    "axis_codegen_bridge::runtime::arith::float_sqrt");
+    m.insert("float_pow",     "axis_codegen_bridge::runtime::arith::float_pow");
+    m.insert("float_floor",   "axis_codegen_bridge::runtime::arith::float_floor");
+    m.insert("float_ceil",    "axis_codegen_bridge::runtime::arith::float_ceil");
+    m.insert("float_round",   "axis_codegen_bridge::runtime::arith::float_round");
+    m.insert("float_min",     "axis_codegen_bridge::runtime::arith::float_min");
+    m.insert("float_max",     "axis_codegen_bridge::runtime::arith::float_max");
+    m.insert("float_is_nan",  "axis_codegen_bridge::runtime::arith::float_is_nan");
+    m.insert("float_to_int",  "axis_codegen_bridge::runtime::arith::float_to_int");
+    m.insert("float_to_text", "axis_codegen_bridge::runtime::arith::float_to_text");
+    m.insert("str_to_float",  "axis_codegen_bridge::runtime::arith::str_to_float");
     m.insert("str_to_int",      "axis_codegen_bridge::runtime::arith::str_to_int");
     m.insert("int_abs",         "axis_codegen_bridge::runtime::arith::int_abs");
     m.insert("int_min",         "axis_codegen_bridge::runtime::arith::int_min");
@@ -38,22 +69,6 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("celsius_to_fahrenheit", "axis_codegen_bridge::runtime::arith::celsius_to_fahrenheit");
     m.insert("fahrenheit_to_celsius", "axis_codegen_bridge::runtime::arith::fahrenheit_to_celsius");
     m.insert("is_positive",     "axis_codegen_bridge::runtime::arith::is_positive");
-    m.insert("int_neg",         "axis_codegen_bridge::runtime::arith::int_neg");
-    m.insert("int_ne",          "axis_codegen_bridge::runtime::arith::int_ne");
-    m.insert("int_pow",         "axis_codegen_bridge::runtime::arith::int_pow");
-    m.insert("int_sign",        "axis_codegen_bridge::runtime::arith::int_sign");
-    m.insert("int_is_even",     "axis_codegen_bridge::runtime::arith::int_is_even");
-    m.insert("int_is_odd",      "axis_codegen_bridge::runtime::arith::int_is_odd");
-    m.insert("dec_add",         "axis_codegen_bridge::runtime::arith::dec_add");
-    m.insert("dec_sub",         "axis_codegen_bridge::runtime::arith::dec_sub");
-    m.insert("dec_mul",         "axis_codegen_bridge::runtime::arith::dec_mul");
-    m.insert("dec_neg",         "axis_codegen_bridge::runtime::arith::dec_neg");
-    m.insert("dec_abs",         "axis_codegen_bridge::runtime::arith::dec_abs");
-    m.insert("dec_min",         "axis_codegen_bridge::runtime::arith::dec_min");
-    m.insert("dec_max",         "axis_codegen_bridge::runtime::arith::dec_max");
-    m.insert("dec_round",       "axis_codegen_bridge::runtime::arith::dec_round");
-    m.insert("dec_to_int",      "axis_codegen_bridge::runtime::arith::dec_to_int");
-    m.insert("str_to_dec",      "axis_codegen_bridge::runtime::arith::str_to_dec");
 
     // Comparison
     m.insert("int_lt",   "axis_codegen_bridge::runtime::arith::int_lt");
@@ -73,23 +88,6 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("float_gt",  "axis_codegen_bridge::runtime::arith::float_gt");
     m.insert("float_gte", "axis_codegen_bridge::runtime::arith::float_gte");
     m.insert("float_eq", "axis_codegen_bridge::runtime::arith::float_eq");
-    m.insert("float_add",     "axis_codegen_bridge::runtime::arith::float_add");
-    m.insert("float_sub",     "axis_codegen_bridge::runtime::arith::float_sub");
-    m.insert("float_mul",     "axis_codegen_bridge::runtime::arith::float_mul");
-    m.insert("float_div",     "axis_codegen_bridge::runtime::arith::float_div");
-    m.insert("float_neg",     "axis_codegen_bridge::runtime::arith::float_neg");
-    m.insert("float_abs",     "axis_codegen_bridge::runtime::arith::float_abs");
-    m.insert("float_sqrt",    "axis_codegen_bridge::runtime::arith::float_sqrt");
-    m.insert("float_pow",     "axis_codegen_bridge::runtime::arith::float_pow");
-    m.insert("float_floor",   "axis_codegen_bridge::runtime::arith::float_floor");
-    m.insert("float_ceil",    "axis_codegen_bridge::runtime::arith::float_ceil");
-    m.insert("float_round",   "axis_codegen_bridge::runtime::arith::float_round");
-    m.insert("float_min",     "axis_codegen_bridge::runtime::arith::float_min");
-    m.insert("float_max",     "axis_codegen_bridge::runtime::arith::float_max");
-    m.insert("float_is_nan",  "axis_codegen_bridge::runtime::arith::float_is_nan");
-    m.insert("float_to_int",  "axis_codegen_bridge::runtime::arith::float_to_int");
-    m.insert("float_to_text", "axis_codegen_bridge::runtime::arith::float_to_text");
-    m.insert("str_to_float",  "axis_codegen_bridge::runtime::arith::str_to_float");
     m.insert("value_eq", "axis_codegen_bridge::runtime::arith::value_eq");
 
     // Unit / sequence helpers (§5b bootstrap functions)
@@ -106,8 +104,6 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("bool_and",    "axis_codegen_bridge::runtime::bool_ops::bool_and");
     m.insert("bool_or",     "axis_codegen_bridge::runtime::bool_ops::bool_or");
     m.insert("bool_not",    "axis_codegen_bridge::runtime::bool_ops::bool_not");
-    m.insert("bool_eq",     "axis_codegen_bridge::runtime::bool_ops::bool_eq");
-    m.insert("bool_xor",    "axis_codegen_bridge::runtime::bool_ops::bool_xor");
     m.insert("bool_to_str", "axis_codegen_bridge::runtime::str_ops::bool_to_str");
 
     // Test assertion (identity = sha256("assert") — BRIDGE_TESTKIT_FINALIZE_V1)
@@ -142,18 +138,6 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("chr",             "axis_codegen_bridge::runtime::str_ops::chr");
 
     // stdlib: text (B04-A) — new mint, kind leaf.
-    m.insert("str_is_empty",          "axis_codegen_bridge::runtime::str_ops::str_is_empty");
-    m.insert("str_trim_start",        "axis_codegen_bridge::runtime::str_ops::str_trim_start");
-    m.insert("str_trim_end",          "axis_codegen_bridge::runtime::str_ops::str_trim_end");
-    m.insert("str_lines",             "axis_codegen_bridge::runtime::str_ops::str_lines");
-    m.insert("str_chars",             "axis_codegen_bridge::runtime::str_ops::str_chars");
-    m.insert("str_split_whitespace",  "axis_codegen_bridge::runtime::str_ops::str_split_whitespace");
-    m.insert("str_reverse",           "axis_codegen_bridge::runtime::str_ops::str_reverse");
-    m.insert("str_last_index_of",     "axis_codegen_bridge::runtime::str_ops::str_last_index_of");
-    m.insert("str_count",             "axis_codegen_bridge::runtime::str_ops::str_count");
-    m.insert("str_is_digits",         "axis_codegen_bridge::runtime::str_ops::str_is_digits");
-    m.insert("str_is_alpha",          "axis_codegen_bridge::runtime::str_ops::str_is_alpha");
-    m.insert("str_is_space",          "axis_codegen_bridge::runtime::str_ops::str_is_space");
 
     // List
     m.insert("list_nil",      "axis_codegen_bridge::runtime::list::list_nil");
@@ -172,7 +156,6 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("list_concat",   "axis_codegen_bridge::runtime::list::list_concat");
     m.insert("list_reverse",  "axis_codegen_bridge::runtime::list::list_reverse");
     m.insert("list_head",     "axis_codegen_bridge::runtime::list::list_head");
-    m.insert("list_last",     "axis_codegen_bridge::runtime::list::list_last");
     m.insert("list_tail",     "axis_codegen_bridge::runtime::list::list_tail");
     m.insert("list_is_empty", "axis_codegen_bridge::runtime::list::list_is_empty");
     m.insert("text_list_is_empty", "axis_codegen_bridge::runtime::list::list_is_empty");
@@ -184,14 +167,6 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("list_of_3",     "axis_codegen_bridge::runtime::list::list_of_3");
 
     // stdlib: list (B06-A) — new agnostic Rust, kind leaf.
-    m.insert("list_contains",  "axis_codegen_bridge::runtime::list::list_contains");
-    m.insert("list_index_of",  "axis_codegen_bridge::runtime::list::list_index_of");
-    m.insert("list_sort",      "axis_codegen_bridge::runtime::list::list_sort");
-    m.insert("list_min",       "axis_codegen_bridge::runtime::list::list_min");
-    m.insert("list_max",       "axis_codegen_bridge::runtime::list::list_max");
-    m.insert("list_sum",       "axis_codegen_bridge::runtime::list::list_sum");
-    m.insert("list_all_true",  "axis_codegen_bridge::runtime::list::list_all_true");
-    m.insert("list_any_true",  "axis_codegen_bridge::runtime::list::list_any_true");
 
     // Tuple / constructor
     m.insert("tuple_field", "axis_codegen_bridge::runtime::tuple::tuple_field");
@@ -254,17 +229,12 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("io_print",      "axis_codegen_bridge::runtime::io::io_print");
     m.insert("io_println",    "axis_codegen_bridge::runtime::io::io_println");
     m.insert("io_eprint",     "axis_codegen_bridge::runtime::io::io_eprint");
-    m.insert("io_eprintln",   "axis_codegen_bridge::runtime::io::io_eprintln");
     m.insert("io_read_line",  "axis_codegen_bridge::runtime::io::io_read_line");
-    m.insert("io_read_all",   "axis_codegen_bridge::runtime::io::io_read_all");
     m.insert("fs_read_text",  "axis_codegen_bridge::runtime::io::fs_read_text");
-    m.insert("fs_read_lines", "axis_codegen_bridge::runtime::io::fs_read_lines");
     m.insert("fs_write_text", "axis_codegen_bridge::runtime::io::fs_write_text");
     m.insert("fs_append_text","axis_codegen_bridge::runtime::io::fs_append_text");
     m.insert("fs_append_text_durable","axis_codegen_bridge::runtime::io::fs_append_text_durable");
     m.insert("fs_file_exists","axis_codegen_bridge::runtime::io::fs_file_exists");
-    m.insert("fs_is_dir",     "axis_codegen_bridge::runtime::io::fs_is_dir");
-    m.insert("fs_remove_file","axis_codegen_bridge::runtime::io::fs_remove_file");
     m.insert("fs_list_dir",   "axis_codegen_bridge::runtime::io::fs_list_dir");
     m.insert("debug_trace",   "axis_codegen_bridge::runtime::io::debug_trace");
     m.insert("fs_read_last_line", "axis_codegen_bridge::runtime::io::fs_read_last_line");
@@ -295,9 +265,6 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("argv_int",   "axis_codegen_bridge::runtime::process::argv_int");
     m.insert("argv_count", "axis_codegen_bridge::runtime::process::argv_count");
     m.insert("argv_or",    "axis_codegen_bridge::runtime::process::argv_or");
-    m.insert("env_get",    "axis_codegen_bridge::runtime::process::env_get");
-    m.insert("env_has",    "axis_codegen_bridge::runtime::process::env_has");
-    m.insert("env_get_or", "axis_codegen_bridge::runtime::process::env_get_or");
 
     // Async / IPC primitives (channels.rs — BRIDGE_ASYNC_PRIMITIVES_V1).
     // `wait` carries a single Fn-typed callee slot — see `fn_arg_kinds()`.
@@ -635,9 +602,6 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     // lib/be{16,32}_decode.m1). The two encoders remain pending its Phase 6 gate.
 
     // ── stdlib: bytes (B08-A) ────────────────────────────────────────────────
-    m.insert("bytes_empty",          "axis_codegen_bridge::runtime::bytes_codec::bytes_empty");
-    m.insert("bytes_eq",             "axis_codegen_bridge::runtime::bytes_codec::bytes_eq");
-    m.insert("bytes_index_of",       "axis_codegen_bridge::runtime::bytes_codec::bytes_index_of");
 
     // ── TCP sockets (net.rs — BRIDGE_TCP_SOCKET_V1) ─────────────────────────────
     m.insert("tcp_listen",           "axis_codegen_bridge::runtime::net::tcp_listen");
@@ -711,62 +675,9 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("bool_list_map_int",                 "axis_codegen_bridge::runtime::iter::map");
     m.insert("bool_list_map_text",                "axis_codegen_bridge::runtime::iter::map");
     m.insert("bool_list_map_bool",                "axis_codegen_bridge::runtime::iter::map");
-    m.insert("int_list_get",                      "axis_codegen_bridge::runtime::list::list_get");
-    m.insert("text_list_get",                     "axis_codegen_bridge::runtime::list::list_get");
-    m.insert("bool_list_get",                     "axis_codegen_bridge::runtime::list::list_get");
-    m.insert("int_list_last",                     "axis_codegen_bridge::runtime::list::list_last");
-    m.insert("text_list_last",                    "axis_codegen_bridge::runtime::list::list_last");
-    m.insert("bool_list_last",                    "axis_codegen_bridge::runtime::list::list_last");
-    m.insert("int_list_append",                   "axis_codegen_bridge::runtime::list::list_append");
-    m.insert("text_list_append",                  "axis_codegen_bridge::runtime::list::list_append");
-    m.insert("bool_list_append",                  "axis_codegen_bridge::runtime::list::list_append");
-    m.insert("int_list_concat",                   "axis_codegen_bridge::runtime::list::list_concat");
-    m.insert("text_list_concat",                  "axis_codegen_bridge::runtime::list::list_concat");
-    m.insert("bool_list_concat",                  "axis_codegen_bridge::runtime::list::list_concat");
-    m.insert("int_list_reverse",                  "axis_codegen_bridge::runtime::list::list_reverse");
-    m.insert("text_list_reverse",                 "axis_codegen_bridge::runtime::list::list_reverse");
-    m.insert("bool_list_reverse",                 "axis_codegen_bridge::runtime::list::list_reverse");
-    m.insert("int_list_take",                     "axis_codegen_bridge::runtime::iter::take");
-    m.insert("text_list_take",                    "axis_codegen_bridge::runtime::iter::take");
-    m.insert("bool_list_take",                    "axis_codegen_bridge::runtime::iter::take");
-    m.insert("int_list_drop",                     "axis_codegen_bridge::runtime::iter::drop");
-    m.insert("text_list_drop",                    "axis_codegen_bridge::runtime::iter::drop");
-    m.insert("bool_list_drop",                    "axis_codegen_bridge::runtime::iter::drop");
-    m.insert("int_list_slice",                    "axis_codegen_bridge::runtime::iter::slice");
-    m.insert("text_list_slice",                   "axis_codegen_bridge::runtime::iter::slice");
-    m.insert("bool_list_slice",                   "axis_codegen_bridge::runtime::iter::slice");
     m.insert("value_list_to_int_list",            "axis_codegen_bridge::runtime::list::value_list_to_int_list");
     m.insert("value_list_to_text_list",           "axis_codegen_bridge::runtime::list::value_list_to_text_list");
     m.insert("value_list_to_bool_list",           "axis_codegen_bridge::runtime::list::value_list_to_bool_list");
-    m.insert("int_list_contains",                 "axis_codegen_bridge::runtime::list::list_contains");
-    m.insert("text_list_contains",                "axis_codegen_bridge::runtime::list::list_contains");
-    m.insert("bool_list_contains",                "axis_codegen_bridge::runtime::list::list_contains");
-    m.insert("int_list_index_of",                 "axis_codegen_bridge::runtime::list::list_index_of");
-    m.insert("text_list_index_of",                "axis_codegen_bridge::runtime::list::list_index_of");
-    m.insert("bool_list_index_of",                "axis_codegen_bridge::runtime::list::list_index_of");
-    m.insert("int_list_sort",                     "axis_codegen_bridge::runtime::list::list_sort");
-    m.insert("text_list_sort",                    "axis_codegen_bridge::runtime::list::list_sort");
-    m.insert("int_list_min",                      "axis_codegen_bridge::runtime::list::list_min");
-    m.insert("text_list_min",                     "axis_codegen_bridge::runtime::list::list_min");
-    m.insert("int_list_max",                      "axis_codegen_bridge::runtime::list::list_max");
-    m.insert("text_list_max",                     "axis_codegen_bridge::runtime::list::list_max");
-    m.insert("int_list_sum",                      "axis_codegen_bridge::runtime::list::list_sum");
-    m.insert("bool_list_and",                     "axis_codegen_bridge::runtime::list::list_all_true");
-    m.insert("bool_list_or",                      "axis_codegen_bridge::runtime::list::list_any_true");
-    m.insert("int_list_range",                    "axis_codegen_bridge::runtime::iter::range");
-    m.insert("text_list_join",                    "axis_codegen_bridge::runtime::str_ops::str_join");
-    m.insert("int_list_any",                      "axis_codegen_bridge::runtime::iter::any");
-    m.insert("text_list_any",                     "axis_codegen_bridge::runtime::iter::any");
-    m.insert("bool_list_any",                     "axis_codegen_bridge::runtime::iter::any");
-    m.insert("int_list_all",                      "axis_codegen_bridge::runtime::iter::all");
-    m.insert("text_list_all",                     "axis_codegen_bridge::runtime::iter::all");
-    m.insert("bool_list_all",                     "axis_codegen_bridge::runtime::iter::all");
-    m.insert("int_list_find_index",               "axis_codegen_bridge::runtime::iter::find_index");
-    m.insert("text_list_find_index",              "axis_codegen_bridge::runtime::iter::find_index");
-    m.insert("bool_list_find_index",              "axis_codegen_bridge::runtime::iter::find_index");
-    m.insert("int_list_count",                    "axis_codegen_bridge::runtime::iter::count");
-    m.insert("text_list_count",                   "axis_codegen_bridge::runtime::iter::count");
-    m.insert("bool_list_count",                   "axis_codegen_bridge::runtime::iter::count");
     // ─── END GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / symbol_map ───
 
     // Scalar sibling of the ValueList narrowing family (M1_VALUE_SCALAR_NARROWING_V1):
@@ -1055,18 +966,6 @@ fn fn_arg_kinds() -> HashMap<&'static str, Vec<ArgKind>> {
     m.insert("bool_list_map_int",       vec![Data, FnRef]);
     m.insert("bool_list_map_text",      vec![Data, FnRef]);
     m.insert("bool_list_map_bool",      vec![Data, FnRef]);
-    m.insert("int_list_any",            vec![Data, FnRef]);
-    m.insert("text_list_any",           vec![Data, FnRef]);
-    m.insert("bool_list_any",           vec![Data, FnRef]);
-    m.insert("int_list_all",            vec![Data, FnRef]);
-    m.insert("text_list_all",           vec![Data, FnRef]);
-    m.insert("bool_list_all",           vec![Data, FnRef]);
-    m.insert("int_list_find_index",     vec![Data, FnRef]);
-    m.insert("text_list_find_index",    vec![Data, FnRef]);
-    m.insert("bool_list_find_index",    vec![Data, FnRef]);
-    m.insert("int_list_count",          vec![Data, FnRef]);
-    m.insert("text_list_count",         vec![Data, FnRef]);
-    m.insert("bool_list_count",         vec![Data, FnRef]);
     // ─── END GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / fn_arg_kinds ───
     m
 }
@@ -1130,6 +1029,16 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("fs_mkdir_p",        vec![Text]);
     m.insert("fs_read_bytes",     vec![Text]);
     m.insert("str_to_int",        vec![Text]);
+    // dec_add/sub/mul/neg/abs/min/max/round/to_int stay on the boxed
+    // Value::Tuple convention (like dec_eq/dec_div/dec_to_text): there is no
+    // NativeArgType::Dec variant, so a Dec-typed arg cannot be listed here.
+    // str_to_dec's arg is Text, not Dec, so it can use the native convention
+    // even though its result is a Dec.
+    m.insert("str_to_dec",        vec![Text]);
+    // str_to_float's arg is Text (native-eligible) even though its result is
+    // a Float; the other 16 float_* fns take Float-typed args and there is no
+    // NativeArgType::Float variant, so they stay on the boxed convention.
+    m.insert("str_to_float",      vec![Text]);
     m.insert("int_to_str",        vec![Int]);
     m.insert("str_concat",        vec![Text, Text]);
     m.insert("int_add",           vec![Int, Int]);
@@ -1191,18 +1100,6 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("str_to_lower",      vec![Text]);
     m.insert("str_pad_left",      vec![Text, Int, Text]);
     m.insert("str_pad_right",     vec![Text, Int, Text]);
-    m.insert("str_is_empty",         vec![Text]);
-    m.insert("str_trim_start",       vec![Text]);
-    m.insert("str_trim_end",         vec![Text]);
-    m.insert("str_lines",            vec![Text]);
-    m.insert("str_chars",            vec![Text]);
-    m.insert("str_split_whitespace", vec![Text]);
-    m.insert("str_reverse",          vec![Text]);
-    m.insert("str_last_index_of",    vec![Text, Text]);
-    m.insert("str_count",            vec![Text, Text]);
-    m.insert("str_is_digits",        vec![Text]);
-    m.insert("str_is_alpha",         vec![Text]);
-    m.insert("str_is_space",         vec![Text]);
     m.insert("list_cons",         vec![Value, Value]);
     m.insert("list_get_at",       vec![Value, Int]);
     m.insert("list_concat",       vec![Value, Value]);
@@ -1213,11 +1110,6 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("int_div_checked",   vec![Int, Int]);
     m.insert("int_mod",           vec![Int, Int]);
     m.insert("value_eq",          vec![Value, Value]);
-    // stdlib: list (B06-A) — 2-arg native fns; single-arg list_sort/min/max/
-    // sum/all_true/any_true need no row (1-arg boxed convention already
-    // emits `f(x)`, per the doc comment on this table above).
-    m.insert("list_contains",     vec![Value, Value]);
-    m.insert("list_index_of",     vec![Value, Value]);
     // `__eq__` is a registered alias for the same Rust symbol (value_eq) —
     // must carry its own table entry keyed by its own registered name, same
     // class of bug the empty-target_name int_add test failure surfaced.
@@ -1233,29 +1125,9 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("int_lte",           vec![Int, Int]);
     m.insert("int_gt",            vec![Int, Int]);
     m.insert("int_gte",           vec![Int, Int]);
-    m.insert("int_neg",           vec![Int]);
-    m.insert("int_ne",            vec![Int, Int]);
-    m.insert("int_pow",           vec![Int, Int]);
-    m.insert("int_sign",          vec![Int]);
-    m.insert("int_is_even",       vec![Int]);
-    m.insert("int_is_odd",        vec![Int]);
-    // dec_add/sub/mul/neg/abs/min/max/round/to_int stay on the boxed
-    // Value::Tuple convention (like dec_eq/dec_div/dec_to_text) — there is
-    // no NativeArgType::Dec variant, so a Dec-typed arg cannot be listed
-    // here. str_to_dec's arg is Text, not Dec, so it can use the native
-    // convention even though its result is a Dec.
-    m.insert("str_to_dec",        vec![Text]);
-    // str_to_float mirrors str_to_dec: its arg is Text (native-eligible),
-    // its result Float — same boxed-vs-native split as str_to_dec/Dec.
-    // The other 16 float_* fns all take Float-typed args, and there is no
-    // NativeArgType::Float variant, so they stay off this table (boxed
-    // Value::Tuple convention, same as dec_add/sub/mul/neg/abs/min/max/round/to_int).
-    m.insert("str_to_float",      vec![Text]);
     m.insert("seq",               vec![Value, Value]);
     m.insert("bool_and",          vec![Value, Value]);
     m.insert("bool_or",           vec![Value, Value]);
-    m.insert("bool_eq",           vec![Value, Value]);
-    m.insert("bool_xor",          vec![Value, Value]);
     m.insert("hash256_parse",     vec![Text]);
     m.insert("bytes_concat",      vec![Bytes, Bytes]);
     m.insert("bytes_slice",       vec![Bytes, Int, Int]);
@@ -1264,8 +1136,6 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("int16_be_encode",   vec![Int]);
     m.insert("int32_be_encode",   vec![Int]);
     // ── stdlib: bytes (B08-A) ──────────────────────────────────────────────
-    m.insert("bytes_eq",          vec![Bytes, Bytes]);
-    m.insert("bytes_index_of",    vec![Bytes, Bytes]);
     m.insert("text_to_bytes",     vec![Text]);
     m.insert("fs_write_bytes",    vec![Text, Bytes]);
     m.insert("bytes_hash",        vec![Bytes]);
@@ -1292,18 +1162,12 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("ir_write_bundle",   vec![Value, Text]);
     m.insert("ir_read_bundle",    vec![Text]);
     m.insert("fs_read_text",      vec![Text]);
-    m.insert("fs_read_lines",     vec![Text]);
     m.insert("fs_read_last_line", vec![Text]);
     m.insert("fs_write_text",     vec![Text, Text]);
     m.insert("fs_append_text",    vec![Text, Text]);
     m.insert("fs_append_text_durable", vec![Text, Text]);
     m.insert("fs_file_exists",    vec![Text]);
-    m.insert("fs_is_dir",         vec![Text]);
-    m.insert("fs_remove_file",    vec![Text]);
     m.insert("fs_list_dir",       vec![Text]);
-    m.insert("env_get",           vec![Text]);
-    m.insert("env_has",           vec![Text]);
-    m.insert("env_get_or",        vec![Text, Text]);
     m.insert("pg_emit_datarow1",  vec![Int, Text]);
     m.insert("pg_stream_rows",    vec![Int, Text]);
     m.insert("tcp_listen",        vec![Int]);
@@ -1457,24 +1321,282 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("int_list_cons",           vec![Value, Value]);
     m.insert("text_list_cons",          vec![Value, Value]);
     m.insert("bool_list_cons",          vec![Value, Value]);
-    m.insert("int_list_get",            vec![Value, Int]);
-    m.insert("text_list_get",           vec![Value, Int]);
-    m.insert("bool_list_get",           vec![Value, Int]);
-    m.insert("int_list_append",         vec![Value, Value]);
-    m.insert("text_list_append",        vec![Value, Value]);
-    m.insert("bool_list_append",        vec![Value, Value]);
-    m.insert("int_list_concat",         vec![Value, Value]);
-    m.insert("text_list_concat",        vec![Value, Value]);
-    m.insert("bool_list_concat",        vec![Value, Value]);
-    m.insert("int_list_contains",       vec![Value, Value]);
-    m.insert("text_list_contains",      vec![Value, Value]);
-    m.insert("bool_list_contains",      vec![Value, Value]);
-    m.insert("int_list_index_of",       vec![Value, Value]);
-    m.insert("text_list_index_of",      vec![Value, Value]);
-    m.insert("bool_list_index_of",      vec![Value, Value]);
-    m.insert("text_list_join",          vec![Value, Text]);
     // ─── END GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / native_call_fn_arg_types ───
     m
+}
+
+// ── Provider dispatch overlay (M1-provider) ──────────────────────────────────
+//
+// `--dispatch <path.toml>` lets a build link fns supplied by an external
+// provider crate (e.g. `axis_stdlib`, which depends on THIS crate for
+// `Value` and so cannot be depended on BY this crate without a cycle) without
+// this crate knowing anything stdlib-specific. A dispatch file is a list of
+// `[[fn]] name / path / native_args? / arg_kinds?` entries; each entry is
+// merged into the same three tables `symbol_map` / `fn_arg_kinds` /
+// `native_call_fn_arg_types` populate for built-ins, plus `bridge_builtin_map`
+// (identity = sha256(name), same §5b rule as every other bridge built-in).
+//
+// A dispatch name colliding with an existing static-table name is a hard
+// error (`dispatch conflict: <name>`) at load time, never a silent override
+// — checked once, up front, so every later table-merge below is a pure
+// insert into a fresh key.
+
+/// Extra name → path / arg-kind / native-arg-type rows loaded from
+/// `--dispatch` files, merged with the static tables for one build. Empty by
+/// default, so every function taking `&DispatchOverlay` behaves exactly like
+/// its overlay-free counterpart when no `--dispatch` flag is given.
+#[derive(Debug, Default)]
+pub struct DispatchOverlay {
+    symbols: HashMap<&'static str, &'static str>,
+    arg_kinds: HashMap<&'static str, Vec<ArgKind>>,
+    native_args: HashMap<&'static str, Vec<NativeArgType>>,
+}
+
+fn bridge_builtin_map_with_overlay(overlay: &DispatchOverlay) -> HashMap<Hash256, &'static str> {
+    let mut map = bridge_builtin_map();
+    for (&name, &path) in &overlay.symbols {
+        map.insert(sha256_bytes(name.as_bytes()), path);
+    }
+    map
+}
+
+fn symbol_map_with_overlay(overlay: &DispatchOverlay) -> HashMap<&'static str, &'static str> {
+    let mut map = symbol_map();
+    for (&name, &path) in &overlay.symbols {
+        map.insert(name, path);
+    }
+    map
+}
+
+fn fn_arg_kinds_with_overlay(overlay: &DispatchOverlay) -> HashMap<&'static str, Vec<ArgKind>> {
+    let mut map = fn_arg_kinds();
+    for (&name, kinds) in &overlay.arg_kinds {
+        map.insert(name, kinds.clone());
+    }
+    map
+}
+
+fn native_call_fn_arg_types_with_overlay(
+    overlay: &DispatchOverlay,
+) -> HashMap<&'static str, Vec<NativeArgType>> {
+    let mut map = native_call_fn_arg_types();
+    for (&name, types) in &overlay.native_args {
+        map.insert(name, types.clone());
+    }
+    map
+}
+
+/// Return true if `identity` resolves to a bridge built-in OR a `--dispatch`
+/// entry.
+pub fn is_bridge_builtin_with_dispatch(identity: &Hash256, overlay: &DispatchOverlay) -> bool {
+    bridge_builtin_map_with_overlay(overlay).contains_key(identity)
+}
+
+/// Like [`builtin_path_for_identity`], but also consults `--dispatch` entries.
+pub fn builtin_path_for_identity_with_dispatch(
+    identity: &Hash256,
+    overlay: &DispatchOverlay,
+) -> Option<&'static str> {
+    bridge_builtin_map_with_overlay(overlay).get(identity).copied()
+}
+
+/// One `[[fn]]` table from a dispatch TOML file, before the string fields are
+/// validated into `ArgKind` / `NativeArgType`.
+#[derive(Debug, Default, Clone)]
+struct RawDispatchEntry {
+    name: Option<String>,
+    path: Option<String>,
+    native_args: Option<Vec<String>>,
+    arg_kinds: Option<Vec<String>>,
+}
+
+/// Strip a `#`-led trailing comment, respecting quoted strings (a `#` inside
+/// `"..."` is data, not a comment marker).
+fn strip_toml_comment(s: &str) -> &str {
+    let mut in_quotes = false;
+    for (i, c) in s.char_indices() {
+        match c {
+            '"' => in_quotes = !in_quotes,
+            '#' if !in_quotes => return s[..i].trim_end(),
+            _ => {}
+        }
+    }
+    s
+}
+
+/// Parse a single TOML basic string (`"..."`), with `\"`, `\\`, `\n`, `\t`
+/// escapes — the narrow subset this schema's values ever need.
+fn parse_toml_string(v: &str, file: &str, line: usize) -> Result<String, String> {
+    let v = v.trim();
+    if v.len() < 2 || !v.starts_with('"') || !v.ends_with('"') {
+        return Err(format!("{}:{}: expected a quoted string, got {:?}", file, line, v));
+    }
+    let inner = &v[1..v.len() - 1];
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('"')  => out.push('"'),
+            Some('\\') => out.push('\\'),
+            Some('n')  => out.push('\n'),
+            Some('t')  => out.push('\t'),
+            Some(other) => return Err(format!("{}:{}: unsupported escape \\{}", file, line, other)),
+            None => return Err(format!("{}:{}: dangling escape at end of string", file, line)),
+        }
+    }
+    Ok(out)
+}
+
+/// Parse a TOML array of basic strings (`["a", "b"]`), splitting on commas
+/// that are outside quotes.
+fn parse_toml_string_array(v: &str, file: &str, line: usize) -> Result<Vec<String>, String> {
+    let v = v.trim();
+    if !v.starts_with('[') || !v.ends_with(']') {
+        return Err(format!("{}:{}: expected an array, got {:?}", file, line, v));
+    }
+    let inner: Vec<char> = v[1..v.len() - 1].chars().collect();
+    let mut items = Vec::new();
+    let mut in_quotes = false;
+    let mut start = 0usize;
+    for (i, &c) in inner.iter().enumerate() {
+        match c {
+            '"' => in_quotes = !in_quotes,
+            ',' if !in_quotes => {
+                let piece: String = inner[start..i].iter().collect();
+                let piece = piece.trim();
+                if !piece.is_empty() {
+                    items.push(parse_toml_string(piece, file, line)?);
+                }
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    let last: String = inner[start..].iter().collect();
+    let last = last.trim();
+    if !last.is_empty() {
+        items.push(parse_toml_string(last, file, line)?);
+    }
+    Ok(items)
+}
+
+/// Parse one dispatch TOML document into its `[[fn]]` entries. Deliberately
+/// hand-rolled (no `toml` crate dependency) — the schema is a fixed, narrow
+/// subset: repeatable `[[fn]] key = "value" / key = ["a", "b"]` tables, same
+/// text-scan discipline as the `--reg` parsers above.
+fn parse_dispatch_toml(content: &str, file: &str) -> Result<Vec<RawDispatchEntry>, String> {
+    let mut entries = Vec::new();
+    let mut current: Option<RawDispatchEntry> = None;
+    for (idx, raw_line) in content.lines().enumerate() {
+        let line_no = idx + 1;
+        let line = strip_toml_comment(raw_line.trim());
+        if line.is_empty() {
+            continue;
+        }
+        if line == "[[fn]]" {
+            if let Some(e) = current.take() {
+                entries.push(e);
+            }
+            current = Some(RawDispatchEntry::default());
+            continue;
+        }
+        let entry = current
+            .as_mut()
+            .ok_or_else(|| format!("{}:{}: key outside of any [[fn]] table", file, line_no))?;
+        let (key, value) = line
+            .split_once('=')
+            .ok_or_else(|| format!("{}:{}: expected `key = value`, got {:?}", file, line_no, line))?;
+        match key.trim() {
+            "name" => entry.name = Some(parse_toml_string(value, file, line_no)?),
+            "path" => entry.path = Some(parse_toml_string(value, file, line_no)?),
+            "native_args" => entry.native_args = Some(parse_toml_string_array(value, file, line_no)?),
+            "arg_kinds" => entry.arg_kinds = Some(parse_toml_string_array(value, file, line_no)?),
+            other => return Err(format!("{}:{}: unknown dispatch key {:?}", file, line_no, other)),
+        }
+    }
+    if let Some(e) = current.take() {
+        entries.push(e);
+    }
+    Ok(entries)
+}
+
+/// `native_args` vocabulary — spelled exactly as the [`NativeArgType`]
+/// variant names: `Int`, `Text`, `Bytes`, `Bool`, `Value`.
+fn parse_native_arg_type(s: &str, file: &str, fn_name: &str) -> Result<NativeArgType, String> {
+    match s {
+        "Int"   => Ok(NativeArgType::Int),
+        "Text"  => Ok(NativeArgType::Text),
+        "Bytes" => Ok(NativeArgType::Bytes),
+        "Bool"  => Ok(NativeArgType::Bool),
+        "Value" => Ok(NativeArgType::Value),
+        other => Err(format!(
+            "{}: fn {:?}: unknown native_args entry {:?} (expected one of Int, Text, Bytes, Bool, Value)",
+            file, fn_name, other
+        )),
+    }
+}
+
+/// `arg_kinds` vocabulary — spelled exactly as the [`ArgKind`] variant names:
+/// `Data`, `FnRef`.
+fn parse_arg_kind(s: &str, file: &str, fn_name: &str) -> Result<ArgKind, String> {
+    match s {
+        "Data"  => Ok(ArgKind::Data),
+        "FnRef" => Ok(ArgKind::FnRef),
+        other => Err(format!(
+            "{}: fn {:?}: unknown arg_kinds entry {:?} (expected one of Data, FnRef)",
+            file, fn_name, other
+        )),
+    }
+}
+
+/// Load and merge `--dispatch` files into one [`DispatchOverlay`]. A dispatch
+/// name already present in the static `symbol_map` (i.e. an existing bridge
+/// built-in) — or already loaded from an earlier dispatch file/entry — is a
+/// hard error: `dispatch conflict: <name>`. Never a silent override.
+pub fn load_dispatch_files(paths: &[String]) -> Result<DispatchOverlay, String> {
+    let mut overlay = DispatchOverlay::default();
+    let static_names: std::collections::HashSet<&'static str> = symbol_map().keys().copied().collect();
+    for path in paths {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| format!("cannot read --dispatch {}: {}", path, e))?;
+        for entry in parse_dispatch_toml(&content, path)? {
+            let name = entry
+                .name
+                .ok_or_else(|| format!("{}: [[fn]] entry missing required `name`", path))?;
+            let raw_path = entry
+                .path
+                .ok_or_else(|| format!("{}: fn {:?}: missing required `path`", path, name))?;
+            if static_names.contains(name.as_str()) || overlay.symbols.contains_key(name.as_str()) {
+                return Err(format!("dispatch conflict: {}", name));
+            }
+            // Leaked once per name for the lifetime of this build process —
+            // the tables these feed are `&'static str`-keyed throughout, and
+            // dispatch data (unlike the static tables) is only known at
+            // runtime, so there is no `'static` source to borrow from.
+            let name_static: &'static str = Box::leak(name.into_boxed_str());
+            let path_static: &'static str = Box::leak(raw_path.into_boxed_str());
+            if let Some(natives) = entry.native_args {
+                let types = natives
+                    .iter()
+                    .map(|s| parse_native_arg_type(s, path, name_static))
+                    .collect::<Result<Vec<_>, _>>()?;
+                overlay.native_args.insert(name_static, types);
+            }
+            if let Some(kinds) = entry.arg_kinds {
+                let ks = kinds
+                    .iter()
+                    .map(|s| parse_arg_kind(s, path, name_static))
+                    .collect::<Result<Vec<_>, _>>()?;
+                overlay.arg_kinds.insert(name_static, ks);
+            }
+            overlay.symbols.insert(name_static, path_static);
+        }
+    }
+    Ok(overlay)
 }
 
 // ── Pool constant classification ─────────────────────────────────────────────
@@ -2171,12 +2293,44 @@ pub fn emit_rust_lib_from_bundle(
     declared_channels: &std::collections::HashSet<String>,
     pure_det: &std::collections::HashSet<Hash256>,
 ) -> Result<String, String> {
-    let builtin = bridge_builtin_map();
-    let name_to_path = symbol_map();
+    emit_rust_lib_from_bundle_with_dispatch(
+        bundle,
+        fn_name,
+        registry_identity_map,
+        xbundle_providers,
+        declared_channels,
+        pure_det,
+        &DispatchOverlay::default(),
+        &[],
+    )
+}
+
+/// Like [`emit_rust_lib_from_bundle`], but also resolves CCall targets and
+/// Fn-typed pool refs through `overlay` (from `--dispatch` files) and emits
+/// `extern crate <name>;` for every `--provider-crate` in `provider_crate_names`
+/// so the generated glue can name that crate's fns directly. With an empty
+/// overlay and no provider crates this produces byte-identical output to
+/// [`emit_rust_lib_from_bundle`].
+#[allow(clippy::too_many_arguments)]
+pub fn emit_rust_lib_from_bundle_with_dispatch(
+    bundle: &CoreBundle,
+    fn_name: &str,
+    registry_identity_map: &HashMap<Hash256, String>,
+    xbundle_providers: &HashMap<Hash256, String>,
+    declared_channels: &std::collections::HashSet<String>,
+    pure_det: &std::collections::HashSet<Hash256>,
+    overlay: &DispatchOverlay,
+    provider_crate_names: &[String],
+) -> Result<String, String> {
+    let builtin = bridge_builtin_map_with_overlay(overlay);
+    let name_to_path = symbol_map_with_overlay(overlay);
     let safe_name = sanitise(fn_name);
 
     let mut out = String::new();
     out.push_str("extern crate axis_codegen_bridge;\n");
+    for name in provider_crate_names {
+        out.push_str(&format!("#[allow(unused_extern_crates)] extern crate {};\n", name));
+    }
     out.push_str("#[allow(unused_imports)]\n");
     out.push_str(
         "use axis_codegen_bridge::runtime::value::{Value, truthy, intern_str, init_runtime};\n\n",
@@ -2255,8 +2409,8 @@ pub fn emit_rust_lib_from_bundle(
         }
     }
 
-    let arg_kind_table = fn_arg_kinds();
-    let native_call_table = native_call_fn_arg_types();
+    let arg_kind_table = fn_arg_kinds_with_overlay(overlay);
+    let native_call_table = native_call_fn_arg_types_with_overlay(overlay);
 
     // Collect the distinct §5b extern symbols this bundle calls (for the extern block)
     //

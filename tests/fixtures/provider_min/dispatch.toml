@@ -1,0 +1,7 @@
+# Dispatch table for the provider_min fixture crate (tests/cli_build_05_test.rs).
+# prov_double's Rust signature is `fn(Value) -> Value`, so no native_args/
+# arg_kinds override is needed — the default boxed single-Data-arg call
+# (`path(pool_N.clone())`) already matches it exactly.
+[[fn]]
+name = "prov_double"
+path = "provider_min::prov_double"

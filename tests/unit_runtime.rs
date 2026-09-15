@@ -414,7 +414,7 @@ fn test_bool_to_str_false() {
     assert_eq!(str_ops::bool_to_str(false), s("false"));
 }
 
-// ── stdlib(B01): assert / bool_eq / bool_xor ─────────────────────────────────
+// ── assert ───────────────────────────────────────────────────────────────────
 
 #[test]
 fn test_assert_true_returns_unit() {
@@ -429,21 +429,8 @@ fn test_assert_false_panics() {
     bool_ops::ax_assert(Value::Bool(false));
 }
 
-#[test]
-fn test_bool_eq() {
-    setup();
-    assert_eq!(bool_ops::bool_eq(Value::Bool(true), Value::Bool(true)), Value::Bool(true));
-    assert_eq!(bool_ops::bool_eq(Value::Bool(true), Value::Bool(false)), Value::Bool(false));
-    assert_eq!(bool_ops::bool_eq(Value::Bool(false), Value::Bool(false)), Value::Bool(true));
-}
-
-#[test]
-fn test_bool_xor() {
-    setup();
-    assert_eq!(bool_ops::bool_xor(Value::Bool(true), Value::Bool(false)), Value::Bool(true));
-    assert_eq!(bool_ops::bool_xor(Value::Bool(true), Value::Bool(true)), Value::Bool(false));
-    assert_eq!(bool_ops::bool_xor(Value::Bool(false), Value::Bool(false)), Value::Bool(false));
-}
+// bool_eq / bool_xor moved to axis-stdlib-working/crate/tests/stdlib_b01.rs
+// with the fns themselves (STDLIB_OWNS_ITS_SOURCE_V1, 2026-09-16).
 
 // ── text_eq / text_lt (axis.axreg canonical names) ───────────────────────────
 

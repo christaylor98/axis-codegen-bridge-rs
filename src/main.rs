@@ -15,6 +15,10 @@ fn usage() -> ! {
     eprintln!("    --lib <path.coreir>           link a library bundle (repeatable)");
     eprintln!("    --lib-dir <directory>         link all .coreir in directory (repeatable)");
     eprintln!("    --reg <path.axreg>            registry file for CCall validation (repeatable)");
+    eprintln!("    --dispatch <path.toml>        extra CCall dispatch table, merged with the");
+    eprintln!("                                  bridge's built-in tables (repeatable)");
+    eprintln!("    --provider-crate <name>=<path.rs>  compile <path.rs> as an rlib named <name>");
+    eprintln!("                                  and link it into the generated glue (repeatable)");
     eprintln!("    --link-lib <name>             pass -l <name> to rustc");
     eprintln!("    --link-search <path>          pass -L <path> to rustc");
     eprintln!("  axis-codegen-bridge bundle --out <output.a> <input1.a> [<input2.a> ...]");
@@ -99,13 +103,14 @@ fn collect_xbundle_closure(
     root: &CoreBundle,
     available: &HashMap<Hash256, (String, CoreBundle)>,
     extra_roots: &[Hash256],
+    overlay: &rust_05::DispatchOverlay,
 ) -> Vec<Hash256> {
     let mut ordered: Vec<Hash256> = Vec::new();
     let mut visited: HashSet<Hash256> = HashSet::new();
-    collect_closure_dfs(root, available, &mut visited, &mut ordered);
+    collect_closure_dfs(root, available, &mut visited, &mut ordered, overlay);
     for eid in extra_roots {
         if let Some((_, eb)) = available.get(eid) {
-            collect_closure_dfs(eb, available, &mut visited, &mut ordered);
+            collect_closure_dfs(eb, available, &mut visited, &mut ordered, overlay);
         }
         if visited.insert(*eid) {
             ordered.push(*eid);
@@ -119,14 +124,15 @@ fn collect_closure_dfs(
     available: &HashMap<Hash256, (String, CoreBundle)>,
     visited: &mut HashSet<Hash256>,
     ordered: &mut Vec<Hash256>,
+    overlay: &rust_05::DispatchOverlay,
 ) {
     for node in &bundle.nodes {
         if let Node::CCall { target_identity, target_name, .. } = node {
-            if rust_05::is_bridge_builtin(target_identity) { continue; }
+            if rust_05::is_bridge_builtin_with_dispatch(target_identity, overlay) { continue; }
             if target_name.is_empty() || sha256_bytes(target_name.as_bytes()) != *target_identity { continue; }
             if !visited.insert(*target_identity) { continue; } // cycle or already processed
             if let Some((_, dep_bundle)) = available.get(target_identity) {
-                collect_closure_dfs(dep_bundle, available, visited, ordered);
+                collect_closure_dfs(dep_bundle, available, visited, ordered, overlay);
                 ordered.push(*target_identity);
             }
         }
@@ -141,10 +147,10 @@ fn collect_closure_dfs(
         }
         let mut id: Hash256 = [0u8; 32];
         id.copy_from_slice(&entry.payload);
-        if rust_05::is_bridge_builtin(&id) { continue; }
+        if rust_05::is_bridge_builtin_with_dispatch(&id, overlay) { continue; }
         if !visited.insert(id) { continue; }
         if let Some((_, dep_bundle)) = available.get(&id) {
-            collect_closure_dfs(dep_bundle, available, visited, ordered);
+            collect_closure_dfs(dep_bundle, available, visited, ordered, overlay);
             ordered.push(id);
         }
     }
@@ -162,6 +168,9 @@ fn cmd_build(args: &[String]) {
     let mut lib_paths:   Vec<String> = Vec::new();
     let mut lib_dirs:    Vec<String> = Vec::new();
     let mut reg_paths:   Vec<String> = Vec::new();
+    let mut dispatch_paths: Vec<String> = Vec::new();
+    // (crate_name, path/to/lib.rs)
+    let mut provider_crates: Vec<(String, String)> = Vec::new();
     let mut entry_names: Vec<String> = Vec::new();
     let mut entry_stack_size: usize  = 1048576; // 1 MiB default
 
@@ -175,6 +184,19 @@ fn cmd_build(args: &[String]) {
             "--lib"              if i + 1 < args.len() => { lib_paths.push(args[i+1].clone()); i += 2; }
             "--lib-dir"          if i + 1 < args.len() => { lib_dirs.push(args[i+1].clone()); i += 2; }
             "--reg"              if i + 1 < args.len() => { reg_paths.push(args[i+1].clone()); i += 2; }
+            "--dispatch"         if i + 1 < args.len() => { dispatch_paths.push(args[i+1].clone()); i += 2; }
+            "--provider-crate"   if i + 1 < args.len() => {
+                match args[i+1].split_once('=') {
+                    Some((name, path)) if !name.is_empty() && !path.is_empty() => {
+                        provider_crates.push((name.to_string(), path.to_string()));
+                    }
+                    _ => {
+                        eprintln!("error: --provider-crate expects <name>=<path.rs>, got {:?}", args[i+1]);
+                        std::process::exit(1);
+                    }
+                }
+                i += 2;
+            }
             "--entries"          if i + 1 < args.len() => {
                 for name in args[i+1].split(',') {
                     let n = name.trim().to_string();
@@ -217,6 +239,45 @@ fn cmd_build(args: &[String]) {
     // Bridge-independent async fact scan (BRIDGE_SCAN_INDEPENDENT). Provides the
     // declared-channel set that gates emit-time CHANNELS_STATIC enforcement.
     let async_facts = rust_05::scan_bridge_async(&reg_paths);
+
+    // ── M1-provider: --dispatch tables ──────────────────────────────────
+    // Merged once, up front, so every downstream use (closure walk, CCall
+    // resolution, the exe shim) sees the same extended name/identity space.
+    let dispatch_overlay = match rust_05::load_dispatch_files(&dispatch_paths) {
+        Ok(o)  => o,
+        Err(e) => { eprintln!("error: {}", e); std::process::exit(1); }
+    };
+
+    // ── M1-provider: --provider-crate compilation ───────────────────────
+    // Each provider crate is compiled to its own rlib with the SAME rustc
+    // used for glue, against the SAME bridge rlib (find_bridge_rlib) the
+    // glue itself links — the "exactly one instance of Value" requirement.
+    // The rlib is later named via `--extern <crate_name>=<rlib>` at every
+    // glue/shim compile, and `extern crate <crate_name>;` is emitted into
+    // the generated glue so rustc treats it as a real crate dependency
+    // (not just a resolvable path) — see the `extern_crate_lines` comment
+    // near the exe shim below for why that distinction matters at link time.
+    let provider_crate_names: Vec<String> = provider_crates.iter().map(|(n, _)| n.clone()).collect();
+    let mut provider_crate_rlibs: Vec<(String, std::path::PathBuf)> = Vec::new();
+    for (crate_name, src_path) in &provider_crates {
+        let out_rlib = out_dir.join(format!("lib{}.rlib", crate_name));
+        let mut pcmd = std::process::Command::new("rustc");
+        pcmd.arg(src_path)
+            .arg("--crate-type=rlib")
+            .arg(format!("--crate-name={}", crate_name))
+            .arg("--edition=2021")
+            .arg("-o").arg(&out_rlib)
+            .arg("-C").arg("embed-bitcode=no")
+            .arg("-C").arg("opt-level=3")
+            .arg("--extern").arg(format!("axis_codegen_bridge={}", find_bridge_rlib(&exe_dir).display()))
+            .arg("-L").arg(format!("dependency={}/deps", exe_dir.display()));
+        match pcmd.status() {
+            Ok(s) if s.success() => {}
+            Ok(s) => { eprintln!("error: rustc (provider-crate '{}') exited {:?}", crate_name, s.code()); std::process::exit(1); }
+            Err(e) => { eprintln!("error: failed to invoke rustc for provider-crate '{}': {}", crate_name, e); std::process::exit(1); }
+        }
+        provider_crate_rlibs.push((crate_name.clone(), out_rlib));
+    }
 
     // ── §5b provider resolution (--lib / --lib-dir) ────────────────────
     // Expand --lib-dir into lib_paths (same logic as the 0.4 path).
@@ -267,7 +328,7 @@ fn cmd_build(args: &[String]) {
     let mut xbundle_entry_ids: Vec<Hash256> = Vec::new();
     for name in &entry_names {
         let eid = sha256_bytes(name.as_bytes());
-        if rust_05::is_bridge_builtin(&eid) {
+        if rust_05::is_bridge_builtin_with_dispatch(&eid, &dispatch_overlay) {
             match in_map.get(&eid) {
                 Some(in_clause) if in_clause.trim() == "(TextList)" => { /* OK */ }
                 Some(in_clause) => {
@@ -296,7 +357,7 @@ fn cmd_build(args: &[String]) {
     // Collect the full transitive closure of §5b providers needed by the root
     // plus any §5b entry-point providers (extra_roots), using DFS with a visited
     // set for cycle safety (CYCLES_ARE_LEGAL).
-    let all_providers = collect_xbundle_closure(&bundle, &provider_map, &xbundle_entry_ids);
+    let all_providers = collect_xbundle_closure(&bundle, &provider_map, &xbundle_entry_ids, &dispatch_overlay);
 
     // Build xbundle_providers map: identity → "ax_fn_<hex>" symbol.
     // This covers the full closure so each bundle (root + providers) can emit
@@ -322,7 +383,10 @@ fn cmd_build(args: &[String]) {
         let provider_crate_name = format!("ax_xb_{}", safe_pfn);
         // Always recompile — never cache. Stale _xb.a silently links old
         // code when the source .coreir changes (build-always-recompiles).
-        let pcode = match rust_05::emit_rust_lib_from_bundle(pbundle, pfn, &registry_map, &xbundle_providers, &async_facts.channels, &pure_det_ids) {
+        let pcode = match rust_05::emit_rust_lib_from_bundle_with_dispatch(
+            pbundle, pfn, &registry_map, &xbundle_providers, &async_facts.channels, &pure_det_ids,
+            &dispatch_overlay, &provider_crate_names,
+        ) {
             Ok(c)  => c,
             Err(e) => { eprintln!("error (provider '{}'): {}", pfn, e); std::process::exit(1); }
         };
@@ -341,6 +405,9 @@ fn cmd_build(args: &[String]) {
             .arg("-C").arg("strip=debuginfo")
             .arg("--extern").arg(format!("axis_codegen_bridge={}", find_bridge_rlib(&exe_dir).display()))
             .arg("-L").arg(format!("dependency={}/deps", exe_dir.display()));
+        for (name, prlib) in &provider_crate_rlibs {
+            pcmd.arg("--extern").arg(format!("{}={}", name, prlib.display()));
+        }
         match pcmd.status() {
             Ok(s) if s.success() => {}
             Ok(s) => { eprintln!("error: rustc (provider '{}') exited {:?}", pfn, s.code()); std::process::exit(1); }
@@ -364,7 +431,10 @@ fn cmd_build(args: &[String]) {
     }
     // ── end §5b provider resolution ─────────────────────────────────────
 
-    let rust_code = match rust_05::emit_rust_lib_from_bundle(&bundle, &fn_name, &registry_map, &xbundle_providers, &async_facts.channels, &pure_det_ids) {
+    let rust_code = match rust_05::emit_rust_lib_from_bundle_with_dispatch(
+        &bundle, &fn_name, &registry_map, &xbundle_providers, &async_facts.channels, &pure_det_ids,
+        &dispatch_overlay, &provider_crate_names,
+    ) {
         Ok(code) => code,
         Err(e)   => { eprintln!("error: {}", e); std::process::exit(1); }
     };
@@ -388,6 +458,9 @@ fn cmd_build(args: &[String]) {
        .arg("-C").arg("strip=debuginfo")
        .arg("--extern").arg(format!("axis_codegen_bridge={}", find_bridge_rlib(&exe_dir).display()))
        .arg("-L").arg(format!("dependency={}/deps", exe_dir.display()));
+    for (name, prlib) in &provider_crate_rlibs {
+        cmd.arg("--extern").arg(format!("{}={}", name, prlib.display()));
+    }
     for path in &link_search { cmd.arg("-L").arg(path); }
     match cmd.status() {
         Ok(s) if s.success() => {
@@ -423,6 +496,9 @@ fn cmd_build(args: &[String]) {
         let mut s = String::new();
         s += &format!("#[allow(unused_extern_crates)] extern crate {};\n", bundle_crate_name);
         for (name, _) in &provider_rlibs {
+            s += &format!("#[allow(unused_extern_crates)] extern crate {};\n", name);
+        }
+        for (name, _) in &provider_crate_rlibs {
             s += &format!("#[allow(unused_extern_crates)] extern crate {};\n", name);
         }
         s
@@ -467,7 +543,7 @@ fn cmd_build(args: &[String]) {
         let mut extern_syms: Vec<String> = Vec::new();
         for name in &entry_names {
             let eid = sha256_bytes(name.as_bytes());
-            if !rust_05::is_bridge_builtin(&eid) {
+            if !rust_05::is_bridge_builtin_with_dispatch(&eid, &dispatch_overlay) {
                 let sym = format!("ax_fn_{}", hash256_to_hex(&eid));
                 if !extern_syms.contains(&sym) { extern_syms.push(sym); }
             }
@@ -502,7 +578,7 @@ fn cmd_build(args: &[String]) {
 
         for (idx, name) in entry_names.iter().enumerate() {
             let eid = sha256_bytes(name.as_bytes());
-            let call_expr = if let Some(path) = rust_05::builtin_path_for_identity(&eid) {
+            let call_expr = if let Some(path) = rust_05::builtin_path_for_identity_with_dispatch(&eid, &dispatch_overlay) {
                 format!("{}(a)", path)
             } else {
                 format!("unsafe {{ ax_fn_{}(a) }}", hash256_to_hex(&eid))
@@ -622,6 +698,10 @@ fn cmd_build(args: &[String]) {
        .arg("-L").arg(format!("dependency={}", out_dir.display()))
        .arg("--extern").arg(format!("{}={}", bundle_crate_name, bundle_extern_abs.display()));
     for (name, prlib) in &provider_rlibs {
+        let abs = std::fs::canonicalize(prlib).unwrap_or_else(|_| prlib.clone());
+        cmd.arg("--extern").arg(format!("{}={}", name, abs.display()));
+    }
+    for (name, prlib) in &provider_crate_rlibs {
         let abs = std::fs::canonicalize(prlib).unwrap_or_else(|_| prlib.clone());
         cmd.arg("--extern").arg(format!("{}={}", name, abs.display()));
     }

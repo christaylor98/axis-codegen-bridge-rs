@@ -1,3 +1,8 @@
+//! RETURNED TO THE BRIDGE 2026-09-16: Chris ruled the dec primitives stay
+//! in the bridge, so their tests come back with them. Split out of what was
+//! briefly axis-stdlib-working/crate/tests/stdlib_b02.rs; the int half of
+//! that file stayed behind, because five of those six fns are M1 now.
+//!
 //! stdlib(B02-T): int + dec arithmetic completions (AXIS_STDLIB_DESIGN_V1).
 //!
 //! Written from the B02 spec table BEFORE reading the A-stage implementation
@@ -37,75 +42,6 @@ fn as_dec(v: Value) -> Decimal {
         Value::Dec(d) => d,
         other => panic!("expected Dec, got {:?}", other),
     }
-}
-
-// ── int_neg ─────────────────────────────────────────────────────────────
-
-#[test]
-fn int_neg_basic() {
-    assert_eq!(arith::int_neg(5), Value::Int(-5));
-    assert_eq!(arith::int_neg(-5), Value::Int(5));
-    assert_eq!(arith::int_neg(0), Value::Int(0));
-}
-
-#[test]
-#[should_panic]
-fn int_neg_i64_min_panics() {
-    arith::int_neg(i64::MIN);
-}
-
-// ── int_ne ──────────────────────────────────────────────────────────────
-
-#[test]
-fn int_ne_basic() {
-    assert_eq!(arith::int_ne(3, 4), Value::Bool(true));
-    assert_eq!(arith::int_ne(3, 3), Value::Bool(false));
-}
-
-// ── int_pow ─────────────────────────────────────────────────────────────
-
-#[test]
-fn int_pow_basic() {
-    assert_eq!(arith::int_pow(2, 10), Value::Int(1024));
-    assert_eq!(arith::int_pow(5, 0), Value::Int(1));
-    assert_eq!(arith::int_pow(-2, 3), Value::Int(-8));
-}
-
-#[test]
-#[should_panic]
-fn int_pow_overflow_panics() {
-    arith::int_pow(2, 63);
-}
-
-#[test]
-#[should_panic]
-fn int_pow_negative_exponent_panics() {
-    arith::int_pow(2, -1);
-}
-
-// ── int_sign ────────────────────────────────────────────────────────────
-
-#[test]
-fn int_sign_basic() {
-    assert_eq!(arith::int_sign(42), Value::Int(1));
-    assert_eq!(arith::int_sign(-42), Value::Int(-1));
-    assert_eq!(arith::int_sign(0), Value::Int(0));
-}
-
-// ── int_is_even / int_is_odd ────────────────────────────────────────────
-
-#[test]
-fn int_is_even_basic() {
-    assert_eq!(arith::int_is_even(4), Value::Bool(true));
-    assert_eq!(arith::int_is_even(7), Value::Bool(false));
-    assert_eq!(arith::int_is_even(-4), Value::Bool(true));
-}
-
-#[test]
-fn int_is_odd_basic() {
-    assert_eq!(arith::int_is_odd(7), Value::Bool(true));
-    assert_eq!(arith::int_is_odd(4), Value::Bool(false));
-    assert_eq!(arith::int_is_odd(-7), Value::Bool(true));
 }
 
 // ── dec_add / dec_sub / dec_mul ─────────────────────────────────────────

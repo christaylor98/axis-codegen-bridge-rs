@@ -1132,3 +1132,122 @@ fn test_provider_always_recompiled_second_build_succeeds() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert_eq!(stdout.trim(), "true", "exe after second build must still return 'true'");
 }
+
+// ── M1-provider: --dispatch / --provider-crate ───────────────────────────────
+//
+// tests/fixtures/provider_min/ is a standalone Rust crate (lib.rs) exposing
+// one fn, `prov_double(Value) -> Value`, plus a dispatch.toml naming it. It
+// stands in for a real external provider (e.g. axis_stdlib) that depends on
+// this crate for `Value` and so cannot be depended on BY this crate.
+
+fn fixture_path(rel: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(rel)
+}
+
+/// pool[0] = Int(21), node[0] = CCall(prov_double, [pool[0]]) — result 42.
+fn make_prov_double_bundle() -> CoreBundle {
+    make_ccall_bundle_named(
+        sha256_bytes(b"prov_double"),
+        "prov_double",
+        vec![ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(21) }],
+        vec![NodeRef::Pool(0)],
+    )
+}
+
+#[test]
+fn test_provider_crate_dispatch_runs() {
+    let dir = TempDir::new().unwrap();
+    let bundle = make_prov_double_bundle();
+    let fixture = write_05_bundle(&dir, "prov_call.coreir", &bundle);
+    let exe_out = dir.path().join("prov_call_exe");
+
+    let dispatch_toml = fixture_path("provider_min/dispatch.toml");
+    let provider_src  = fixture_path("provider_min/lib.rs");
+
+    let output = Command::new(bridge())
+        .args([
+            "build", fixture.to_str().unwrap(),
+            "--out", exe_out.to_str().unwrap(),
+            "--exe",
+            "--dispatch", dispatch_toml.to_str().unwrap(),
+            "--provider-crate", &format!("provider_min={}", provider_src.display()),
+        ])
+        .output()
+        .expect("bridge failed to run");
+    assert!(
+        output.status.success(),
+        "provider-crate/dispatch build failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let run = Command::new(&exe_out).output().expect("failed to run exe");
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(stdout.trim(), "42", "expected prov_double(21) == 42, got: {:?}", stdout);
+}
+
+// ── (b) --dispatch entry colliding with a static bridge built-in: hard error ──
+
+#[test]
+fn test_dispatch_conflict_with_static_name_fails() {
+    let dir = TempDir::new().unwrap();
+    let bundle = make_int_bundle(1);
+    let fixture = write_05_bundle(&dir, "int_fn.coreir", &bundle);
+    let out = dir.path().join("int_fn");
+
+    let conflict_toml = dir.path().join("conflict.toml");
+    std::fs::write(&conflict_toml, "[[fn]]\nname = \"int_add\"\npath = \"whatever::int_add\"\n")
+        .unwrap();
+
+    let output = Command::new(bridge())
+        .args([
+            "build", fixture.to_str().unwrap(),
+            "--out", out.to_str().unwrap(),
+            "--dispatch", conflict_toml.to_str().unwrap(),
+        ])
+        .output()
+        .expect("bridge failed to run");
+
+    assert!(!output.status.success(), "build should fail when a dispatch entry conflicts with a static name");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("dispatch conflict: int_add"),
+        "expected 'dispatch conflict: int_add' in stderr, got:\n{}", stderr
+    );
+}
+
+// ── (c) no --dispatch/--provider-crate flags: generated glue unchanged ────────
+
+#[test]
+fn test_no_flag_build_glue_unchanged() {
+    let dir = TempDir::new().unwrap();
+    let bundle = make_int_bundle(42);
+    let fixture = write_05_bundle(&dir, "int_fn.coreir", &bundle);
+    let out = dir.path().join("int_fn");
+
+    let status = Command::new(bridge())
+        .args(["build", fixture.to_str().unwrap(), "--out", out.to_str().unwrap()])
+        .status()
+        .expect("bridge failed to run");
+    assert!(status.success(), "build failed");
+
+    let generated = std::fs::read_to_string(dir.path().join("generated_lib.rs"))
+        .expect("generated_lib.rs not written");
+
+    // Same bundle, run straight through the plain (no-overlay) public API —
+    // the two must match exactly when no --dispatch/--provider-crate flag is
+    // given, proving the M1-provider addition changed nothing on that path.
+    let expected = axis_codegen_bridge::emit::rust_05::emit_rust_lib_from_bundle(
+        &bundle,
+        "int_fn",
+        &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
+        &std::collections::HashSet::new(),
+        &std::collections::HashSet::new(),
+    )
+    .expect("direct emit failed");
+
+    assert_eq!(
+        generated, expected,
+        "no-flag build's generated glue must be byte-identical to emit_rust_lib_from_bundle's output"
+    );
+}

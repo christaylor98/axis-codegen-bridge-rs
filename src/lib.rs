@@ -2,6 +2,12 @@ pub mod runtime;
 pub mod core_ir_05;
 pub mod emit;
 
+// M1-provider: re-exported so a `--provider-crate` can write
+// `axis_codegen_bridge::rust_decimal::Decimal` against the exact
+// `rust_decimal` this crate's own `Value::Dec` uses, without its own
+// `rust_decimal` dependency/extern.
+pub use rust_decimal;
+
 // AXVERITY_HOTPATH_UNBLOCK_V1 — the process-wide counting allocator introduced
 // by AXVERITY_WRITEPATH_PERF_DECOMPOSITION_V1 is now OFF BY DEFAULT AT COMPILE
 // TIME. It was unconditional, so it was the allocator of every binary linking

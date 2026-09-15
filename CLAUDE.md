@@ -354,3 +354,87 @@ build the once-refused shape end to end and assert the orphan effect fires
 exactly once with either arm taken. The real branch-scoping tests
 (`test_cif_then_taken_does_not_run_else_side_effect` and siblings) are
 unchanged and still pass.
+
+## Provider crates and dispatch files
+
+Landed by the M1-provider intent (2026-09-15) in `src/emit/rust_05.rs`,
+`src/main.rs`, `src/lib.rs`. Lets `axis-codegen-bridge build` link fns
+supplied by an **external** provider crate — e.g. `axis_stdlib`, which
+depends on THIS crate for `Value` and therefore cannot be a dependency OF
+this crate without a cycle — without this crate knowing anything about that
+provider. Nothing stdlib-specific is in this crate; the mechanism is
+entirely generic.
+
+### `--dispatch <path.toml>` (repeatable)
+
+Adds CCall dispatch rows, merged into the same tables a bridge built-in
+occupies (`symbol_map` / `fn_arg_kinds` / `native_call_fn_arg_types` /
+`bridge_builtin_map`, identity = `sha256(name)`, the same §5b rule every
+other bridge built-in uses):
+
+```toml
+[[fn]]
+name        = "int_neg"
+path        = "axis_stdlib::int::int_neg"
+native_args = ["Int"]            # optional
+arg_kinds   = ["Data"]           # optional
+```
+
+- `name` / `path` are required; `native_args` / `arg_kinds` are optional.
+- `native_args` vocabulary is spelled **exactly as the `NativeArgType` enum
+  variants** in `src/emit/rust_05.rs`: `Int`, `Text`, `Bytes`, `Bool`,
+  `Value`. Only set this when the provider fn's Rust signature takes native
+  scalar params (`fn(i64, ...) -> Value`), matching the convention documented
+  under `native_call_fn_arg_types` — a fn with no `native_args` row is called
+  with the default boxed single-`Value`-arg / `Value::Tuple` convention.
+- `arg_kinds` vocabulary is spelled **exactly as the `ArgKind` enum
+  variants**: `Data`, `FnRef`. Only set this for a higher-order provider fn
+  with a callee/predicate slot (mirrors `fn_arg_kinds`); every other provider
+  fn needs no `arg_kinds` row (defaults to all-`Data`).
+- A dispatch `name` that collides with an existing bridge built-in (a name
+  already in the static `symbol_map`) is a **hard error** —
+  `dispatch conflict: <name>` — at `--dispatch` load time, never a silent
+  override. Two dispatch entries with the same name (same file or across
+  `--dispatch` files) collide the same way.
+- No TOML crate dependency: the parser is hand-rolled against this narrow,
+  fixed schema (`[[fn]]` tables, string / string-array values only), the
+  same text-scan discipline the `--reg` parsers already use in this file.
+
+### `--provider-crate <name>=<path/to/lib.rs>` (repeatable)
+
+Compiles `<path/to/lib.rs>` as its own rlib named `<name>`, with the exact
+same `rustc` invocation shape the bridge already uses for its own generated
+glue (`--crate-type rlib --crate-name <name> --edition 2021 -C opt-level=3
+-C embed-bitcode=no --extern axis_codegen_bridge=<the SAME bridge rlib the
+glue links> -L <the same deps dir>`), then:
+
+- emits `extern crate <name>;` into every piece of generated glue (root
+  bundle, every §5b `--lib` provider, the exe shim) — not merely relying on
+  the 2018+-edition extern prelude, because an unreferenced `--extern` at
+  the **final link** stage does not force rustc to pull the crate's object
+  code in; a literal `extern crate` statement is what makes rustc treat it
+  as a real dependency in its crate graph (same reason the existing §5b
+  `provider_rlibs` / `bundle_crate_name` extern-crate lines exist — see the
+  `extern_crate_lines` comment in `src/main.rs`),
+- passes `--extern <name>=<rlib>` at all three rustc invocations (provider
+  rlib, bundle rlib, shim/final link) so every stage that could reference
+  `<name>::...` — directly in a CCall body, or transitively at final link —
+  resolves against the exact same rlib.
+- `<path/to/lib.rs>`'s own `mod foo;` sub-files resolve relative to it the
+  normal `rustc` way; the bridge does nothing special for them.
+
+**One-instance rule.** Every provider-crate compile and every glue/shim
+compile resolves `axis_codegen_bridge` through the same `find_bridge_rlib`
+call, so the provider and the generated glue always link the identical
+`Value`. If you ever see two `Value` types in an rustc error here, that is
+the bug to fix — do not work around it with a second bridge rlib or a type
+shim.
+
+`axis_codegen_bridge::rust_decimal` is re-exported from `src/lib.rs`
+specifically so a provider can write `axis_codegen_bridge::rust_decimal::
+Decimal` against the exact `rust_decimal` this crate's `Value::Dec` uses,
+without its own `rust_decimal` dependency.
+
+`tests/fixtures/provider_min/` is a minimal fixture provider crate (one fn,
+`prov_double(Value) -> Value`, plus a `dispatch.toml`) exercised end-to-end
+by `tests/cli_build_05_test.rs`'s `test_provider_crate_dispatch_runs`.

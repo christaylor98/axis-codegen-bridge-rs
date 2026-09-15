@@ -1,3 +1,6 @@
+//! RETURNED TO THE BRIDGE 2026-09-16: Chris ruled the float primitives stay
+//! in the bridge, so their tests come back with them.
+//!
 //! stdlib(B03-T): float arithmetic (AXIS_STDLIB_DESIGN_V1).
 //!
 //! Written from the B03 spec table BEFORE reading the A-stage implementation

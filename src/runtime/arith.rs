@@ -183,38 +183,6 @@ pub fn int_eq(x: i64, y: i64) -> Value {
     Value::Bool(x == y)
 }
 
-#[track_caller]
-pub fn int_neg(x: i64) -> Value {
-    Value::Int(x.checked_neg().unwrap_or_else(|| panic!("int_neg: overflow negating {}", x)))
-}
-
-#[track_caller]
-pub fn int_ne(x: i64, y: i64) -> Value {
-    Value::Bool(x != y)
-}
-
-#[track_caller]
-pub fn int_pow(base: i64, exp: i64) -> Value {
-    if exp < 0 { panic!("int_pow: negative exponent {}", exp) }
-    let exp: u32 = exp.try_into().unwrap_or_else(|_| panic!("int_pow: exponent {} out of range", exp));
-    Value::Int(base.checked_pow(exp).unwrap_or_else(|| panic!("int_pow: overflow computing {}^{}", base, exp)))
-}
-
-#[track_caller]
-pub fn int_sign(x: i64) -> Value {
-    Value::Int(x.signum())
-}
-
-#[track_caller]
-pub fn int_is_even(x: i64) -> Value {
-    Value::Bool(x.rem_euclid(2) == 0)
-}
-
-#[track_caller]
-pub fn int_is_odd(x: i64) -> Value {
-    Value::Bool(x.rem_euclid(2) == 1)
-}
-
 /// dec_eq(Dec, Dec) -> Bool. Typed exact equality on rust_decimal::Decimal —
 /// the Dec-typed counterpart of int_eq. Decimal equality is exact (no scaling
 /// surprises: 1.0 == 1.00 is true, matching Decimal's PartialEq).
@@ -267,6 +235,71 @@ pub fn dec_to_text(d: Value) -> Value {
     }
 }
 
+/// float_eq(Float, Float) -> Bool. Typed IEEE-754 f64 equality — the Float-typed
+/// counterpart of int_eq. Uses the standard `==`, so NaN != NaN and +0.0 == -0.0,
+/// identical to how value_eq already compares Value::Float. Exact bit-equality is
+/// a footgun for computed floats; callers wanting a tolerance must compose it in
+/// M1.
+#[track_caller]
+pub fn float_eq(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Float(x), Value::Float(y)) => Value::Bool(x == y),
+            _ => panic!("float_eq: expected two Float values"),
+        },
+        _ => panic!("float_eq: expected Tuple(Float, Float)"),
+    }
+}
+
+/// Identity for unit: discards input, returns Unit.
+#[track_caller]
+pub fn unit_id(_args: Value) -> Value {
+    Value::Unit
+}
+
+/// Sequence two unit-producing computations: takes Tuple(Unit, Unit), returns Unit.
+#[track_caller]
+pub fn seq_unit(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => {
+            match (&es[0], &es[1]) {
+                (Value::Unit, Value::Unit) => Value::Unit,
+                _ => panic!("seq_unit: expected Tuple(Unit, Unit)"),
+            }
+        }
+        Value::Unit => Value::Unit,
+        _ => panic!("seq_unit: expected Tuple(Unit, Unit) or Unit"),
+    }
+}
+
+/// Sequence a computation before a result of any type: `seq(Tuple(a, b)) -> b`.
+///
+/// The first argument is evaluated purely for its ordering/effect (it is already
+/// materialised as its own `let node_N` by the time `seq` runs) and the second is
+/// returned unchanged. The M1 compiler injects `seq` when lowering a discarded
+/// side-effecting binding inside an `if` arm (`let _ = eff(); tail`), so that the
+/// effect becomes a data-dependency of the arm's result and the branch-scoping
+/// emitter keeps it inside that arm (BRANCH_SCOPING_V1). Unlike `seq_unit` this is
+/// type-agnostic in both positions, since a branch result may be any Value.
+// CAUTION (flagged for review): `seq` is compiler-injected by
+// nf_lowering.rs's seq_scope_arm_effects for BRANCH_SCOPING_V1 — always
+// called with exactly 2 args by construction, so native conversion is
+// arg-count-safe, but this fn is correctness-critical for branch-effect
+// scoping (a prior silent-wrong-behavior bug). Recommend extra scrutiny /
+// a real `if`/`else` branch-effect test before trusting this conversion.
+#[track_caller]
+pub fn seq(_eff: Value, result: Value) -> Value {
+    result
+}
+
+
+// ── dec_*: Decimal arithmetic ─────────────────────────────────────────────
+// BRIDGE-OWNED. Minted by stdlib B02-A and briefly held by the stdlib repo;
+// returned here by Chris's ruling (2026-09-16) that the dec primitives stay
+// in the bridge. dec_add/dec_sub/dec_mul are foreign of necessity — P1 proved
+// M1 cannot build Dec addition from the pre-stdlib vocabulary, whose only Dec
+// arithmetic is dec_div. The other seven had M1 compositions that compiled and
+// ran; they are Rust here by ownership, not by inexpressibility.
 #[track_caller]
 pub fn dec_add(args: Value) -> Value {
     match args {
@@ -378,7 +411,14 @@ pub fn str_to_dec(s: std::sync::Arc<str>) -> Value {
     Value::Dec(s.parse().unwrap_or_else(|_| panic!("str_to_dec: invalid decimal text {:?}", s)))
 }
 
-// ── float_*: IEEE-754 f64 arithmetic (stdlib B03-A) ───────────────────────
+// ── float_*: IEEE-754 f64 arithmetic ─────────────────────────────────────
+// BRIDGE-OWNED, and deliberately so. Minted by stdlib B03-A and briefly
+// held by the stdlib repo; returned here by Chris's ruling (2026-09-16)
+// that the float primitives stay in the bridge. They are not stdlib and
+// are not candidates for M1 translation: M1 can only reach f64 through
+// Dec emulation, which is not IEEE (no inf, no NaN, dec_div panics on
+// division by zero, 28-digit rounding) — measured in
+// axis-stdlib-working/gap-analysis/expressibility/P1.
 // Boxed Value::Tuple convention throughout, matching dec_* above — there is
 // no NativeArgType::Float variant (rust_05.rs), so a Float-typed arg cannot
 // use the native-params calling convention.
@@ -557,63 +597,6 @@ pub fn float_to_text(f: Value) -> Value {
 #[track_caller]
 pub fn str_to_float(s: std::sync::Arc<str>) -> Value {
     Value::Float(s.parse().unwrap_or_else(|_| panic!("str_to_float: invalid float text {:?}", s)))
-}
-
-/// float_eq(Float, Float) -> Bool. Typed IEEE-754 f64 equality — the Float-typed
-/// counterpart of int_eq. Uses the standard `==`, so NaN != NaN and +0.0 == -0.0,
-/// identical to how value_eq already compares Value::Float. Exact bit-equality is
-/// a footgun for computed floats; callers wanting a tolerance must compose it in
-/// M1.
-#[track_caller]
-pub fn float_eq(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
-            (Value::Float(x), Value::Float(y)) => Value::Bool(x == y),
-            _ => panic!("float_eq: expected two Float values"),
-        },
-        _ => panic!("float_eq: expected Tuple(Float, Float)"),
-    }
-}
-
-/// Identity for unit: discards input, returns Unit.
-#[track_caller]
-pub fn unit_id(_args: Value) -> Value {
-    Value::Unit
-}
-
-/// Sequence two unit-producing computations: takes Tuple(Unit, Unit), returns Unit.
-#[track_caller]
-pub fn seq_unit(args: Value) -> Value {
-    match args {
-        Value::Tuple(ref es) if es.len() >= 2 => {
-            match (&es[0], &es[1]) {
-                (Value::Unit, Value::Unit) => Value::Unit,
-                _ => panic!("seq_unit: expected Tuple(Unit, Unit)"),
-            }
-        }
-        Value::Unit => Value::Unit,
-        _ => panic!("seq_unit: expected Tuple(Unit, Unit) or Unit"),
-    }
-}
-
-/// Sequence a computation before a result of any type: `seq(Tuple(a, b)) -> b`.
-///
-/// The first argument is evaluated purely for its ordering/effect (it is already
-/// materialised as its own `let node_N` by the time `seq` runs) and the second is
-/// returned unchanged. The M1 compiler injects `seq` when lowering a discarded
-/// side-effecting binding inside an `if` arm (`let _ = eff(); tail`), so that the
-/// effect becomes a data-dependency of the arm's result and the branch-scoping
-/// emitter keeps it inside that arm (BRANCH_SCOPING_V1). Unlike `seq_unit` this is
-/// type-agnostic in both positions, since a branch result may be any Value.
-// CAUTION (flagged for review): `seq` is compiler-injected by
-// nf_lowering.rs's seq_scope_arm_effects for BRANCH_SCOPING_V1 — always
-// called with exactly 2 args by construction, so native conversion is
-// arg-count-safe, but this fn is correctness-critical for branch-effect
-// scoping (a prior silent-wrong-behavior bug). Recommend extra scrutiny /
-// a real `if`/`else` branch-effect test before trusting this conversion.
-#[track_caller]
-pub fn seq(_eff: Value, result: Value) -> Value {
-    result
 }
 
 #[cfg(test)]
