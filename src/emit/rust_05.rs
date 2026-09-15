@@ -638,10 +638,6 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("bytes_empty",          "axis_codegen_bridge::runtime::bytes_codec::bytes_empty");
     m.insert("bytes_eq",             "axis_codegen_bridge::runtime::bytes_codec::bytes_eq");
     m.insert("bytes_index_of",       "axis_codegen_bridge::runtime::bytes_codec::bytes_index_of");
-    m.insert("int16_be_decode",      "axis_codegen_bridge::runtime::bytes_codec::int16_be_decode");
-    m.insert("int32_be_decode",      "axis_codegen_bridge::runtime::bytes_codec::int32_be_decode");
-    m.insert("int64_be_encode",      "axis_codegen_bridge::runtime::bytes_codec::int64_be_encode");
-    m.insert("int64_be_decode",      "axis_codegen_bridge::runtime::bytes_codec::int64_be_decode");
 
     // ── TCP sockets (net.rs — BRIDGE_TCP_SOCKET_V1) ─────────────────────────────
     m.insert("tcp_listen",           "axis_codegen_bridge::runtime::net::tcp_listen");
@@ -1270,10 +1266,6 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     // ── stdlib: bytes (B08-A) ──────────────────────────────────────────────
     m.insert("bytes_eq",          vec![Bytes, Bytes]);
     m.insert("bytes_index_of",    vec![Bytes, Bytes]);
-    m.insert("int16_be_decode",   vec![Bytes, Int]);
-    m.insert("int32_be_decode",   vec![Bytes, Int]);
-    m.insert("int64_be_encode",   vec![Int]);
-    m.insert("int64_be_decode",   vec![Bytes, Int]);
     m.insert("text_to_bytes",     vec![Text]);
     m.insert("fs_write_bytes",    vec![Text, Bytes]);
     m.insert("bytes_hash",        vec![Bytes]);

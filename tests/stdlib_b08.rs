@@ -9,8 +9,8 @@
 //!     needle in haystack, else -1; empty needle returns 0
 //!
 //! `int16_be_decode` / `int32_be_decode` / `int64_be_encode` / `int64_be_decode`
-//! also landed in the A-stage commit but are out of scope for this brief's
-//! table — not tested here (they are exercised at the M1 level in proofs/B08).
+//! also landed in the A-stage commit but were retired by B08-R for violating
+//! the WIDTH_IS_NOT_A_PRIMITIVE hard limit (BYTE_INT_CODEC_COLLAPSE_V1).
 
 use axis_codegen_bridge::runtime::bytes_codec::{bytes_empty, bytes_eq, bytes_index_of};
 use axis_codegen_bridge::runtime::value::Value;
