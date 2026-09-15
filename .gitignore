@@ -26,3 +26,6 @@ perf.data.old
 # scripts; the CSVs next to them are the measurements and ARE tracked.
 /bakeoff-results/bin-*/
 /bakeoff-results/*.log
+
+# mothership worker scratch (task.md/result.md per dispatched task)
+.mothership/
