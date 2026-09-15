@@ -254,12 +254,17 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("io_print",      "axis_codegen_bridge::runtime::io::io_print");
     m.insert("io_println",    "axis_codegen_bridge::runtime::io::io_println");
     m.insert("io_eprint",     "axis_codegen_bridge::runtime::io::io_eprint");
+    m.insert("io_eprintln",   "axis_codegen_bridge::runtime::io::io_eprintln");
     m.insert("io_read_line",  "axis_codegen_bridge::runtime::io::io_read_line");
+    m.insert("io_read_all",   "axis_codegen_bridge::runtime::io::io_read_all");
     m.insert("fs_read_text",  "axis_codegen_bridge::runtime::io::fs_read_text");
+    m.insert("fs_read_lines", "axis_codegen_bridge::runtime::io::fs_read_lines");
     m.insert("fs_write_text", "axis_codegen_bridge::runtime::io::fs_write_text");
     m.insert("fs_append_text","axis_codegen_bridge::runtime::io::fs_append_text");
     m.insert("fs_append_text_durable","axis_codegen_bridge::runtime::io::fs_append_text_durable");
     m.insert("fs_file_exists","axis_codegen_bridge::runtime::io::fs_file_exists");
+    m.insert("fs_is_dir",     "axis_codegen_bridge::runtime::io::fs_is_dir");
+    m.insert("fs_remove_file","axis_codegen_bridge::runtime::io::fs_remove_file");
     m.insert("fs_list_dir",   "axis_codegen_bridge::runtime::io::fs_list_dir");
     m.insert("debug_trace",   "axis_codegen_bridge::runtime::io::debug_trace");
     m.insert("fs_read_last_line", "axis_codegen_bridge::runtime::io::fs_read_last_line");
@@ -290,6 +295,9 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("argv_int",   "axis_codegen_bridge::runtime::process::argv_int");
     m.insert("argv_count", "axis_codegen_bridge::runtime::process::argv_count");
     m.insert("argv_or",    "axis_codegen_bridge::runtime::process::argv_or");
+    m.insert("env_get",    "axis_codegen_bridge::runtime::process::env_get");
+    m.insert("env_has",    "axis_codegen_bridge::runtime::process::env_has");
+    m.insert("env_get_or", "axis_codegen_bridge::runtime::process::env_get_or");
 
     // Async / IPC primitives (channels.rs — BRIDGE_ASYNC_PRIMITIVES_V1).
     // `wait` carries a single Fn-typed callee slot — see `fn_arg_kinds()`.
@@ -1292,12 +1300,18 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("ir_write_bundle",   vec![Value, Text]);
     m.insert("ir_read_bundle",    vec![Text]);
     m.insert("fs_read_text",      vec![Text]);
+    m.insert("fs_read_lines",     vec![Text]);
     m.insert("fs_read_last_line", vec![Text]);
     m.insert("fs_write_text",     vec![Text, Text]);
     m.insert("fs_append_text",    vec![Text, Text]);
     m.insert("fs_append_text_durable", vec![Text, Text]);
     m.insert("fs_file_exists",    vec![Text]);
+    m.insert("fs_is_dir",         vec![Text]);
+    m.insert("fs_remove_file",    vec![Text]);
     m.insert("fs_list_dir",       vec![Text]);
+    m.insert("env_get",           vec![Text]);
+    m.insert("env_has",           vec![Text]);
+    m.insert("env_get_or",        vec![Text, Text]);
     m.insert("pg_emit_datarow1",  vec![Int, Text]);
     m.insert("pg_stream_rows",    vec![Int, Text]);
     m.insert("tcp_listen",        vec![Int]);

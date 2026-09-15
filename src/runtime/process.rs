@@ -109,6 +109,27 @@ pub fn argv_or(args_val: Value) -> Value {
     }
 }
 
+#[track_caller]
+pub fn env_get(name: std::sync::Arc<str>) -> Value {
+    match std::env::var(name.as_ref()) {
+        Ok(v) => Value::Str(intern_str(&v)),
+        Err(e) => panic!("env_get({}): {}", name, e),
+    }
+}
+
+#[track_caller]
+pub fn env_has(name: std::sync::Arc<str>) -> Value {
+    Value::Bool(std::env::var(name.as_ref()).is_ok())
+}
+
+#[track_caller]
+pub fn env_get_or(name: std::sync::Arc<str>, fallback: std::sync::Arc<str>) -> Value {
+    match std::env::var(name.as_ref()) {
+        Ok(v) => Value::Str(intern_str(&v)),
+        Err(_) => Value::Str(fallback),
+    }
+}
+
 // ── AXVERITY_SHIM_BRIDGE_PRIMS_V1 ────────────────────────────────────────────
 //
 // gap:axverity-shim-admit-needs-process-primitive.

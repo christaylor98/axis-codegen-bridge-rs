@@ -40,11 +40,35 @@ pub fn io_eprint(val: Value) -> Value {
 }
 
 #[track_caller]
+pub fn io_eprintln(val: Value) -> Value {
+    match &val {
+        Value::Str(h) => eprintln!("{}", get_str(h)),
+        Value::Int(n) => eprintln!("{}", n),
+        Value::Bool(b) => eprintln!("{}", b),
+        Value::Unit    => eprintln!("()"),
+        other          => eprintln!("{}", other),
+    }
+    std::io::stderr().flush().ok();
+    Value::Unit
+}
+
+#[track_caller]
 pub fn io_read_line(_: Value) -> Value {
     let stdin = std::io::stdin();
     let mut line = String::new();
     stdin.lock().read_line(&mut line).unwrap_or(0);
     Value::Str(intern_str(&line))
+}
+
+#[track_caller]
+pub fn io_read_all(_: Value) -> Value {
+    use std::io::Read;
+    let mut buf = Vec::new();
+    std::io::stdin().lock().read_to_end(&mut buf)
+        .unwrap_or_else(|e| panic!("io_read_all: {}", e));
+    let text = String::from_utf8(buf)
+        .unwrap_or_else(|e| panic!("io_read_all: invalid UTF-8: {}", e));
+    Value::Str(intern_str(&text))
 }
 
 #[track_caller]
@@ -54,6 +78,14 @@ pub fn fs_read_text(path: std::sync::Arc<str>) -> Value {
         Ok(content) => Value::Str(intern_str(&content)),
         Err(e) => panic!("fs_read_text({}): {}", path_str, e),
     }
+}
+
+#[track_caller]
+pub fn fs_read_lines(path: std::sync::Arc<str>) -> Value {
+    let path_str = path.as_ref();
+    let content = std::fs::read_to_string(path_str)
+        .unwrap_or_else(|e| panic!("fs_read_lines({}): {}", path_str, e));
+    Value::List(content.lines().map(|l| Value::Str(intern_str(l))).collect())
 }
 
 /// `fs_read_last_line(path: Text) -> Text` — AXVERITY_INSERT_PATH_FASTPATH
@@ -128,6 +160,19 @@ fn append_durable(path: &str, content: &[u8]) -> std::io::Result<()> {
 #[track_caller]
 pub fn fs_file_exists(path: std::sync::Arc<str>) -> Value {
     Value::Bool(std::path::Path::new(path.as_ref()).exists())
+}
+
+#[track_caller]
+pub fn fs_is_dir(path: std::sync::Arc<str>) -> Value {
+    Value::Bool(std::path::Path::new(path.as_ref()).is_dir())
+}
+
+#[track_caller]
+pub fn fs_remove_file(path: std::sync::Arc<str>) -> Value {
+    if let Err(e) = std::fs::remove_file(path.as_ref()) {
+        panic!("fs_remove_file({}): {}", path, e);
+    }
+    Value::Unit
 }
 
 #[track_caller]
