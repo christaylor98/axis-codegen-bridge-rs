@@ -73,6 +73,23 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("float_gt",  "axis_codegen_bridge::runtime::arith::float_gt");
     m.insert("float_gte", "axis_codegen_bridge::runtime::arith::float_gte");
     m.insert("float_eq", "axis_codegen_bridge::runtime::arith::float_eq");
+    m.insert("float_add",     "axis_codegen_bridge::runtime::arith::float_add");
+    m.insert("float_sub",     "axis_codegen_bridge::runtime::arith::float_sub");
+    m.insert("float_mul",     "axis_codegen_bridge::runtime::arith::float_mul");
+    m.insert("float_div",     "axis_codegen_bridge::runtime::arith::float_div");
+    m.insert("float_neg",     "axis_codegen_bridge::runtime::arith::float_neg");
+    m.insert("float_abs",     "axis_codegen_bridge::runtime::arith::float_abs");
+    m.insert("float_sqrt",    "axis_codegen_bridge::runtime::arith::float_sqrt");
+    m.insert("float_pow",     "axis_codegen_bridge::runtime::arith::float_pow");
+    m.insert("float_floor",   "axis_codegen_bridge::runtime::arith::float_floor");
+    m.insert("float_ceil",    "axis_codegen_bridge::runtime::arith::float_ceil");
+    m.insert("float_round",   "axis_codegen_bridge::runtime::arith::float_round");
+    m.insert("float_min",     "axis_codegen_bridge::runtime::arith::float_min");
+    m.insert("float_max",     "axis_codegen_bridge::runtime::arith::float_max");
+    m.insert("float_is_nan",  "axis_codegen_bridge::runtime::arith::float_is_nan");
+    m.insert("float_to_int",  "axis_codegen_bridge::runtime::arith::float_to_int");
+    m.insert("float_to_text", "axis_codegen_bridge::runtime::arith::float_to_text");
+    m.insert("str_to_float",  "axis_codegen_bridge::runtime::arith::str_to_float");
     m.insert("value_eq", "axis_codegen_bridge::runtime::arith::value_eq");
 
     // Unit / sequence helpers (§5b bootstrap functions)
@@ -1108,6 +1125,12 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     // here. str_to_dec's arg is Text, not Dec, so it can use the native
     // convention even though its result is a Dec.
     m.insert("str_to_dec",        vec![Text]);
+    // str_to_float mirrors str_to_dec: its arg is Text (native-eligible),
+    // its result Float — same boxed-vs-native split as str_to_dec/Dec.
+    // The other 16 float_* fns all take Float-typed args, and there is no
+    // NativeArgType::Float variant, so they stay off this table (boxed
+    // Value::Tuple convention, same as dec_add/sub/mul/neg/abs/min/max/round/to_int).
+    m.insert("str_to_float",      vec![Text]);
     m.insert("seq",               vec![Value, Value]);
     m.insert("bool_and",          vec![Value, Value]);
     m.insert("bool_or",           vec![Value, Value]);

@@ -378,6 +378,187 @@ pub fn str_to_dec(s: std::sync::Arc<str>) -> Value {
     Value::Dec(s.parse().unwrap_or_else(|_| panic!("str_to_dec: invalid decimal text {:?}", s)))
 }
 
+// ── float_*: IEEE-754 f64 arithmetic (stdlib B03-A) ───────────────────────
+// Boxed Value::Tuple convention throughout, matching dec_* above — there is
+// no NativeArgType::Float variant (rust_05.rs), so a Float-typed arg cannot
+// use the native-params calling convention.
+//
+// float_div is IEEE all the way: division by zero yields inf/NaN, never a
+// panic, since a Float already carries its own error values. float_to_int
+// is the one fn in this family that panics — truncating a NaN, an infinity,
+// or a magnitude out of i64 range has no sensible Int result.
+
+#[track_caller]
+pub fn float_add(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Float(x), Value::Float(y)) => Value::Float(x + y),
+            _ => panic!("float_add: expected two Float values"),
+        },
+        _ => panic!("float_add: expected Tuple(Float, Float)"),
+    }
+}
+
+#[track_caller]
+pub fn float_sub(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Float(x), Value::Float(y)) => Value::Float(x - y),
+            _ => panic!("float_sub: expected two Float values"),
+        },
+        _ => panic!("float_sub: expected Tuple(Float, Float)"),
+    }
+}
+
+#[track_caller]
+pub fn float_mul(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Float(x), Value::Float(y)) => Value::Float(x * y),
+            _ => panic!("float_mul: expected two Float values"),
+        },
+        _ => panic!("float_mul: expected Tuple(Float, Float)"),
+    }
+}
+
+#[track_caller]
+pub fn float_div(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Float(x), Value::Float(y)) => Value::Float(x / y),
+            _ => panic!("float_div: expected two Float values"),
+        },
+        _ => panic!("float_div: expected Tuple(Float, Float)"),
+    }
+}
+
+#[track_caller]
+pub fn float_neg(f: Value) -> Value {
+    match f {
+        Value::Float(x) => Value::Float(-x),
+        _ => panic!("float_neg: expected Float"),
+    }
+}
+
+#[track_caller]
+pub fn float_abs(f: Value) -> Value {
+    match f {
+        Value::Float(x) => Value::Float(x.abs()),
+        _ => panic!("float_abs: expected Float"),
+    }
+}
+
+#[track_caller]
+pub fn float_sqrt(f: Value) -> Value {
+    match f {
+        Value::Float(x) => Value::Float(x.sqrt()),
+        _ => panic!("float_sqrt: expected Float"),
+    }
+}
+
+#[track_caller]
+pub fn float_pow(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Float(x), Value::Float(y)) => Value::Float(x.powf(*y)),
+            _ => panic!("float_pow: expected two Float values"),
+        },
+        _ => panic!("float_pow: expected Tuple(Float, Float)"),
+    }
+}
+
+#[track_caller]
+pub fn float_floor(f: Value) -> Value {
+    match f {
+        Value::Float(x) => Value::Float(x.floor()),
+        _ => panic!("float_floor: expected Float"),
+    }
+}
+
+#[track_caller]
+pub fn float_ceil(f: Value) -> Value {
+    match f {
+        Value::Float(x) => Value::Float(x.ceil()),
+        _ => panic!("float_ceil: expected Float"),
+    }
+}
+
+/// float_round(Float) -> Float. Round half away from zero — `f64::round`'s
+/// native tie-breaking rule already matches this, so no extra logic is
+/// needed.
+#[track_caller]
+pub fn float_round(f: Value) -> Value {
+    match f {
+        Value::Float(x) => Value::Float(x.round()),
+        _ => panic!("float_round: expected Float"),
+    }
+}
+
+#[track_caller]
+pub fn float_min(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Float(x), Value::Float(y)) => Value::Float(x.min(*y)),
+            _ => panic!("float_min: expected two Float values"),
+        },
+        _ => panic!("float_min: expected Tuple(Float, Float)"),
+    }
+}
+
+#[track_caller]
+pub fn float_max(args: Value) -> Value {
+    match args {
+        Value::Tuple(ref es) if es.len() >= 2 => match (&es[0], &es[1]) {
+            (Value::Float(x), Value::Float(y)) => Value::Float(x.max(*y)),
+            _ => panic!("float_max: expected two Float values"),
+        },
+        _ => panic!("float_max: expected Tuple(Float, Float)"),
+    }
+}
+
+#[track_caller]
+pub fn float_is_nan(f: Value) -> Value {
+    match f {
+        Value::Float(x) => Value::Bool(x.is_nan()),
+        _ => panic!("float_is_nan: expected Float"),
+    }
+}
+
+/// float_to_int(Float) -> Int. Truncate toward zero. Panics on NaN, either
+/// infinity, or a magnitude out of i64 range.
+#[track_caller]
+pub fn float_to_int(f: Value) -> Value {
+    match f {
+        Value::Float(x) => {
+            if !x.is_finite() {
+                panic!("float_to_int: {} is not finite", x)
+            }
+            let t = x.trunc();
+            if t < i64::MIN as f64 || t > i64::MAX as f64 {
+                panic!("float_to_int: {} out of i64 range", x)
+            }
+            Value::Int(t as i64)
+        }
+        _ => panic!("float_to_int: expected Float"),
+    }
+}
+
+/// float_to_text(Float) -> Text. Rust's `Display` for f64 (shortest
+/// round-trip representation) — the Float-typed counterpart of
+/// dec_to_text.
+#[track_caller]
+pub fn float_to_text(f: Value) -> Value {
+    match f {
+        Value::Float(x) => Value::Str(super::value::intern_str(&x.to_string())),
+        _ => panic!("float_to_text: expected Float"),
+    }
+}
+
+#[track_caller]
+pub fn str_to_float(s: std::sync::Arc<str>) -> Value {
+    Value::Float(s.parse().unwrap_or_else(|_| panic!("str_to_float: invalid float text {:?}", s)))
+}
+
 /// float_eq(Float, Float) -> Bool. Typed IEEE-754 f64 equality — the Float-typed
 /// counterpart of int_eq. Uses the standard `==`, so NaN != NaN and +0.0 == -0.0,
 /// identical to how value_eq already compares Value::Float. Exact bit-equality is
