@@ -141,6 +141,20 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("str_between",     "axis_codegen_bridge::runtime::str_ops::str_between");
     m.insert("chr",             "axis_codegen_bridge::runtime::str_ops::chr");
 
+    // stdlib: text (B04-A) — new mint, kind leaf.
+    m.insert("str_is_empty",          "axis_codegen_bridge::runtime::str_ops::str_is_empty");
+    m.insert("str_trim_start",        "axis_codegen_bridge::runtime::str_ops::str_trim_start");
+    m.insert("str_trim_end",          "axis_codegen_bridge::runtime::str_ops::str_trim_end");
+    m.insert("str_lines",             "axis_codegen_bridge::runtime::str_ops::str_lines");
+    m.insert("str_chars",             "axis_codegen_bridge::runtime::str_ops::str_chars");
+    m.insert("str_split_whitespace",  "axis_codegen_bridge::runtime::str_ops::str_split_whitespace");
+    m.insert("str_reverse",           "axis_codegen_bridge::runtime::str_ops::str_reverse");
+    m.insert("str_last_index_of",     "axis_codegen_bridge::runtime::str_ops::str_last_index_of");
+    m.insert("str_count",             "axis_codegen_bridge::runtime::str_ops::str_count");
+    m.insert("str_is_digits",         "axis_codegen_bridge::runtime::str_ops::str_is_digits");
+    m.insert("str_is_alpha",          "axis_codegen_bridge::runtime::str_ops::str_is_alpha");
+    m.insert("str_is_space",          "axis_codegen_bridge::runtime::str_ops::str_is_space");
+
     // List
     m.insert("list_nil",      "axis_codegen_bridge::runtime::list::list_nil");
     m.insert("list_cons",     "axis_codegen_bridge::runtime::list::list_cons");
@@ -1088,6 +1102,18 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("str_to_lower",      vec![Text]);
     m.insert("str_pad_left",      vec![Text, Int, Text]);
     m.insert("str_pad_right",     vec![Text, Int, Text]);
+    m.insert("str_is_empty",         vec![Text]);
+    m.insert("str_trim_start",       vec![Text]);
+    m.insert("str_trim_end",         vec![Text]);
+    m.insert("str_lines",            vec![Text]);
+    m.insert("str_chars",            vec![Text]);
+    m.insert("str_split_whitespace", vec![Text]);
+    m.insert("str_reverse",          vec![Text]);
+    m.insert("str_last_index_of",    vec![Text, Text]);
+    m.insert("str_count",            vec![Text, Text]);
+    m.insert("str_is_digits",        vec![Text]);
+    m.insert("str_is_alpha",         vec![Text]);
+    m.insert("str_is_space",         vec![Text]);
     m.insert("list_cons",         vec![Value, Value]);
     m.insert("list_get_at",       vec![Value, Int]);
     m.insert("list_concat",       vec![Value, Value]);

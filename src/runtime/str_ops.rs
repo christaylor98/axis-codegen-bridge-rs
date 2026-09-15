@@ -287,3 +287,88 @@ pub fn str_pad_right(s: std::sync::Arc<str>, width: i64, pad: std::sync::Arc<str
     }
     Value::Str(intern_str(&format!("{}{}", s_str, suffix)))
 }
+
+#[track_caller]
+pub fn str_is_empty(s: std::sync::Arc<str>) -> Value {
+    Value::Bool(get_str(&s).is_empty())
+}
+
+#[track_caller]
+pub fn str_trim_start(s: std::sync::Arc<str>) -> Value {
+    Value::Str(intern_str(get_str(&s).trim_start()))
+}
+
+#[track_caller]
+pub fn str_trim_end(s: std::sync::Arc<str>) -> Value {
+    Value::Str(intern_str(get_str(&s).trim_end()))
+}
+
+#[track_caller]
+pub fn str_lines(s: std::sync::Arc<str>) -> Value {
+    let parts: Vec<Value> = get_str(&s).lines()
+        .map(|line| Value::Str(intern_str(line)))
+        .collect();
+    Value::List(parts)
+}
+
+#[track_caller]
+pub fn str_chars(s: std::sync::Arc<str>) -> Value {
+    let parts: Vec<Value> = get_str(&s).chars()
+        .map(|c| Value::Str(intern_str(&c.to_string())))
+        .collect();
+    Value::List(parts)
+}
+
+#[track_caller]
+pub fn str_split_whitespace(s: std::sync::Arc<str>) -> Value {
+    let parts: Vec<Value> = get_str(&s).split_whitespace()
+        .map(|word| Value::Str(intern_str(word)))
+        .collect();
+    Value::List(parts)
+}
+
+#[track_caller]
+pub fn str_reverse(s: std::sync::Arc<str>) -> Value {
+    let reversed: String = get_str(&s).chars().rev().collect();
+    Value::Str(intern_str(&reversed))
+}
+
+/// Returns the char-index of the LAST occurrence of needle in haystack, or
+/// -1 if not found. Mirrors str_index_of's not-found convention exactly.
+#[track_caller]
+pub fn str_last_index_of(hay: std::sync::Arc<str>, need: std::sync::Arc<str>) -> Value {
+    let hay    = get_str(&hay);
+    let needle = get_str(&need);
+    let idx = hay.rfind(needle.as_str())
+        .map(|byte_pos| hay[..byte_pos].chars().count() as i64)
+        .unwrap_or(-1);
+    Value::Int(idx)
+}
+
+#[track_caller]
+pub fn str_count(hay: std::sync::Arc<str>, need: std::sync::Arc<str>) -> Value {
+    let hay    = get_str(&hay);
+    let needle = get_str(&need);
+    if needle.is_empty() {
+        panic!("str_count: needle must not be empty");
+    }
+    Value::Int(hay.matches(needle.as_str()).count() as i64)
+}
+
+#[track_caller]
+pub fn str_is_digits(s: std::sync::Arc<str>) -> Value {
+    let s = get_str(&s);
+    Value::Bool(!s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
+}
+
+#[track_caller]
+pub fn str_is_alpha(s: std::sync::Arc<str>) -> Value {
+    let s = get_str(&s);
+    Value::Bool(!s.is_empty() && s.chars().all(|c| c.is_alphabetic()))
+}
+
+#[track_caller]
+pub fn str_is_space(s: std::sync::Arc<str>) -> Value {
+    let s = get_str(&s);
+    Value::Bool(!s.is_empty() && s.chars().all(|c| c.is_whitespace()))
+}
