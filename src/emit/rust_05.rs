@@ -172,6 +172,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("list_concat",   "axis_codegen_bridge::runtime::list::list_concat");
     m.insert("list_reverse",  "axis_codegen_bridge::runtime::list::list_reverse");
     m.insert("list_head",     "axis_codegen_bridge::runtime::list::list_head");
+    m.insert("list_last",     "axis_codegen_bridge::runtime::list::list_last");
     m.insert("list_tail",     "axis_codegen_bridge::runtime::list::list_tail");
     m.insert("list_is_empty", "axis_codegen_bridge::runtime::list::list_is_empty");
     m.insert("text_list_is_empty", "axis_codegen_bridge::runtime::list::list_is_empty");
@@ -687,6 +688,30 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("bool_list_map_int",                 "axis_codegen_bridge::runtime::iter::map");
     m.insert("bool_list_map_text",                "axis_codegen_bridge::runtime::iter::map");
     m.insert("bool_list_map_bool",                "axis_codegen_bridge::runtime::iter::map");
+    m.insert("int_list_get",                      "axis_codegen_bridge::runtime::list::list_get");
+    m.insert("text_list_get",                     "axis_codegen_bridge::runtime::list::list_get");
+    m.insert("bool_list_get",                     "axis_codegen_bridge::runtime::list::list_get");
+    m.insert("int_list_last",                     "axis_codegen_bridge::runtime::list::list_last");
+    m.insert("text_list_last",                    "axis_codegen_bridge::runtime::list::list_last");
+    m.insert("bool_list_last",                    "axis_codegen_bridge::runtime::list::list_last");
+    m.insert("int_list_append",                   "axis_codegen_bridge::runtime::list::list_append");
+    m.insert("text_list_append",                  "axis_codegen_bridge::runtime::list::list_append");
+    m.insert("bool_list_append",                  "axis_codegen_bridge::runtime::list::list_append");
+    m.insert("int_list_concat",                   "axis_codegen_bridge::runtime::list::list_concat");
+    m.insert("text_list_concat",                  "axis_codegen_bridge::runtime::list::list_concat");
+    m.insert("bool_list_concat",                  "axis_codegen_bridge::runtime::list::list_concat");
+    m.insert("int_list_reverse",                  "axis_codegen_bridge::runtime::list::list_reverse");
+    m.insert("text_list_reverse",                 "axis_codegen_bridge::runtime::list::list_reverse");
+    m.insert("bool_list_reverse",                 "axis_codegen_bridge::runtime::list::list_reverse");
+    m.insert("int_list_take",                     "axis_codegen_bridge::runtime::iter::take");
+    m.insert("text_list_take",                    "axis_codegen_bridge::runtime::iter::take");
+    m.insert("bool_list_take",                    "axis_codegen_bridge::runtime::iter::take");
+    m.insert("int_list_drop",                     "axis_codegen_bridge::runtime::iter::drop");
+    m.insert("text_list_drop",                    "axis_codegen_bridge::runtime::iter::drop");
+    m.insert("bool_list_drop",                    "axis_codegen_bridge::runtime::iter::drop");
+    m.insert("int_list_slice",                    "axis_codegen_bridge::runtime::iter::slice");
+    m.insert("text_list_slice",                   "axis_codegen_bridge::runtime::iter::slice");
+    m.insert("bool_list_slice",                   "axis_codegen_bridge::runtime::iter::slice");
     m.insert("value_list_to_int_list",            "axis_codegen_bridge::runtime::list::value_list_to_int_list");
     m.insert("value_list_to_text_list",           "axis_codegen_bridge::runtime::list::value_list_to_text_list");
     m.insert("value_list_to_bool_list",           "axis_codegen_bridge::runtime::list::value_list_to_bool_list");
@@ -1354,6 +1379,15 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("int_list_cons",           vec![Value, Value]);
     m.insert("text_list_cons",          vec![Value, Value]);
     m.insert("bool_list_cons",          vec![Value, Value]);
+    m.insert("int_list_get",            vec![Value, Int]);
+    m.insert("text_list_get",           vec![Value, Int]);
+    m.insert("bool_list_get",           vec![Value, Int]);
+    m.insert("int_list_append",         vec![Value, Value]);
+    m.insert("text_list_append",        vec![Value, Value]);
+    m.insert("bool_list_append",        vec![Value, Value]);
+    m.insert("int_list_concat",         vec![Value, Value]);
+    m.insert("text_list_concat",        vec![Value, Value]);
+    m.insert("bool_list_concat",        vec![Value, Value]);
     // ─── END GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / native_call_fn_arg_types ───
     m
 }

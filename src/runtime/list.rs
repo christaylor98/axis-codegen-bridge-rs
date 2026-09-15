@@ -191,6 +191,15 @@ pub fn list_head(list: Value) -> Value {
 }
 
 #[track_caller]
+pub fn list_last(list: Value) -> Value {
+    match list {
+        Value::List(es) if !es.is_empty() => es[es.len() - 1].clone(),
+        Value::List(_) => panic!("list_last: called on empty list"),
+        _ => panic!("list_last: expected List"),
+    }
+}
+
+#[track_caller]
 pub fn list_tail(list: Value) -> Value {
     match list {
         Value::List(es) if !es.is_empty() => Value::List(es[1..].to_vec()),
