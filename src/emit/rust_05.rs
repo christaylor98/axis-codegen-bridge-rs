@@ -178,6 +178,12 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("value_1",    "axis_codegen_bridge::runtime::tuple::value_1");
     m.insert("value_2",    "axis_codegen_bridge::runtime::tuple::value_2");
     m.insert("list_make",  "axis_codegen_bridge::runtime::list::list_make");
+    // handle_list_make — the SAME runtime as list_make (build a list from the
+    // variadic args). It exists only so the result can be declared `HandleList`
+    // rather than `ValueList`: those two hash differently (structural type
+    // identity), so list_make cannot produce a value `join` will accept. Same
+    // declaration-not-implementation pattern as int_to_singleton vs list_of_1.
+    m.insert("handle_list_make", "axis_codegen_bridge::runtime::list::list_make");
 
     // M1 iteration / list-builder primitives (BRIDGE_FOREIGN_FN_FNREF_M1).
     // `foreach` and `loop_count` use the native multi-arg Rust calling
@@ -271,6 +277,13 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("event_subscribe", "axis_codegen_bridge::runtime::channels::event_subscribe");
     m.insert("channel_send",    "axis_codegen_bridge::runtime::channels::channel_send");
     m.insert("wait",            "axis_codegen_bridge::runtime::channels::wait");
+
+    // Task spawn/join (tasks.rs). Distinct from `wait` above: `wait` is a
+    // channel message pump with its own subscribe lifecycle; `spawn`/`join`
+    // run one named callee and return that call's result. `spawn` carries a
+    // Fn-typed callee slot — see `fn_arg_kinds()`.
+    m.insert("spawn",           "axis_codegen_bridge::runtime::tasks::spawn");
+    m.insert("join",            "axis_codegen_bridge::runtime::tasks::join");
 
     // Value coercion family (BRIDGE_VALUE_COERCION_V1 — coerce.rs).
     // Six converters + two tag-dispatching HOFs. Dispatchers carry three FnRef
@@ -938,6 +951,10 @@ fn fn_arg_kinds() -> HashMap<&'static str, Vec<ArgKind>> {
     // Async: `wait` takes its handler in a single Fn callee slot. The handler is
     // invoked synchronously within wait's own frame (CLOSURE_RULE_HARD).
     m.insert("wait", vec![FnRef]);
+    // Tasks: `spawn` takes its callee in slot 0 and the callee's argument in
+    // slot 1. `join` is NOT listed — it takes a ValueList of Int handles, which
+    // is ordinary Data, and listing it would wrongly demand a Fn-typed pool ref.
+    m.insert("spawn", vec![FnRef, Data]);
     // ─── BEGIN GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / fn_arg_kinds ───
     // Monomorphic list vocabulary. Most rows alias an ALREADY-EXISTING
     // element-agnostic Rust fn — declaration, not implementation. The
