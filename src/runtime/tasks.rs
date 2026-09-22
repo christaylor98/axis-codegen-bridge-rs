@@ -35,8 +35,10 @@
 //!
 //! A HANDLE CARRIES ITS OWN RESULT. The registry declares exactly two types:
 //!
-//!     type Handle     = product (Int, Value)   // (handleId, result)
-//!     type HandleList = list Handle
+//! ```text
+//! type Handle     = product (Int, Value)   // (handleId, result)
+//! type HandleList = list Handle
+//! ```
 //!
 //! `spawn` returns a `Handle` whose result slot is `Unit`; `join` returns the
 //! same handles with their slots filled. So the signature is symmetric —

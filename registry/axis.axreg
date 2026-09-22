@@ -6,7 +6,17 @@ type Text  = prim text
 type Bool  = prim bool
 type Dec   = prim dec
 type Float = prim float
-type Value = sum [ AsUnit(Unit) | AsBool(Bool) | AsInt(Int) | AsText(Text) ]
+type Bytes = prim bytes
+// Value: the sum over the runtime variants this grammar can express. The arms
+// are what makes an implicit widening legal — `type_admits` accepts an arg of
+// type T into an `in (Value)` slot iff some arm has exactly one payload and it
+// is T — so a missing arm is a REJECTED PROGRAM, not a cosmetic omission.
+// AsDec/AsFloat/AsBytes were missing; Dec, Float and Bytes args were rejected.
+// Tuple, List and Ctor are recursive (payload is Value) and CANNOT be declared:
+// this grammar has no recursive types and the loader rejects the cycle.
+// `tests/registry_value_arms.rs` is the guard tying these arms to
+// `runtime::Value`; keep the three declarations below in step.
+type Value = sum [ AsUnit(Unit) | AsBool(Bool) | AsInt(Int) | AsText(Text) | AsDec(Dec) | AsFloat(Float) | AsBytes(Bytes) ]
 type TextList = list Text
 
 // ── Stdlib (AI2-written) ──────────────────────────────────────────────────────
