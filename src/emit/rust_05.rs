@@ -233,6 +233,11 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("result_is_err",     "axis_codegen_bridge::runtime::result::result_is_err");
     m.insert("result_unwrap",     "axis_codegen_bridge::runtime::result::result_unwrap");
     m.insert("result_unwrap_err", "axis_codegen_bridge::runtime::result::result_unwrap_err");
+    // Higher-order: callback in a Fn slot (see fn_arg_kinds below).
+    m.insert("result_map",        "axis_codegen_bridge::runtime::result::result_map");
+    m.insert("result_and_then",   "axis_codegen_bridge::runtime::result::result_and_then");
+    m.insert("result_or_else",    "axis_codegen_bridge::runtime::result::result_or_else");
+    m.insert("fail",              "axis_codegen_bridge::runtime::fail::fail");
 
     // Equality
     m.insert("__eq__", "axis_codegen_bridge::runtime::arith::value_eq");
@@ -950,6 +955,10 @@ fn fn_arg_kinds() -> HashMap<&'static str, Vec<ArgKind>> {
     m.insert("loop_count", vec![Data, Data, FnRef]);
     m.insert("loop_while", vec![Data, FnRef, FnRef, Data]);
     m.insert("fold",       vec![Data, Data, FnRef]);
+    // Result combinators: the Result in slot 0, the handler in slot 1.
+    m.insert("result_map",      vec![Data, FnRef]);
+    m.insert("result_and_then", vec![Data, FnRef]);
+    m.insert("result_or_else",  vec![Data, FnRef]);
     // Value-coercion dispatchers — runtime tag dispatch over three FnRef arms
     // in positional Int/Dec/Float order (BRIDGE_VALUE_COERCION_V1).
     m.insert("bridge_to_dec",   vec![Data, FnRef, FnRef, FnRef]);
@@ -1089,6 +1098,7 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     // remainder/bool_ops.rs/hash.rs, bytes_codec.rs/bytes_io.rs/process.rs/
     // channels.rs remainder.
     m.insert("str_len",           vec![Text]);
+    m.insert("fail",              vec![Text]);
     m.insert("str_char_at",       vec![Text, Int]);
     m.insert("str_char",          vec![Text, Int]);
     m.insert("str_char_code",     vec![Text, Int]);

@@ -95,6 +95,93 @@ pub fn result_unwrap_err(r: Value) -> Value {
     }
 }
 
+// ── Combinators (native multi-arg, Fn-position callback) ────────────────────
+//
+// M1 has no `?`. Without something here, a fallible pipeline is a branch
+// ladder: every nested call needs its own `if result_is_ok(..)`, and in
+// practice callers write `result_unwrap(..)` at each node instead — which
+// panics, putting back exactly what the Result was for. That is not a
+// prediction; `IS_REMOVE_RESULT_TYPES_v0.1.md` Part 5 records it happening to
+// the old typed Results, where every call site was `result_text_unwrap(f(x))`.
+//
+// These chain instead, so a pipeline reads as a chain. They are the nearest
+// thing to `?` that needs no grammar change — ordinary bridge fns taking a
+// callback in a `Fn` slot, like `foreach` and `loop_count`.
+//
+// Native multi-arg Rust signature: the callee is a bare fn path the emitter
+// resolves from a `Fn`-typed pool entry at translation time.
+//
+// EFFECT: these are declared `pure` in the registry and that is correct ONLY
+// because the lowering builder now colours a higher-order call by its callback
+// (core_ir_05.rs `push_node`). A `result_map` over an effectful callback is
+// not shareable; over a pure one it is. Declaring them `fullIo` instead would
+// be the old blunt fix and would cost CSE on every pure pipeline.
+
+/// `result_map(r, f)` — `Ok(v)` becomes `Ok(f(v))`; `Err` passes through
+/// untouched. The failure reason survives the whole chain without any call
+/// site naming it.
+#[track_caller]
+pub fn result_map(r: Value, f: fn(Value) -> Value) -> Value {
+    match r {
+        Value::Ctor { tag, fields } if fields.len() == 1 => match get_tag_name(tag).as_str() {
+            "Ok" => result_ok(f(fields.into_iter().next().unwrap())),
+            "Err" => Value::Ctor { tag, fields },
+            _ => panic!("result_map: not a result value"),
+        },
+        other => panic!("result_map: not a result value: {:?}", other),
+    }
+}
+
+/// `result_and_then(r, f)` — `Ok(v)` becomes `f(v)`, which must itself be a
+/// Result; `Err` passes through. This is the chaining step: it composes two
+/// fallible operations without unwrapping between them.
+///
+/// `f`'s return is NOT re-wrapped, which is the whole difference from
+/// `result_map`: `f` here is itself fallible and says so. A callback that
+/// forgets to say so is a bug in the callback, and is rejected here rather
+/// than allowed to produce a doubly-wrapped or bare value that the next stage
+/// of the chain would misread.
+#[track_caller]
+pub fn result_and_then(r: Value, f: fn(Value) -> Value) -> Value {
+    match r {
+        Value::Ctor { tag, fields } if fields.len() == 1 => match get_tag_name(tag).as_str() {
+            "Ok" => {
+                let out = f(fields.into_iter().next().unwrap());
+                match &out {
+                    Value::Ctor { tag, fields }
+                        if matches!(get_tag_name(*tag).as_str(), "Ok" | "Err")
+                            && fields.len() == 1 => out,
+                    other => panic!(
+                        "result_and_then: callback must return a result value, got {:?}",
+                        other
+                    ),
+                }
+            }
+            "Err" => Value::Ctor { tag, fields },
+            _ => panic!("result_and_then: not a result value"),
+        },
+        other => panic!("result_and_then: not a result value: {:?}", other),
+    }
+}
+
+/// `result_or_else(r, f)` — `Ok(v)` yields `v`; `Err(e)` yields `f(e)`.
+///
+/// The end of a chain: it discharges the Result into a plain value by giving
+/// the caller somewhere to put the failure. This is the fn that makes the
+/// whole encoding worth having rather than a slower panic — the reason reaches
+/// a handler the caller wrote, in the language, without leaving the process.
+#[track_caller]
+pub fn result_or_else(r: Value, f: fn(Value) -> Value) -> Value {
+    match r {
+        Value::Ctor { tag, fields } if fields.len() == 1 => match get_tag_name(tag).as_str() {
+            "Ok" => fields.into_iter().next().unwrap(),
+            "Err" => f(fields.into_iter().next().unwrap()),
+            _ => panic!("result_or_else: not a result value"),
+        },
+        other => panic!("result_or_else: not a result value: {:?}", other),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,6 +244,79 @@ mod tests {
     #[should_panic(expected = "not a result value")]
     fn unwrap_on_a_non_result_panics() {
         result_unwrap(Value::Int(1));
+    }
+
+    // ── combinators ────────────────────────────────────────────────────────
+
+    fn double(v: Value) -> Value {
+        match v { Value::Int(n) => Value::Int(n * 2), o => o }
+    }
+    fn fallible_ok(v: Value) -> Value { result_ok(v) }
+    fn fallible_err(_: Value) -> Value { result_err(text("second stage failed")) }
+    fn bare(_: Value) -> Value { Value::Int(0) }
+    fn reason_len(e: Value) -> Value {
+        match e { Value::Str(s) => Value::Int(s.len() as i64), _ => Value::Int(-1) }
+    }
+
+    #[test]
+    fn map_transforms_ok_and_passes_err_through() {
+        assert_eq!(result_map(result_ok(Value::Int(4)), double), result_ok(Value::Int(8)));
+        let e = result_err(text("boom"));
+        assert_eq!(result_map(e.clone(), double), e);
+    }
+
+    /// The reason survives an arbitrarily long chain untouched, which is the
+    /// property that makes chaining worth anything.
+    #[test]
+    fn err_survives_a_chain_unchanged() {
+        let e = result_err(text("no such file: /nope"));
+        let out = result_and_then(result_map(e.clone(), double), fallible_ok);
+        assert_eq!(out, e);
+        assert_eq!(result_unwrap_err(out), text("no such file: /nope"));
+    }
+
+    #[test]
+    fn and_then_does_not_rewrap() {
+        // f already returns a Result; and_then must not produce Ok(Ok(..)).
+        assert_eq!(
+            result_and_then(result_ok(Value::Int(1)), fallible_ok),
+            result_ok(Value::Int(1))
+        );
+    }
+
+    /// A later stage can fail even though the earlier one succeeded, and its
+    /// reason is what comes out.
+    #[test]
+    fn and_then_can_introduce_a_failure() {
+        let out = result_and_then(result_ok(Value::Int(1)), fallible_err);
+        assert_eq!(result_is_err(out.clone()), Value::Bool(true));
+        assert_eq!(result_unwrap_err(out), text("second stage failed"));
+    }
+
+    #[test]
+    #[should_panic(expected = "callback must return a result value")]
+    fn and_then_rejects_a_callback_that_forgets_to_wrap() {
+        result_and_then(result_ok(Value::Int(1)), bare);
+    }
+
+    /// `or_else` is the discharge point: the failure reaches a handler the
+    /// caller wrote instead of killing the process.
+    #[test]
+    fn or_else_discharges_both_arms_to_a_plain_value() {
+        assert_eq!(result_or_else(result_ok(Value::Int(9)), reason_len), Value::Int(9));
+        assert_eq!(result_or_else(result_err(text("abcd")), reason_len), Value::Int(4));
+    }
+
+    /// The whole point, end to end: a failing pipeline produces a value the
+    /// caller chose, and never panics.
+    #[test]
+    fn a_failing_pipeline_is_handled_without_panicking() {
+        let start = result_err(text("open failed"));
+        let out = result_or_else(
+            result_and_then(result_map(start, double), fallible_ok),
+            reason_len,
+        );
+        assert_eq!(out, Value::Int(11)); // "open failed".len()
     }
 
     /// An Option is not a Result: `Some` is not `Ok`. Keeping them separate is

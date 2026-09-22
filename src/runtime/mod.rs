@@ -6,6 +6,7 @@ pub mod iter;
 pub mod tuple;
 pub mod option;
 pub mod result;
+pub mod fail;
 pub mod bool_ops;
 pub mod io;
 pub mod process;
