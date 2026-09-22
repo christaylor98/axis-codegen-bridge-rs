@@ -507,7 +507,18 @@ fn test_ep_panic_isolation() {
         .expect("bridge failed to run");
     assert!(status.success(), "panic-isolation build failed");
 
-    let output = Command::new(&exe_out).output().expect("failed to run exe");
+    // Cap the respawn budget. This entry panics on EVERY attempt by
+    // construction, so the driver walks its whole restart budget before
+    // reporting the worker down. The default is 100 (`_ax_restart_budget`,
+    // src/main.rs) with a 2s backoff cap, which is ~193s of sleeping per
+    // panicking entry — the two tests that build one were, between them, the
+    // bulk of this suite's wall time. Nothing here asserts on the budget
+    // number: the assertions are a non-zero exit and the PANIC/PASS lines,
+    // which a budget of 2 reaches by the same path, just sooner.
+    let output = Command::new(&exe_out)
+        .env("AXVERITY_ENTRY_RESTART_BUDGET", "2")
+        .output()
+        .expect("failed to run exe");
     // exit code must be non-zero (panicky thread failed)
     assert!(!output.status.success(), "expected non-zero exit due to panicky entry");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -657,7 +668,18 @@ fn test_ep_result_sink_mixed_verdicts() {
         .expect("bridge failed to run");
     assert!(status.success(), "result-sink build failed");
 
-    let output = Command::new(&exe_out).output().expect("failed to run exe");
+    // Cap the respawn budget. This entry panics on EVERY attempt by
+    // construction, so the driver walks its whole restart budget before
+    // reporting the worker down. The default is 100 (`_ax_restart_budget`,
+    // src/main.rs) with a 2s backoff cap, which is ~193s of sleeping per
+    // panicking entry — the two tests that build one were, between them, the
+    // bulk of this suite's wall time. Nothing here asserts on the budget
+    // number: the assertions are a non-zero exit and the PANIC/PASS lines,
+    // which a budget of 2 reaches by the same path, just sooner.
+    let output = Command::new(&exe_out)
+        .env("AXVERITY_ENTRY_RESTART_BUDGET", "2")
+        .output()
+        .expect("failed to run exe");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
