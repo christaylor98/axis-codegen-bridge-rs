@@ -67,6 +67,35 @@ Use `fs_file_exists(Text) -> Bool` for existence checks rather than probing with
 a read-and-catch pattern. The `ResultText` / `ResultUnit` / `ResultBytes` sum
 types no longer exist — never introduce a new fn that returns them.
 
+### Failure as data: `Option` and untyped `Result` (`result.rs`)
+
+The rule above forbids the Result **types**, not failure-as-data. Two
+encodings sit inside a plain `Value` return and are the supported way for a
+caller to handle a failure instead of dying on it:
+
+- **`Option`** (`option.rs`) — `option_some` / `option_none`, tested with
+  `option_is_some` → `Bool` → `if`, read with `option_unwrap`. Use it when the
+  caller needs only the FACT of failure. `int_div_checked` and `list_get_at`
+  already do.
+- **`Result`** (`result.rs`) — `result_ok` / `result_err`, tested with
+  `result_is_ok` / `result_is_err`, read with `result_unwrap` /
+  `result_unwrap_err`. Use it when the caller needs the REASON.
+  `result_unwrap` puts the `Err` payload in its panic message; `option_unwrap`
+  can only say "called on None".
+
+Both are a `Value::Ctor` — tags `Some`/`None` and `Ok`/`Err` — so no registry
+type is added and the declared return stays `Value`. That is also the cost:
+the verifier cannot tell `Result(Text)` from `Result(Int)`, the same gap
+`axAI-axlang-gen-working/gen-working.axreg` records for `Option`.
+`Ok` and `Err` are distinct tags from `Some`/`None`, so the two never alias.
+
+**Panic is still right when failure is a bug** — an out-of-range index, a type
+confusion, a violated pre-condition — because no caller could act on it and a
+wrong value would be hashed and committed. Reach for `Option`/`Result` where
+failure is an ordinary outcome of talking to the world. `tcp_read` already
+draws this line correctly on its own: peer-gone is reported as 0 bytes (EOF,
+data), while other I/O errors panic.
+
 `ValueList` is the homogeneous list-of-Value data type
 (`sha256([0x01, 0x03, value_type_hash])` per Core IR 0.5 — `PrimCode::Value=6`).
 It is **data-only**: every element is a `Value`.

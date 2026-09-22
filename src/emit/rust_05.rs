@@ -227,6 +227,12 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("option_is_none", "axis_codegen_bridge::runtime::option::option_is_none");
     m.insert("option_is_some", "axis_codegen_bridge::runtime::option::option_is_some");
     m.insert("option_unwrap",  "axis_codegen_bridge::runtime::option::option_unwrap");
+    m.insert("result_ok",         "axis_codegen_bridge::runtime::result::result_ok");
+    m.insert("result_err",        "axis_codegen_bridge::runtime::result::result_err");
+    m.insert("result_is_ok",      "axis_codegen_bridge::runtime::result::result_is_ok");
+    m.insert("result_is_err",     "axis_codegen_bridge::runtime::result::result_is_err");
+    m.insert("result_unwrap",     "axis_codegen_bridge::runtime::result::result_unwrap");
+    m.insert("result_unwrap_err", "axis_codegen_bridge::runtime::result::result_unwrap_err");
 
     // Equality
     m.insert("__eq__", "axis_codegen_bridge::runtime::arith::value_eq");

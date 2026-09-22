@@ -483,6 +483,12 @@ fn dispatch_table() -> &'static HashMap<&'static str, PrimFn> {
         m.insert("option_is_none",  super::option::option_is_none);
         m.insert("option_is_some",  super::option::option_is_some);
         m.insert("option_unwrap",   super::option::option_unwrap);
+        m.insert("result_ok",         super::result::result_ok);
+        m.insert("result_err",        super::result::result_err);
+        m.insert("result_is_ok",      super::result::result_is_ok);
+        m.insert("result_is_err",     super::result::result_is_err);
+        m.insert("result_unwrap",     super::result::result_unwrap);
+        m.insert("result_unwrap_err", super::result::result_unwrap_err);
 
         // IO
         m.insert("io_print",        super::io::io_print);
