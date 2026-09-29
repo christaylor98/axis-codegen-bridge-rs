@@ -57,6 +57,18 @@ own the rest. Examples:
   Panics on I/O error.
 - `tcp_write(Int, Bytes) -> Unit` — write all + flush. Panics on I/O error.
 - `tcp_close(Int) -> Unit` — drop the listener/stream. Panics on unknown handle.
+- `pty_open(Text, TextList, Int, Int) -> Int` — start a program (exact argv,
+  no shell) as session leader of a fresh pty sized rows x cols (0 x 0 = kernel
+  default); returns a handle, or -256 if it could not be started.
+- `pty_read(Int, Int) -> Bytes` — wait up to timeout_ms for output (≤64 KiB).
+  Empty = nothing yet OR child side closed; `pty_status` tells which.
+- `pty_write(Int, Bytes) -> Unit` — write all; child gone is a no-op.
+- `pty_resize(Int, Int, Int) -> Unit` — set the window (child gets SIGWINCH).
+- `pty_status(Int) -> Int` — non-blocking: proc_run's bands (exit code,
+  -signum) or -258 while still running.
+- `pty_close(Int) -> Int` — SIGHUP the session, SIGKILL after 1 s; returns the
+  final status. The pty fns (BRIDGE_PTY_V1, `pty.rs`) are generic `fullIo`
+  leaves, libc only; see IS_BRIDGE_PTY_PRIMITIVES_v0.1.md.
 
 The TCP socket fns (BRIDGE_TCP_SOCKET_V1, `net.rs`) are synchronous blocking
 `fullIo` leaves — they do NOT use the `channels.rs` async layer. `tcp_listen`

@@ -265,6 +265,15 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("tty_rows",     "axis_codegen_bridge::runtime::tty::tty_rows");
     m.insert("tty_cols",     "axis_codegen_bridge::runtime::tty::tty_cols");
 
+    // Pseudo-terminals (BRIDGE_PTY_V1 — runtime/pty.rs): drive any program
+    // under a real terminal. Generic; decisions stay in M1/AI3.
+    m.insert("pty_open",   "axis_codegen_bridge::runtime::pty::pty_open");
+    m.insert("pty_read",   "axis_codegen_bridge::runtime::pty::pty_read");
+    m.insert("pty_write",  "axis_codegen_bridge::runtime::pty::pty_write");
+    m.insert("pty_resize", "axis_codegen_bridge::runtime::pty::pty_resize");
+    m.insert("pty_status", "axis_codegen_bridge::runtime::pty::pty_status");
+    m.insert("pty_close",  "axis_codegen_bridge::runtime::pty::pty_close");
+
     // Read-only SQLite row access (AXSEM_W2_STORAGE_RETROFIT_V1 — sqlite_ro.rs).
     // ONE dump-producer fn; the module hosts no write/exec/DDL/DML surface.
     m.insert("sqlite_ro_tsv", "axis_codegen_bridge::runtime::sqlite_ro::sqlite_ro_tsv");
@@ -1211,6 +1220,12 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("tcp_read",          vec![Int]);
     m.insert("tcp_write",         vec![Int, Bytes]);
     m.insert("tcp_close",         vec![Int]);
+    m.insert("pty_open",          vec![Text, Value, Int, Int]);
+    m.insert("pty_read",          vec![Int, Int]);
+    m.insert("pty_write",         vec![Int, Bytes]);
+    m.insert("pty_resize",        vec![Int, Int, Int]);
+    m.insert("pty_status",        vec![Int]);
+    m.insert("pty_close",         vec![Int]);
     m.insert("tty_raw_on",        vec![Int]);
     m.insert("cursor_append",     vec![Int, Text]);
     m.insert("cursor_get",        vec![Int]);
