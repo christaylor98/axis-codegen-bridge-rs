@@ -11,11 +11,22 @@ fn format_bundle(path: &str, bundle: &CoreBundle) -> String {
     out.push_str(&format!("  version:       {}\n", bundle.version));
     out.push_str(&format!("  constant_pool: {} entries\n", bundle.constant_pool.len()));
     for (i, entry) in bundle.constant_pool.iter().enumerate() {
+        // FAULT_AS_UNKNOWN census/verifier prototype: show a printable payload (a Text literal) and a 32-byte
+        // payload (an Fn ref) so a checker can read the constants the IR compares against.
+        let text_of = |b: &[u8]| std::str::from_utf8(b).ok()
+            .filter(|t| !t.is_empty() && t.chars().all(|c| !c.is_control())).map(|t| t.to_string());
+        let shown = match text_of(&entry.payload).or_else(|| entry.payload.get(1..).and_then(text_of)) {
+            Some(t) => format!(" text={:?}", t),
+            _ if entry.payload.len() == 32 => format!(" ref={}", hash256_to_hex(&{
+                let mut a = [0u8; 32]; a.copy_from_slice(&entry.payload); a })),
+            _ => String::new(),
+        };
         out.push_str(&format!(
-            "    pool[{}]: def_hash={}… payload={} bytes\n",
+            "    pool[{}]: def_hash={}… payload={} bytes{}\n",
             i,
             &hash256_to_hex(&entry.def_hash)[..16],
-            entry.payload.len()
+            entry.payload.len(),
+            shown
         ));
     }
     out.push_str(&format!("  nodes:         {}\n", bundle.nodes.len()));
