@@ -39,6 +39,11 @@ thread_local! {
 static HOOK: Once = Once::new();
 static FAULTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+thread_local! {
+    /// The first fault of this entry, while it is undischarged (no treatment exists yet, so: for the entry's life).
+    static FAULTED: std::cell::RefCell<Option<Value>> = std::cell::RefCell::new(None);
+}
+
 fn abort_mode() -> bool {
     std::env::var("AX_FAULT_MODE").map(|m| m == "abort").unwrap_or(false)
 }
@@ -108,7 +113,15 @@ fn record(builtin: &str, message: &str, location: &str) {
 
 /// Every builtin call goes through here. `args` are the call's data arguments (before any native conversion).
 #[inline]
-pub fn guard<F: FnOnce() -> Value>(builtin: &str, args: &[&Value], call: F) -> Value {
+pub fn guard<F: FnOnce() -> Value>(builtin: &str, effectful: bool, args: &[&Value], call: F) -> Value {
+    // No effect after an undischarged fault: once this entry (thread) has faulted, an effectful builtin returns
+    // the first fault's Unknown instead of running. Pure builtins still compute (their Unknown args are sticky).
+    // Without this, unknown mode ran a write that abort mode would have prevented (effect-after-fault probe).
+    if effectful {
+        if let Some(first) = FAULTED.with(|c| c.borrow().clone()) {
+            return first;
+        }
+    }
     for a in args {
         if is_unknown(a) || is_err(a) {
             return (*a).clone(); // sticky: the builtin never sees it, the first cause's evidence is kept
@@ -134,7 +147,9 @@ pub fn guard<F: FnOnce() -> Value>(builtin: &str, args: &[&Value], call: F) -> V
             if FAULTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
                 unsafe { atexit(summary); }
             }
-            unknown("bridge_fault", builtin, &msg, &loc)
+            let u = unknown("bridge_fault", builtin, &msg, &loc);
+            FAULTED.with(|c| { c.borrow_mut().get_or_insert_with(|| u.clone()); });
+            u
         }
     }
 }

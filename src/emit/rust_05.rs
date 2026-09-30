@@ -1985,6 +1985,7 @@ fn render_scope(
     registry: &HashMap<Hash256, String>,
     name_to_path: &HashMap<&'static str, &'static str>,
     xbundle: &HashMap<Hash256, String>,
+    pure_det: &std::collections::HashSet<Hash256>,
 ) -> Result<String, String> {
     let mut out = String::new();
     let Some(indices) = groups.get(&key) else { return Ok(out) };
@@ -2008,11 +2009,11 @@ fn render_scope(
                 }
                 let then_body = render_scope(
                     Some((i as u32, Branch::Then)), groups, bundle, pool_kinds,
-                    arg_kind_table, native_call_table, builtin, registry, name_to_path, xbundle,
+                    arg_kind_table, native_call_table, builtin, registry, name_to_path, xbundle, pure_det,
                 )?;
                 let else_body = render_scope(
                     Some((i as u32, Branch::Else)), groups, bundle, pool_kinds,
-                    arg_kind_table, native_call_table, builtin, registry, name_to_path, xbundle,
+                    arg_kind_table, native_call_table, builtin, registry, name_to_path, xbundle, pure_det,
                 )?;
                 out.push_str(&format!(
                     // FAULT_AS_UNKNOWN: an Unknown condition chooses no branch; the if yields it (never a swallow).
@@ -2030,7 +2031,7 @@ fn render_scope(
             other => {
                 let expr = emit_node(
                     other, pool_kinds, arg_kind_table, native_call_table,
-                    builtin, registry, name_to_path, xbundle,
+                    builtin, registry, name_to_path, xbundle, pure_det,
                 )
                 .map_err(|e| format!("node[{}]: {}", i, e))?;
                 out.push_str(&format!("    let node_{}: Value = {};\n", i, expr));
@@ -2051,6 +2052,7 @@ fn emit_node(
     registry: &HashMap<Hash256, String>,
     name_to_path: &HashMap<&'static str, &'static str>,
     xbundle: &HashMap<Hash256, String>,
+    pure_det: &std::collections::HashSet<Hash256>,
 ) -> Result<String, String> {
     match node {
         Node::CCall { target_identity, args, target_name } => {
@@ -2190,8 +2192,10 @@ fn emit_node(
                 .filter(|(_, k)| matches!(k, ArgKind::Data))
                 .map(|(a, _)| format!("&{}", ref_expr(a)))
                 .collect();
-            Ok(format!("axis_codegen_bridge::runtime::fault::guard({:?}, &[{}], || {})",
-                       name, data_refs.join(", "), body))
+            // An effectful builtin (not declared pure + deterministic) does not run after this entry has faulted.
+            let effectful = !pure_det.contains(target_identity);
+            Ok(format!("axis_codegen_bridge::runtime::fault::guard({:?}, {}, &[{}], || {})",
+                       name, effectful, data_refs.join(", "), body))
         }
         Node::CIf { cond, then_, else_ } => {
             // cond / then / else are Data positions. A Fn-typed pool ref here
@@ -2655,6 +2659,7 @@ pub fn emit_rust_lib_from_bundle_with_dispatch(
         registry_identity_map,
         &name_to_path,
         xbundle_providers,
+        pure_det,
     )?);
 
     // Result: the bundle's own authoritative `result` ref (BUG2_RESULT_FIELD_V1)
