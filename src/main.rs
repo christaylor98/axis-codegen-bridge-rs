@@ -663,6 +663,9 @@ fn cmd_build(args: &[String]) {
         }
 
         s += "    let mut bad = false;\n";
+        // FAULT_AS_UNKNOWN: an entry whose result is Unknown or a declared Err is reported and fails the run --
+        // printing it as a value and exiting 0 would swallow it at the top level (found by test_ep_panic_isolation)
+        s += "    let (mut unknown, mut err) = (false, false);\n";
         s += "    for (name, _idx, h) in handles {\n";
         s += "        match h.join() {\n";
         // Unit-returning entries: read verdict from sink and print PASS.
@@ -673,12 +676,14 @@ fn cmd_build(args: &[String]) {
         s += "                drop(_sv);\n";
         s += "                println!(\"{}: PASS\", name);\n";
         s += "            }\n";
+        s += "            Ok(Ok(v)) if axis_codegen_bridge::runtime::fault::is_unknown(&v) => { eprintln!(\"{}: UNKNOWN {}\", name, axis_codegen_bridge::runtime::fault::describe(&v)); unknown = true; }\n";
+        s += "            Ok(Ok(v)) if axis_codegen_bridge::runtime::fault::is_err(&v) => { eprintln!(\"{}: ERR {}\", name, axis_codegen_bridge::runtime::fault::describe(&v)); err = true; }\n";
         s += "            Ok(Ok(v))  => { println!(\"{}: {}\", name, v); }\n";
         s += "            Ok(Err(_)) => { eprintln!(\"{}: PANIC\", name); bad = true; }\n";
         s += "            Err(_)     => { eprintln!(\"{}: thread join failed\", name); bad = true; }\n";
         s += "        }\n";
         s += "    }\n";
-        s += "    std::process::exit(if bad { 1 } else { 0 });\n";
+        s += "    std::process::exit(if bad { 1 } else if unknown { 3 } else if err { 2 } else { 0 });\n";
         s += "}\n";
         s
     };

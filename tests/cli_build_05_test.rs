@@ -514,8 +514,10 @@ fn test_ep_panic_isolation() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     // good entry still produces output
     assert!(stdout.contains("entry_a: 42"), "missing 'entry_a: 42' in stdout:\n{}", stdout);
-    // panicky entry reports PANIC in stderr
-    assert!(stderr.contains("panicky: PANIC"), "missing 'panicky: PANIC' in stderr:\n{}", stderr);
+    // FAULT_AS_UNKNOWN: the builtin panic is an Unknown result, reported with its cause; the run exits 3
+    assert!(stderr.contains("panicky: UNKNOWN") && stderr.contains("option_unwrap"),
+        "missing 'panicky: UNKNOWN ... option_unwrap' in stderr:\n{}", stderr);
+    assert_eq!(output.status.code(), Some(3), "an Unknown entry result exits 3");
 }
 
 // ── (16) UNRESOLVED_ENTRY: missing provider → hard halt ──────────────────────
@@ -667,8 +669,8 @@ fn test_ep_result_sink_mixed_verdicts() {
     assert!(stdout.contains("assert_pass: PASS"),
         "expected 'assert_pass: PASS' in stdout:\n{}", stdout);
     // assert_fail panics before writing verdict; harness prints "assert_fail: PANIC"
-    assert!(stderr.contains("assert_fail: PANIC"),
-        "expected 'assert_fail: PANIC' in stderr:\n{}", stderr);
+    assert!(stderr.contains("assert_fail: UNKNOWN"),
+        "expected 'assert_fail: UNKNOWN' in stderr:\n{}", stderr);
 }
 
 // ── (11) inspect subcommand on a 0.5 bundle ───────────────────────────────────
