@@ -22,13 +22,19 @@ pub fn value_make(args: Value) -> Value {
 
 /// Field accessors for an M1 compound Value (value_0/1/2). Read the Nth field
 /// of a Ctor; tolerate Tuple/List shapes defensively.
+/// FAULT_AS_UNKNOWN step 3: a missing field is not Unit -- it fails loudly (an Unknown under the guard).
+#[track_caller]
 fn value_field(v: Value, idx: usize) -> Value {
+    let n = match &v {
+        Value::Ctor { fields, .. } => fields.len(),
+        Value::Tuple(es) | Value::List(es) => es.len(),
+        other => panic!("value_{}: not a compound value: {:?}", idx, other),
+    };
     match v {
-        Value::Ctor { fields, .. } => fields.get(idx).cloned().unwrap_or(Value::Unit),
-        Value::Tuple(es) => es.get(idx).cloned().unwrap_or(Value::Unit),
-        Value::List(es) => es.get(idx).cloned().unwrap_or(Value::Unit),
-        _ => Value::Unit,
-    }
+        Value::Ctor { fields, .. } => fields.into_iter().nth(idx),
+        Value::Tuple(es) | Value::List(es) => es.into_iter().nth(idx),
+        _ => None,
+    }.unwrap_or_else(|| panic!("value_{}: index out of range (the value has {} fields)", idx, n))
 }
 
 #[track_caller]
@@ -40,10 +46,11 @@ pub fn value_2(v: Value) -> Value { value_field(v, 2) }
 
 #[track_caller]
 pub fn tuple_field(bundle: Value, idx: i64) -> Value {
-    let idx = idx as usize;
+    let oob = |n: usize| -> ! { panic!("tuple_field: index {} out of range (length {})", idx, n) };
+    let i = usize::try_from(idx).ok();
     match bundle {
-        Value::Tuple(fields) => fields.get(idx).cloned().unwrap_or(Value::Unit),
-        Value::List(items) => items.get(idx).cloned().unwrap_or(Value::Unit),
+        Value::Tuple(fields) => { let n = fields.len(); i.and_then(|i| fields.get(i).cloned()).unwrap_or_else(|| oob(n)) }
+        Value::List(items) => { let n = items.len(); i.and_then(|i| items.get(i).cloned()).unwrap_or_else(|| oob(n)) }
         other => panic!(
             "tuple_field: expected Tuple or List, got {:?} (use ctor_field for a Value(..)(..)-constructed Ctor)",
             other
@@ -53,9 +60,12 @@ pub fn tuple_field(bundle: Value, idx: i64) -> Value {
 
 #[track_caller]
 pub fn ctor_field(bundle: Value, idx: i64) -> Value {
-    let idx = idx as usize;
     match bundle {
-        Value::Ctor { fields, .. } => fields.get(idx).cloned().unwrap_or(Value::Unit),
+        Value::Ctor { fields, .. } => {
+            let n = fields.len();
+            usize::try_from(idx).ok().and_then(|i| fields.get(i).cloned())
+                .unwrap_or_else(|| panic!("ctor_field: index {} out of range ({} fields)", idx, n))
+        }
         other => panic!(
             "ctor_field: expected Ctor, got {:?} (use tuple_field for a raw Tuple/List)",
             other

@@ -74,6 +74,16 @@ pub fn unknown(kind: &str, builtin: &str, message: &str, location: &str) -> Valu
     Value::Ctor { tag: UNKNOWN_TAG, fields: vec![s(kind), s(builtin), s(message), s(location)] }
 }
 
+/// A deliberate, in-language Unknown (`fail(Text)`): the program says it cannot continue here. Unlike a bridge
+/// fault it is not a bridge bug, so it is reported as `axis: fail: ...`, not counted in the bridge-fault summary.
+/// Like a fault, it stops later effects in this entry (the entry has an undischarged Unknown).
+pub fn raise(message: &str, location: &str) -> Value {
+    let u = unknown("fail", "fail", message, location);
+    FAULTED.with(|c| { c.borrow_mut().get_or_insert_with(|| u.clone()); });
+    eprintln!("axis: fail: {} (at {})", message, location);
+    u
+}
+
 pub fn is_err(v: &Value) -> bool {
     matches!(v, Value::Ctor { tag, .. } if *tag == ERR_TAG)
 }
@@ -100,13 +110,25 @@ pub fn describe(v: &Value) -> String {
     }
 }
 
+/// The payload a defect unwinds with; the entry shims map it to exit 4.
+pub const DEFECT_PREFIX: &str = "DEFECT in ";
+
+/// Is this unwind payload a defect raised by `guard`?
+pub fn is_defect_payload(p: &(dyn std::any::Any + Send)) -> bool {
+    p.downcast_ref::<String>().map_or(false, |m| m.starts_with(DEFECT_PREFIX))
+}
+
 fn record(builtin: &str, message: &str, location: &str) {
+    record_kind("bridge_fault", builtin, message, location)
+}
+
+fn record_kind(kind: &str, builtin: &str, message: &str, location: &str) {
     if let Ok(path) = std::env::var("AX_FAULT_LOG") {
         use std::io::Write;
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
             let esc = |x: &str| x.replace('\\', "\\\\").replace('"', "\\\"");
-            let _ = writeln!(f, "{{\"kind\":\"bridge_fault\",\"builtin\":\"{}\",\"message\":\"{}\",\"location\":\"{}\"}}",
-                             esc(builtin), esc(message), esc(location));
+            let _ = writeln!(f, "{{\"kind\":\"{}\",\"builtin\":\"{}\",\"message\":\"{}\",\"location\":\"{}\"}}",
+                             esc(kind), esc(builtin), esc(message), esc(location));
         }
     }
 }
@@ -135,6 +157,14 @@ pub fn guard<F: FnOnce() -> Value>(builtin: &str, effectful: bool, args: &[&Valu
                 .or_else(|| p.downcast_ref::<String>().cloned())
                 .unwrap_or_else(|| "<non-string panic payload>".to_string());
             let loc = LAST_LOC.with(|c| c.borrow_mut().take()).unwrap_or_default();
+            if !effectful {
+                // DEFECT: a pure builtin's semantics are settled (arithmetic, indexing, field access). Its failure is
+                // a bug in the program, not a gap in the world: it stops loudly with the cause, never an Unknown the
+                // program must carry. Unwinding (not exit) keeps a multi-entry run's other entries isolated.
+                record_kind("defect", builtin, &msg, &loc);
+                eprintln!("axis: DEFECT in {}: {} (at {}) -- a bug in the program", builtin, msg, loc);
+                std::panic::resume_unwind(Box::new(format!("{}{}: {}", DEFECT_PREFIX, builtin, msg)));
+            }
             if let Some(name) = classify_by_user_map(builtin, &msg) {
                 // the user named this fault: it is a declared Err now, not an unknown
                 return Value::Ctor { tag: ERR_TAG, fields: vec![s(&name), s(builtin), s(&msg)] };

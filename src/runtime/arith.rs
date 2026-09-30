@@ -43,11 +43,11 @@ macro_rules! cmp_op {
 // the macro would have generated — no semantic change, only calling
 // convention.
 #[track_caller]
-pub fn int_add(x: i64, y: i64) -> Value { Value::Int(x + y) }
+pub fn int_add(x: i64, y: i64) -> Value { Value::Int(x.checked_add(y).unwrap_or_else(|| panic!("int_add: overflow ({} + {})", x, y))) }
 #[track_caller]
-pub fn int_sub(x: i64, y: i64) -> Value { Value::Int(x - y) }
+pub fn int_sub(x: i64, y: i64) -> Value { Value::Int(x.checked_sub(y).unwrap_or_else(|| panic!("int_sub: overflow ({} - {})", x, y))) }
 #[track_caller]
-pub fn int_mul(x: i64, y: i64) -> Value { Value::Int(x * y) }
+pub fn int_mul(x: i64, y: i64) -> Value { Value::Int(x.checked_mul(y).unwrap_or_else(|| panic!("int_mul: overflow ({} * {})", x, y))) }
 #[track_caller]
 pub fn int_lt(x: i64, y: i64) -> Value { Value::Bool(x < y) }
 
@@ -140,12 +140,13 @@ pub fn int_to_str(n: i64) -> Value {
 
 #[track_caller]
 pub fn str_to_int(s: std::sync::Arc<str>) -> Value {
-    Value::Int(s.parse().unwrap_or(0))
+    // FAULT_AS_UNKNOWN step 3: not a number is not 0 -- it fails loudly (an Unknown under the guard)
+    Value::Int(s.parse().unwrap_or_else(|_| panic!("str_to_int: not an integer: {:?}", &*s)))
 }
 
 #[track_caller]
 pub fn int_abs(n: i64) -> Value {
-    Value::Int(n.abs())
+    Value::Int(n.checked_abs().unwrap_or_else(|| panic!("int_abs: overflow ({})", n)))
 }
 
 #[track_caller]
@@ -165,12 +166,14 @@ pub fn int_clamp(v: i64, lo: i64, hi: i64) -> Value {
 
 #[track_caller]
 pub fn celsius_to_fahrenheit(c: i64) -> Value {
-    Value::Int((c * 9 / 5) + 32)
+    Value::Int(c.checked_mul(9).map(|v| v / 5).and_then(|v| v.checked_add(32))
+        .unwrap_or_else(|| panic!("celsius_to_fahrenheit: overflow ({})", c)))
 }
 
 #[track_caller]
 pub fn fahrenheit_to_celsius(f: i64) -> Value {
-    Value::Int((f - 32) * 5 / 9)
+    Value::Int(f.checked_sub(32).and_then(|v| v.checked_mul(5)).map(|v| v / 9)
+        .unwrap_or_else(|| panic!("fahrenheit_to_celsius: overflow ({})", f)))
 }
 
 #[track_caller]

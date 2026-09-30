@@ -27,6 +27,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("int_sub",         "axis_codegen_bridge::runtime::arith::int_sub");
     m.insert("int_mul",         "axis_codegen_bridge::runtime::arith::int_mul");
     m.insert("int_div",         "axis_codegen_bridge::runtime::arith::int_div");
+    m.insert("fail",            "axis_codegen_bridge::runtime::fail::fail");
     m.insert("int_div_checked", "axis_codegen_bridge::runtime::arith::int_div_checked");
     m.insert("int_mod",         "axis_codegen_bridge::runtime::arith::int_mod");
     m.insert("int_to_str",      "axis_codegen_bridge::runtime::arith::int_to_str");
@@ -1107,6 +1108,7 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("list_get_println_if_some", vec![Value, Int]);
     m.insert("ctor_field",        vec![Value, Int]);
     m.insert("int_div",           vec![Int, Int]);
+    m.insert("fail",              vec![Text]);
     m.insert("int_div_checked",   vec![Int, Int]);
     m.insert("int_mod",           vec![Int, Int]);
     m.insert("value_eq",          vec![Value, Value]);
