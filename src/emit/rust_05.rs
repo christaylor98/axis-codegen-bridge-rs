@@ -179,6 +179,12 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("value_1",    "axis_codegen_bridge::runtime::tuple::value_1");
     m.insert("value_2",    "axis_codegen_bridge::runtime::tuple::value_2");
     m.insert("list_make",  "axis_codegen_bridge::runtime::list::list_make");
+    // handle_list_make — the SAME runtime as list_make (build a list from the
+    // variadic args). It exists only so the result can be declared `HandleList`
+    // rather than `ValueList`: those two hash differently (structural type
+    // identity), so list_make cannot produce a value `join` will accept. Same
+    // declaration-not-implementation pattern as int_to_singleton vs list_of_1.
+    m.insert("handle_list_make", "axis_codegen_bridge::runtime::list::list_make");
 
     // M1 iteration / list-builder primitives (BRIDGE_FOREIGN_FN_FNREF_M1).
     // `foreach` and `loop_count` use the native multi-arg Rust calling
@@ -249,6 +255,15 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("tty_rows",     "axis_codegen_bridge::runtime::tty::tty_rows");
     m.insert("tty_cols",     "axis_codegen_bridge::runtime::tty::tty_cols");
 
+    // Pseudo-terminals (BRIDGE_PTY_V1 — runtime/pty.rs): drive any program
+    // under a real terminal. Generic; decisions stay in M1/AI3.
+    m.insert("pty_open",   "axis_codegen_bridge::runtime::pty::pty_open");
+    m.insert("pty_read",   "axis_codegen_bridge::runtime::pty::pty_read");
+    m.insert("pty_write",  "axis_codegen_bridge::runtime::pty::pty_write");
+    m.insert("pty_resize", "axis_codegen_bridge::runtime::pty::pty_resize");
+    m.insert("pty_status", "axis_codegen_bridge::runtime::pty::pty_status");
+    m.insert("pty_close",  "axis_codegen_bridge::runtime::pty::pty_close");
+
     // Read-only SQLite row access (AXSEM_W2_STORAGE_RETROFIT_V1 — sqlite_ro.rs).
     // ONE dump-producer fn; the module hosts no write/exec/DDL/DML surface.
     m.insert("sqlite_ro_tsv", "axis_codegen_bridge::runtime::sqlite_ro::sqlite_ro_tsv");
@@ -272,6 +287,13 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("event_subscribe", "axis_codegen_bridge::runtime::channels::event_subscribe");
     m.insert("channel_send",    "axis_codegen_bridge::runtime::channels::channel_send");
     m.insert("wait",            "axis_codegen_bridge::runtime::channels::wait");
+
+    // Task spawn/join (tasks.rs). Distinct from `wait` above: `wait` is a
+    // channel message pump with its own subscribe lifecycle; `spawn`/`join`
+    // run one named callee and return that call's result. `spawn` carries a
+    // Fn-typed callee slot — see `fn_arg_kinds()`.
+    m.insert("spawn",           "axis_codegen_bridge::runtime::tasks::spawn");
+    m.insert("join",            "axis_codegen_bridge::runtime::tasks::join");
 
     // Value coercion family (BRIDGE_VALUE_COERCION_V1 — coerce.rs).
     // Six converters + two tag-dispatching HOFs. Dispatchers carry three FnRef
@@ -939,6 +961,10 @@ fn fn_arg_kinds() -> HashMap<&'static str, Vec<ArgKind>> {
     // Async: `wait` takes its handler in a single Fn callee slot. The handler is
     // invoked synchronously within wait's own frame (CLOSURE_RULE_HARD).
     m.insert("wait", vec![FnRef]);
+    // Tasks: `spawn` takes its callee in slot 0 and the callee's argument in
+    // slot 1. `join` is NOT listed — it takes a ValueList of Int handles, which
+    // is ordinary Data, and listing it would wrongly demand a Fn-typed pool ref.
+    m.insert("spawn", vec![FnRef, Data]);
     // ─── BEGIN GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / fn_arg_kinds ───
     // Monomorphic list vocabulary. Most rows alias an ALREADY-EXISTING
     // element-agnostic Rust fn — declaration, not implementation. The
@@ -1067,6 +1093,7 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     // remainder/bool_ops.rs/hash.rs, bytes_codec.rs/bytes_io.rs/process.rs/
     // channels.rs remainder.
     m.insert("str_len",           vec![Text]);
+    m.insert("fail",              vec![Text]);
     m.insert("str_char_at",       vec![Text, Int]);
     m.insert("str_char",          vec![Text, Int]);
     m.insert("str_char_code",     vec![Text, Int]);
@@ -1108,7 +1135,6 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("list_get_println_if_some", vec![Value, Int]);
     m.insert("ctor_field",        vec![Value, Int]);
     m.insert("int_div",           vec![Int, Int]);
-    m.insert("fail",              vec![Text]);
     m.insert("int_div_checked",   vec![Int, Int]);
     m.insert("int_mod",           vec![Int, Int]);
     m.insert("value_eq",          vec![Value, Value]);
@@ -1180,6 +1206,12 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("tcp_read",          vec![Int]);
     m.insert("tcp_write",         vec![Int, Bytes]);
     m.insert("tcp_close",         vec![Int]);
+    m.insert("pty_open",          vec![Text, Value, Int, Int]);
+    m.insert("pty_read",          vec![Int, Int]);
+    m.insert("pty_write",         vec![Int, Bytes]);
+    m.insert("pty_resize",        vec![Int, Int, Int]);
+    m.insert("pty_status",        vec![Int]);
+    m.insert("pty_close",         vec![Int]);
     m.insert("tty_raw_on",        vec![Int]);
     m.insert("cursor_append",     vec![Int, Text]);
     m.insert("cursor_get",        vec![Int]);

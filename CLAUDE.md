@@ -57,6 +57,18 @@ own the rest. Examples:
   Panics on I/O error.
 - `tcp_write(Int, Bytes) -> Unit` — write all + flush. Panics on I/O error.
 - `tcp_close(Int) -> Unit` — drop the listener/stream. Panics on unknown handle.
+- `pty_open(Text, TextList, Int, Int) -> Int` — start a program (exact argv,
+  no shell) as session leader of a fresh pty sized rows x cols (0 x 0 = kernel
+  default); returns a handle, or -256 if it could not be started.
+- `pty_read(Int, Int) -> Bytes` — wait up to timeout_ms for output (≤64 KiB).
+  Empty = nothing yet OR child side closed; `pty_status` tells which.
+- `pty_write(Int, Bytes) -> Unit` — write all; child gone is a no-op.
+- `pty_resize(Int, Int, Int) -> Unit` — set the window (child gets SIGWINCH).
+- `pty_status(Int) -> Int` — non-blocking: proc_run's bands (exit code,
+  -signum) or -258 while still running.
+- `pty_close(Int) -> Int` — SIGHUP the session, SIGKILL after 1 s; returns the
+  final status. The pty fns (BRIDGE_PTY_V1, `pty.rs`) are generic `fullIo`
+  leaves, libc only; see IS_BRIDGE_PTY_PRIMITIVES_v0.1.md.
 
 The TCP socket fns (BRIDGE_TCP_SOCKET_V1, `net.rs`) are synchronous blocking
 `fullIo` leaves — they do NOT use the `channels.rs` async layer. `tcp_listen`
@@ -66,6 +78,25 @@ returns its `(handle, port)` pair as a `Value::Tuple` reusing the existing
 Use `fs_file_exists(Text) -> Bool` for existence checks rather than probing with
 a read-and-catch pattern. The `ResultText` / `ResultUnit` / `ResultBytes` sum
 types no longer exist — never introduce a new fn that returns them.
+
+### Failure: honest outcomes (Ok | Err | Unknown), Defect, and `Option`
+
+The rule above forbids the Result **types**. The untyped `Result` (`result.rs`, `result_unwrap` and combinators) was
+removed too: an outcome is Ok, a declared Err, or Unknown, each with an explicit condition, and nothing unwraps.
+
+- **Defect** — a panic in a builtin the registry declares `effect pure` + `deterministic true` (overflow, divide by
+  zero, a missing field): settled semantics, so it is a bug in the program. `runtime::fault::guard` stops the entry
+  loudly with the cause (exit 4); it is never respawned and never becomes a value. Never make such a case silent
+  (no wrapping arithmetic, no `unwrap_or(Unit)`, no parse-to-0).
+- **Unknown** — a failure of the unsettled world: a panic in an effectful or vendor builtin, or one the registry does
+  not declare pure. The guard turns it into an `Unknown{kind, builtin, message, location}` value: sticky (a builtin
+  given one returns it), an `if` on it yields it, later effectful builtins in the entry do not run, and an Unknown
+  result exits 3. `AX_FAULT_MODE=abort` makes it a hard stop (exit 70) for bridge developers.
+- **Err** — declared: `AX_FAULT_MAP` names faults that are a declared Err (exit 2); outcome-returning builtins
+  declare theirs in the registry.
+- **`fail(Text)`** (`fail.rs`) — the program's own explicit Unknown, not a panic.
+- **`Option`** (`option.rs`) — `option_some` / `option_none`, for when the caller needs only the FACT of absence
+  (`int_div_checked`, `list_get_at`).
 
 `ValueList` is the homogeneous list-of-Value data type
 (`sha256([0x01, 0x03, value_type_hash])` per Core IR 0.5 — `PrimCode::Value=6`).

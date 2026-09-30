@@ -190,7 +190,7 @@ pub fn proc_run(program: std::sync::Arc<str>, argv: Value) -> Value {
 /// if the OS names a signal, [`NO_REASON`] if it names nothing. Split out so the
 /// `cfg` is one expression rather than smeared through `proc_run`'s control flow.
 #[cfg(unix)]
-fn terminating_signal(st: &std::process::ExitStatus) -> i64 {
+pub(crate) fn terminating_signal(st: &std::process::ExitStatus) -> i64 {
     use std::os::unix::process::ExitStatusExt;
     match st.signal() {
         Some(s) => -(s as i64),
@@ -204,10 +204,10 @@ fn terminating_signal(_st: &std::process::ExitStatus) -> i64 {
 }
 
 /// Ended, and the OS gave no reason. See `proc_run`'s band table.
-const NO_REASON: i64 = -257;
+pub(crate) const NO_REASON: i64 = -257;
 
 /// Could not be started at all. See `proc_run`'s band table.
-const NO_START: i64 = -256;
+pub(crate) const NO_START: i64 = -256;
 
 #[cfg(all(test, unix))]
 mod proc_run_tests {

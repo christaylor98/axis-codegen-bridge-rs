@@ -28,6 +28,7 @@ pub mod bytes_io;
 pub mod bytes_codec;
 pub mod net;
 pub mod tty;
+pub mod pty;
 pub mod seek;
 pub mod logbuf;
 pub mod mmapseg;
@@ -74,5 +75,6 @@ pub mod pgbshape;
 pub mod pg_store;
 pub mod objseg;
 pub mod u32v;
+pub mod tasks;
 
 pub use value::Value;
