@@ -825,6 +825,44 @@ pub fn load_registry_pure_det(paths: &[String]) -> std::collections::HashSet<Has
     set
 }
 
+/// Is this call pure + deterministic AS A CALL — not just as a callee row?
+///
+/// THE CALLBACK COLOURS THE CALL, exactly as the compiler's CSE gate has it
+/// (axis-lang-lab `core_ir_05.rs` `push_node`): `any(xs, f)` has no effect of
+/// its own, but it runs `f`, so it is pure exactly when `f` is. Reading only
+/// `pure_det.contains(target)` let `any`/`all`/`count`/`find_index`/
+/// `flat_map`/`loop_while` — all declared `effect pure` — be SUNK past an
+/// outer effect by EFFECT_ORDER_V1 and keep running after a fault, however
+/// effectful their callback, and made an I/O panic inside that callback a
+/// DEFECT instead of an Unknown.
+///
+/// A fn-ref arg is a pool entry whose def_hash is `fn_type_hash()` and whose
+/// payload is the callee's identity. A composite callback (xbundle) is never
+/// in `pure_det` — composites carry no leaf facts — so it closes the gate,
+/// which is the fail-closed direction.
+fn call_is_pure_det(
+    target_identity: &Hash256,
+    args: &[NodeRef],
+    constant_pool: &[ConstantPoolEntry],
+    pure_det: &std::collections::HashSet<Hash256>,
+) -> bool {
+    if !pure_det.contains(target_identity) {
+        return false;
+    }
+    let fn_hash = fn_type_hash();
+    args.iter().all(|a| match a {
+        NodeRef::Pool(i) => match constant_pool.get(*i as usize) {
+            Some(e) if e.def_hash == fn_hash => {
+                <[u8; 32]>::try_from(e.payload.as_slice())
+                    .map(|id| pure_det.contains(&id))
+                    .unwrap_or(false)
+            }
+            _ => true,
+        },
+        _ => true,
+    })
+}
+
 // ── Bridge-independent async fact scan (BRIDGE_SCAN_INDEPENDENT) ──────────────
 
 /// Facts the bridge extracts from `.axreg` files to dispatch async behaviour.
@@ -1967,7 +2005,9 @@ fn compute_branch_paths(
         // effectful (absent implies ordered).
         let effectful = |idx: usize| -> bool {
             match &bundle.nodes[idx] {
-                Node::CCall { target_identity, .. } => !pure_det.contains(target_identity),
+                Node::CCall { target_identity, args, .. } => {
+                    !call_is_pure_det(target_identity, args, &bundle.constant_pool, pure_det)
+                }
                 Node::CIf { .. } => true,
                 Node::CDeterminate => false,
             }
@@ -2065,7 +2105,7 @@ fn render_scope(
             other => {
                 let expr = emit_node(
                     other, pool_kinds, arg_kind_table, native_call_table,
-                    builtin, registry, name_to_path, xbundle, pure_det,
+                    builtin, registry, name_to_path, xbundle, pure_det, &bundle.constant_pool,
                 )
                 .map_err(|e| format!("node[{}]: {}", i, e))?;
                 out.push_str(&format!("    let node_{}: Value = {};\n", i, expr));
@@ -2087,6 +2127,7 @@ fn emit_node(
     name_to_path: &HashMap<&'static str, &'static str>,
     xbundle: &HashMap<Hash256, String>,
     pure_det: &std::collections::HashSet<Hash256>,
+    constant_pool: &[ConstantPoolEntry],
 ) -> Result<String, String> {
     match node {
         Node::CCall { target_identity, args, target_name } => {
@@ -2227,7 +2268,7 @@ fn emit_node(
                 .map(|(a, _)| format!("&{}", ref_expr(a)))
                 .collect();
             // An effectful builtin (not declared pure + deterministic) does not run after this entry has faulted.
-            let effectful = !pure_det.contains(target_identity);
+            let effectful = !call_is_pure_det(target_identity, args, constant_pool, pure_det);
             Ok(format!("axis_codegen_bridge::runtime::fault::guard({:?}, {}, &[{}], || {})",
                        name, effectful, data_refs.join(", "), body))
         }
@@ -2818,5 +2859,26 @@ end
         let mut facts = BridgeAsyncFacts::default();
         scan_bridge_async_str(doc, &mut facts);
         assert!(facts.background_fns.is_empty(), "background outside contract flagged: {:?}", facts.background_fns);
+    }
+
+    #[test]
+    fn callback_colours_the_call_for_effect_order_and_fault_guard() {
+        use crate::core_ir_05::{fn_type_hash, sha256_bytes, ConstantPoolEntry, NodeRef};
+        let any = sha256_bytes(b"any");
+        let pure_cb = sha256_bytes(b"int_lt");
+        let io_cb = sha256_bytes(b"io_println");
+        let pure_det: std::collections::HashSet<_> = [any, pure_cb].into_iter().collect();
+        let fnref = |id: [u8; 32]| ConstantPoolEntry { def_hash: fn_type_hash(), payload: id.to_vec() };
+        let pool = vec![
+            ConstantPoolEntry { def_hash: crate::core_ir_05::int_type_hash(), payload: vec![0] },
+            fnref(pure_cb),
+            fnref(io_cb),
+        ];
+        // pure HOF over a pure callback: still pure.
+        assert!(call_is_pure_det(&any, &[NodeRef::Pool(0), NodeRef::Pool(1)], &pool, &pure_det));
+        // pure HOF over an effectful callback: effectful (the bug this closes).
+        assert!(!call_is_pure_det(&any, &[NodeRef::Pool(0), NodeRef::Pool(2)], &pool, &pure_det));
+        // effectful callee: effectful regardless of args.
+        assert!(!call_is_pure_det(&io_cb, &[NodeRef::Pool(0)], &pool, &pure_det));
     }
 }
