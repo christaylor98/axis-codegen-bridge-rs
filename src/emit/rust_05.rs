@@ -2016,7 +2016,7 @@ fn render_scope(
                 )?;
                 out.push_str(&format!(
                     // FAULT_AS_UNKNOWN: an Unknown condition chooses no branch; the if yields it (never a swallow).
-                    "    let node_{i}: Value = if axis_codegen_bridge::runtime::fault::is_unknown(&{cond}) {{ {cond}.clone() }} else if axis_codegen_bridge::runtime::value::truthy(&{cond}) {{\n\
+                    "    let node_{i}: Value = if axis_codegen_bridge::runtime::fault::is_unknown(&{cond}) || axis_codegen_bridge::runtime::fault::is_err(&{cond}) {{ {cond}.clone() }} else if axis_codegen_bridge::runtime::value::truthy(&{cond}) {{\n\
                      {then_body}        {then_tail}\n    }} else {{\n\
                      {else_body}        {else_tail}\n    }};\n",
                     i = i,
@@ -2211,7 +2211,7 @@ fn emit_node(
             }
             // FAULT_AS_UNKNOWN: an Unknown condition chooses no branch -- the if yields that Unknown.
             Ok(format!(
-                "if axis_codegen_bridge::runtime::fault::is_unknown(&{c}) {{ {c}.clone() }} else if axis_codegen_bridge::runtime::value::truthy(&{c}) {{ {} }} else {{ {} }}",
+                "if axis_codegen_bridge::runtime::fault::is_unknown(&{c}) || axis_codegen_bridge::runtime::fault::is_err(&{c}) {{ {c}.clone() }} else if axis_codegen_bridge::runtime::value::truthy(&{c}) {{ {} }} else {{ {} }}",
                 ref_clone(then_),
                 ref_clone(else_),
                 c = ref_expr(cond),

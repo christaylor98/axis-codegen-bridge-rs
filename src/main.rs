@@ -521,6 +521,10 @@ fn cmd_build(args: &[String]) {
                      .map(|s| Value::Str(intern_str(&s)))\n\
                      .collect();\n\
                  let result = unsafe {{ {fn}(Value::List(args)) }};\n\
+                 if axis_codegen_bridge::runtime::fault::is_err(&result) {{\n\
+                     eprintln!(\"{{}}\", axis_codegen_bridge::runtime::fault::describe(&result));\n\
+                     std::process::exit(2);\n\
+                 }}\n\
                  if axis_codegen_bridge::runtime::fault::is_unknown(&result) {{\n\
                      eprintln!(\"{{}}\", axis_codegen_bridge::runtime::fault::describe(&result));\n\
                      std::process::exit(3);\n\
