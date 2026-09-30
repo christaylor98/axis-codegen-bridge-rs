@@ -2015,7 +2015,8 @@ fn render_scope(
                     arg_kind_table, native_call_table, builtin, registry, name_to_path, xbundle,
                 )?;
                 out.push_str(&format!(
-                    "    let node_{i}: Value = if axis_codegen_bridge::runtime::value::truthy(&{cond}) {{\n\
+                    // FAULT_AS_UNKNOWN: an Unknown condition chooses no branch; the if yields it (never a swallow).
+                    "    let node_{i}: Value = if axis_codegen_bridge::runtime::fault::is_unknown(&{cond}) {{ {cond}.clone() }} else if axis_codegen_bridge::runtime::value::truthy(&{cond}) {{\n\
                      {then_body}        {then_tail}\n    }} else {{\n\
                      {else_body}        {else_tail}\n    }};\n",
                     i = i,
@@ -2181,7 +2182,16 @@ fn emit_node(
                     _ => format!("{}(Value::Tuple(vec![{}]))", path, arg_exprs.join(", ")),
                 }
             };
-            Ok(if is_extern { format!("unsafe {{ {} }}", body) } else { body })
+            if is_extern {
+                return Ok(format!("unsafe {{ {} }}", body));
+            }
+            // FAULT_AS_UNKNOWN: a builtin panic is a bridge fault -> an Unknown value; an Unknown arg is sticky.
+            let data_refs: Vec<String> = args.iter().zip(kinds_owned.iter())
+                .filter(|(_, k)| matches!(k, ArgKind::Data))
+                .map(|(a, _)| format!("&{}", ref_expr(a)))
+                .collect();
+            Ok(format!("axis_codegen_bridge::runtime::fault::guard({:?}, &[{}], || {})",
+                       name, data_refs.join(", "), body))
         }
         Node::CIf { cond, then_, else_ } => {
             // cond / then / else are Data positions. A Fn-typed pool ref here
@@ -2199,11 +2209,12 @@ fn emit_node(
                     }
                 }
             }
+            // FAULT_AS_UNKNOWN: an Unknown condition chooses no branch -- the if yields that Unknown.
             Ok(format!(
-                "if axis_codegen_bridge::runtime::value::truthy(&{}) {{ {} }} else {{ {} }}",
-                ref_expr(cond),
+                "if axis_codegen_bridge::runtime::fault::is_unknown(&{c}) {{ {c}.clone() }} else if axis_codegen_bridge::runtime::value::truthy(&{c}) {{ {} }} else {{ {} }}",
                 ref_clone(then_),
-                ref_clone(else_)
+                ref_clone(else_),
+                c = ref_expr(cond),
             ))
         }
         // A determinacy gate has no operands and yields a Unit discharge token.

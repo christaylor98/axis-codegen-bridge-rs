@@ -1,4 +1,5 @@
 pub mod value;
+pub mod fault;
 pub mod arith;
 pub mod str_ops;
 pub mod list;
