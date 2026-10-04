@@ -136,19 +136,37 @@ fn record_kind(kind: &str, builtin: &str, message: &str, location: &str) {
 /// Every builtin call goes through here. `args` are the call's data arguments (before any native conversion).
 #[inline]
 pub fn guard<F: FnOnce() -> Value>(builtin: &str, effectful: bool, args: &[&Value], call: F) -> Value {
+    match guard_pre(effectful, args) {
+        Some(v) => v,
+        None => guard_run(builtin, effectful, call),
+    }
+}
+
+/// The first half of `guard`, which only borrows the arguments: the value the call yields without running (the
+/// first fault's Unknown for an effectful builtin after a fault; a sticky Unknown/Err argument), or None to run it.
+/// Generated code calls the two halves apart so that a value used for the last time can be moved into the call
+/// once this borrow has ended (MOVE_ON_LAST_USE_V1): a list then reaches list_append owned, and is pushed in place.
+#[inline]
+pub fn guard_pre(effectful: bool, args: &[&Value]) -> Option<Value> {
     // No effect after an undischarged fault: once this entry (thread) has faulted, an effectful builtin returns
     // the first fault's Unknown instead of running. Pure builtins still compute (their Unknown args are sticky).
     // Without this, unknown mode ran a write that abort mode would have prevented (effect-after-fault probe).
     if effectful {
         if let Some(first) = FAULTED.with(|c| c.borrow().clone()) {
-            return first;
+            return Some(first);
         }
     }
     for a in args {
         if is_unknown(a) || is_err(a) {
-            return (*a).clone(); // sticky: the builtin never sees it, the first cause's evidence is kept
+            return Some((*a).clone()); // sticky: the builtin never sees it, the first cause's evidence is kept
         }
     }
+    None
+}
+
+/// The second half of `guard`: run the builtin, turning a panic into a defect or an Unknown.
+#[inline]
+pub fn guard_run<F: FnOnce() -> Value>(builtin: &str, effectful: bool, call: F) -> Value {
     install_hook();
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(call)) {
         Ok(v) => v,

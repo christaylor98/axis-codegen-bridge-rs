@@ -395,7 +395,7 @@ fn fn_slot_emits_native_multi_arg_call() {
     // Rust fn path, not wrapped in Value::Tuple.
     assert!(
         src.contains(
-            "axis_codegen_bridge::runtime::iter::foreach(pool_0.clone(), \
+            "axis_codegen_bridge::runtime::iter::foreach(pool_0, \
              axis_codegen_bridge::runtime::io::io_println)"
         ),
         "expected native multi-arg foreach call, got src:\n{}",

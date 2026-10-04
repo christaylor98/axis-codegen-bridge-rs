@@ -60,7 +60,7 @@ fn bridge_to_dec_emits_native_four_arg_call() {
     }
     // The CCall emits as a native four-arg call.
     let expected =
-        "axis_codegen_bridge::runtime::coerce::bridge_to_dec(pool_0.clone(), \
+        "axis_codegen_bridge::runtime::coerce::bridge_to_dec(pool_0, \
          axis_codegen_bridge::runtime::coerce::int_to_dec, \
          axis_codegen_bridge::runtime::coerce::dec_id, \
          axis_codegen_bridge::runtime::coerce::float_to_dec)";
@@ -98,7 +98,7 @@ fn bridge_to_float_emits_native_four_arg_call() {
         .expect("emit should succeed for a well-typed bridge_to_float call");
 
     let expected =
-        "axis_codegen_bridge::runtime::coerce::bridge_to_float(pool_0.clone(), \
+        "axis_codegen_bridge::runtime::coerce::bridge_to_float(pool_0, \
          axis_codegen_bridge::runtime::coerce::int_to_float, \
          axis_codegen_bridge::runtime::coerce::dec_to_float, \
          axis_codegen_bridge::runtime::coerce::float_id)";
