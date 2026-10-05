@@ -361,7 +361,7 @@ fn commit_job(job: Job) {
 #[track_caller]
 pub fn block_flush_write(arg: Value) -> Value {
     let items = match arg {
-        Value::List(items) => items,
+        Value::List(items) => items.into_vec(),
         Value::Unit => return Value::Unit,
         bare @ (Value::Ctor { .. } | Value::Tuple(_)) => vec![bare],
         other => panic!(
@@ -401,7 +401,7 @@ mod tests {
     #[test]
     fn empty_drain_is_noop() {
         assert_eq!(block_flush_write(Value::Unit), Value::Unit);
-        assert_eq!(block_flush_write(Value::List(vec![])), Value::Int(0));
+        assert_eq!(block_flush_write(Value::List(vec![].into())), Value::Int(0));
     }
 
     // The remaining tests hit the local postgres (peer-auth superuser on the
@@ -428,7 +428,7 @@ mod tests {
             Value::Str(h) => get_str(&h),
             other => panic!("expected Text, got {:?}", other),
         };
-        let out = block_flush_write(Value::List(vec![ctor_log_job(marker.as_bytes())]));
+        let out = block_flush_write(Value::List(vec![ctor_log_job(marker.as_bytes())].into()));
         assert_eq!(out, Value::Int(1));
         let scan = match pg_store::pg_log_scan(Value::Unit) {
             Value::Str(h) => get_str(&h),
@@ -463,7 +463,7 @@ mod tests {
                 Value::Bytes(marker.into_bytes()),
             ],
         };
-        let out = block_flush_write(Value::List(vec![job]));
+        let out = block_flush_write(Value::List(vec![job].into()));
         assert_eq!(out, Value::Int(1));
         let (taken_ptr, taken_cell) = hotblk_pool::pool_take(&shard);
         assert_eq!(taken_ptr, ptr, "pool must hand back the same ptr the committed job carried");
@@ -481,7 +481,7 @@ mod tests {
             Value::Str(h) => get_str(&h),
             other => panic!("expected Text, got {:?}", other),
         };
-        let out = block_flush_write(Value::List(vec![tuple_obj_job(&block, &index)]));
+        let out = block_flush_write(Value::List(vec![tuple_obj_job(&block, &index)].into()));
         assert_eq!(out, Value::Int(1));
         match pg_store::pg_bytes_get(intern_str(&addr_x)) {
             Value::Bytes(b) => assert_eq!(b, b"thequick"),
@@ -508,7 +508,7 @@ mod tests {
         let out = block_flush_write(Value::List(vec![
             ctor_log_job(marker.as_bytes()),
             tuple_obj_job(&block, &index),
-        ]));
+        ].into()));
         assert_eq!(out, Value::Int(2));
         let scan = match pg_store::pg_log_scan(Value::Unit) {
             Value::Str(h) => get_str(&h),
@@ -564,13 +564,13 @@ mod tests {
         let split = full.len() as i64 / 2;
 
         // Timer checkpoints the first half.
-        let out = block_flush_write(Value::List(vec![ctor_checkpoint_job(generation, ptr, split)]));
+        let out = block_flush_write(Value::List(vec![ctor_checkpoint_job(generation, ptr, split)].into()));
         assert_eq!(out, Value::Int(1));
 
         // Seal arrives with the FULL bytes (as pg_hotblk_seal_mint.m1
         // always sends them, from offset 0) for the SAME generation.
         let shard = format!("checkpoint-test-shard-{}", std::process::id());
-        let out = block_flush_write(Value::List(vec![ctor_log_job_g(ptr, &shard, generation, full)]));
+        let out = block_flush_write(Value::List(vec![ctor_log_job_g(ptr, &shard, generation, full)].into()));
         assert_eq!(out, Value::Int(1));
 
         // The durable log must contain the marker text exactly ONCE, not
@@ -610,7 +610,7 @@ mod tests {
             &shard,
             generation_new,
             marker.as_bytes(),
-        )]));
+        )].into()));
         assert_eq!(out, Value::Int(1));
 
         let before = match pg_store::pg_log_scan(Value::Unit) {
@@ -626,7 +626,7 @@ mod tests {
             generation_old,
             i64::MAX / 2, // deliberately bogus -- must never be dereferenced
             999_999,
-        )]));
+        )].into()));
         assert_eq!(out, Value::Int(1), "block_flush_write still counts the job as processed, even when dropped");
 
         let after = match pg_store::pg_log_scan(Value::Unit) {

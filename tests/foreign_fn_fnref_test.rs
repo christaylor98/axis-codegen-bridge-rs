@@ -59,7 +59,7 @@ fn accept_range_0_3_is_0_1_2() {
     let result = iter::range(Value::Tuple(vec![Value::Int(0), Value::Int(3)]));
     assert_eq!(
         result,
-        Value::List(vec![Value::Int(0), Value::Int(1), Value::Int(2)])
+        Value::List(vec![Value::Int(0), Value::Int(1), Value::Int(2)].into())
     );
 }
 
@@ -67,7 +67,7 @@ fn accept_range_0_3_is_0_1_2() {
 fn accept_str_join_ab_comma_is_a_comma_b() {
     setup();
     // ValueList(Text)("a", "b")
-    let list = Value::List(vec![s("a"), s("b")]);
+    let list = Value::List(vec![s("a"), s("b")].into());
     let result = str_ops::str_join(list, s(",").as_text());
     assert_eq!(result, s("a,b"));
 }
@@ -89,7 +89,7 @@ fn count_call(v: Value) -> Value {
 fn accept_foreach_runs_per_element() {
     setup();
     FOREACH_CALLS.store(0, Ordering::SeqCst);
-    let xs = Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
+    let xs = Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)].into());
     let result = iter::foreach(xs, count_call);
     assert_eq!(result, Value::Unit);
     assert_eq!(FOREACH_CALLS.load(Ordering::SeqCst), 6);
@@ -124,21 +124,21 @@ fn is_positive_pred(v: Value) -> Value {
 #[test]
 fn any_finds_truthy() {
     setup();
-    let xs = Value::List(vec![Value::Int(-1), Value::Int(0), Value::Int(7)]);
+    let xs = Value::List(vec![Value::Int(-1), Value::Int(0), Value::Int(7)].into());
     assert_eq!(iter::any(xs, is_positive_pred), Value::Bool(true));
 }
 
 #[test]
 fn all_rejects_zero() {
     setup();
-    let xs = Value::List(vec![Value::Int(1), Value::Int(0), Value::Int(7)]);
+    let xs = Value::List(vec![Value::Int(1), Value::Int(0), Value::Int(7)].into());
     assert_eq!(iter::all(xs, is_positive_pred), Value::Bool(false));
 }
 
 #[test]
 fn find_index_returns_minus_one_when_none() {
     setup();
-    let xs = Value::List(vec![Value::Int(-1), Value::Int(-2)]);
+    let xs = Value::List(vec![Value::Int(-1), Value::Int(-2)].into());
     assert_eq!(
         iter::find_index(xs, is_positive_pred),
         Value::Int(-1)
@@ -150,7 +150,7 @@ fn count_counts_truthy() {
     setup();
     let xs = Value::List(vec![
         Value::Int(-1), Value::Int(0), Value::Int(1), Value::Int(2),
-    ]);
+    ].into());
     assert_eq!(iter::count(xs, is_positive_pred), Value::Int(2));
 }
 
@@ -159,7 +159,7 @@ fn count_counts_truthy() {
 #[test]
 fn enumerate_pairs_index_with_value() {
     setup();
-    let xs = Value::List(vec![s("a"), s("b")]);
+    let xs = Value::List(vec![s("a"), s("b")].into());
     let out = iter::enumerate(xs);
     match out {
         Value::List(pairs) => {
@@ -181,8 +181,8 @@ fn enumerate_pairs_index_with_value() {
 #[test]
 fn zip_truncates_to_shorter() {
     setup();
-    let xs = Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
-    let ys = Value::List(vec![s("a"), s("b")]);
+    let xs = Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)].into());
+    let ys = Value::List(vec![s("a"), s("b")].into());
     let out = iter::zip(Value::Tuple(vec![xs, ys]));
     if let Value::List(pairs) = out {
         assert_eq!(pairs.len(), 2);
@@ -196,23 +196,23 @@ fn take_and_drop_partition() {
     setup();
     let xs = Value::List(vec![
         Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4),
-    ]);
+    ].into());
     let head = iter::take(Value::Tuple(vec![xs.clone(), Value::Int(2)]));
     let tail = iter::drop(Value::Tuple(vec![xs, Value::Int(2)]));
-    assert_eq!(head, Value::List(vec![Value::Int(1), Value::Int(2)]));
-    assert_eq!(tail, Value::List(vec![Value::Int(3), Value::Int(4)]));
+    assert_eq!(head, Value::List(vec![Value::Int(1), Value::Int(2)].into()));
+    assert_eq!(tail, Value::List(vec![Value::Int(3), Value::Int(4)].into()));
 }
 
 #[test]
 fn flatten_concats_inner_lists() {
     setup();
     let xs = Value::List(vec![
-        Value::List(vec![Value::Int(1), Value::Int(2)]),
-        Value::List(vec![Value::Int(3)]),
-    ]);
+        Value::List(vec![Value::Int(1), Value::Int(2)].into()),
+        Value::List(vec![Value::Int(3)].into()),
+    ].into());
     assert_eq!(
         iter::flatten(xs),
-        Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
+        Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)].into())
     );
 }
 

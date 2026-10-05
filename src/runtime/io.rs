@@ -142,7 +142,7 @@ pub fn fs_list_dir(path: std::sync::Arc<str>) -> Value {
         (Value::Str(ah), Value::Str(bh)) => get_str(ah).cmp(&get_str(bh)),
         _ => std::cmp::Ordering::Equal,
     });
-    Value::List(entries)
+    Value::List(super::value::ListBuf::from(entries))
 }
 
 /// Observational trace. Controlled by AXIS_TRACE=1. No semantic effect.

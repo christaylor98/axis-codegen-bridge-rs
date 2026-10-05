@@ -3,6 +3,63 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 use std::collections::HashMap;
 pub use rust_decimal::Decimal;
 
+/// SHARED_LIST_V1: a ValueList's storage. Reads go through Deref (`&Vec<Value>`); an update through DerefMut
+/// copies the elements first only if they are shared (Arc::make_mut); by-value iteration takes them out without a
+/// copy when unshared.
+#[derive(Clone, Default)]
+pub struct ListBuf(Arc<Vec<Value>>);
+
+impl ListBuf {
+    pub fn new() -> Self { ListBuf(Arc::new(Vec::new())) }
+    /// The elements as an owned Vec: moved out when unshared, copied otherwise.
+    pub fn into_vec(self) -> Vec<Value> { Arc::try_unwrap(self.0).unwrap_or_else(|a| (*a).clone()) }
+}
+
+impl std::ops::Deref for ListBuf {
+    type Target = Vec<Value>;
+    fn deref(&self) -> &Vec<Value> { &self.0 }
+}
+
+impl std::ops::DerefMut for ListBuf {
+    fn deref_mut(&mut self) -> &mut Vec<Value> { Arc::make_mut(&mut self.0) }
+}
+
+impl From<Vec<Value>> for ListBuf {
+    fn from(v: Vec<Value>) -> Self { ListBuf(Arc::new(v)) }
+}
+
+impl FromIterator<Value> for ListBuf {
+    fn from_iter<I: IntoIterator<Item = Value>>(it: I) -> Self { ListBuf(Arc::new(it.into_iter().collect())) }
+}
+
+impl IntoIterator for ListBuf {
+    type Item = Value;
+    type IntoIter = std::vec::IntoIter<Value>;
+    fn into_iter(self) -> Self::IntoIter { self.into_vec().into_iter() }
+}
+
+impl<'a> IntoIterator for &'a ListBuf {
+    type Item = &'a Value;
+    type IntoIter = std::slice::Iter<'a, Value>;
+    fn into_iter(self) -> Self::IntoIter { self.0.iter() }
+}
+
+impl PartialEq for ListBuf {
+    fn eq(&self, other: &Self) -> bool { Arc::ptr_eq(&self.0, &other.0) || *self.0 == *other.0 }
+}
+
+impl PartialEq<Vec<Value>> for ListBuf {
+    fn eq(&self, other: &Vec<Value>) -> bool { *self.0 == *other }
+}
+
+impl PartialEq<ListBuf> for Vec<Value> {
+    fn eq(&self, other: &ListBuf) -> bool { *self == *other.0 }
+}
+
+impl std::fmt::Debug for ListBuf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.0.fmt(f) }   // as the Vec printed
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Int(i64),
@@ -16,7 +73,10 @@ pub enum Value {
     Str(Arc<str>),
     Unit,
     Tuple(Vec<Value>),
-    List(Vec<Value>),
+    // SHARED_LIST_V1: a list's elements are shared, not owned: cloning a list is a refcount bump, and an update
+    // copies only when another value still holds the same elements (copy-on-write, ListBuf's DerefMut). With
+    // MOVE_ON_LAST_USE_V1 a list is usually held once, so append pushes in place; reads never copy.
+    List(ListBuf),
     Ctor { tag: u32, fields: Vec<Value> },
     // BRIDGE_VALUE_COERCION_V1: numeric tags for the to_dec / to_float family.
     // Dec is rust_decimal::Decimal (128-bit fixed decimal, ~28 significant digits).

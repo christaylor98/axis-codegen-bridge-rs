@@ -51,7 +51,7 @@ pub fn str_split(content: std::sync::Arc<str>, delim: std::sync::Arc<str>) -> Va
     let parts: Vec<Value> = content.split(delim.as_str())
         .map(|s| Value::Str(intern_str(s)))
         .collect();
-    Value::List(parts)
+    Value::List(super::value::ListBuf::from(parts))
 }
 
 #[track_caller]

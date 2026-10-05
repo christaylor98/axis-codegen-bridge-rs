@@ -1840,13 +1840,16 @@ fn ref_clone(r: &NodeRef) -> String {
 
 // ── Move on last use (MOVE_ON_LAST_USE_V1) ───────────────────────────────────
 //
-// Every use of a value used to be emitted as `x.clone()`, and a ValueList is a plain Vec: `xs.append(v)` copied the
-// whole list several times per call (into the guard, into list_append, out of and back into a loop's state), so
-// building a list was quadratic although list_append itself pushes in place. A value with exactly ONE use in its
-// function -- one operand slot, or the function's result -- is moved there instead. There are no loops inside a
-// generated function (loops are lifted to their own functions), so one use is also its last use on every path.
+// Every use of a value used to be emitted as `x.clone()`, and a ValueList was a plain Vec: `xs.append(v)` copied the
+// whole list several times per call (into the guard, into the call, out of and back into a loop's state), so
+// building a list was quadratic although list_append itself pushes in place. A value is now MOVED at its last use:
+//   - a value with exactly one use (one operand slot anywhere, or the function's result) moves there;
+//   - a value with several uses, all of them in top-level nodes (none inside a CIf arm, so emission order is node
+//     order), moves at the highest-numbered node -- when that node names it once and the result doesn't use it.
+// There are no loops inside a generated function (loops are lifted to their own functions), so this is exact.
 
-type MoveSet = std::collections::HashSet<(bool, u32)>;   // (is_pool, index) of the refs used exactly once
+type MoveSet = std::collections::HashSet<((bool, u32), u32)>;   // (ref, node index) where the ref may move
+const RESULT_USE: u32 = u32::MAX;
 
 fn ref_key(r: &NodeRef) -> (bool, u32) {
     match r {
@@ -1855,23 +1858,33 @@ fn ref_key(r: &NodeRef) -> (bool, u32) {
     }
 }
 
-fn single_uses(bundle: &CoreBundle) -> MoveSet {
-    let mut uses: HashMap<(bool, u32), usize> = HashMap::new();
-    let mut count = |r: &NodeRef| *uses.entry(ref_key(r)).or_insert(0) += 1;
-    for node in &bundle.nodes {
+fn last_uses(bundle: &CoreBundle, top_level: &std::collections::HashSet<u32>) -> MoveSet {
+    let mut uses: HashMap<(bool, u32), Vec<u32>> = HashMap::new();
+    for (i, node) in bundle.nodes.iter().enumerate() {
+        let mut add = |r: &NodeRef| uses.entry(ref_key(r)).or_default().push(i as u32);
         match node {
-            Node::CCall { args, .. } => args.iter().for_each(&mut count),
-            Node::CIf { cond, then_, else_ } => { count(cond); count(then_); count(else_); }
+            Node::CCall { args, .. } => args.iter().for_each(&mut add),
+            Node::CIf { cond, then_, else_ } => { add(cond); add(then_); add(else_); }
             Node::CDeterminate => {}
         }
     }
-    count(&bundle.result);
-    uses.into_iter().filter(|(_, n)| *n == 1).map(|(k, _)| k).collect()
+    uses.entry(ref_key(&bundle.result)).or_default().push(RESULT_USE);
+    let mut out = MoveSet::new();
+    for (key, at) in uses {
+        let last = *at.iter().max().expect("a recorded use");
+        let once_there = at.iter().filter(|n| **n == last).count() == 1;
+        if at.len() == 1 {
+            out.insert((key, last));
+        } else if last != RESULT_USE && once_there && at.iter().all(|n| top_level.contains(n)) {
+            out.insert((key, last));
+        }
+    }
+    out
 }
 
-/// The value at its use: moved when this is its only use, else a clone.
-fn ref_take(r: &NodeRef, moves: &MoveSet) -> String {
-    if moves.contains(&ref_key(r)) { ref_expr(r) } else { ref_clone(r) }
+/// The value at its use in node `at`: moved when this is its last use, else a clone.
+fn ref_take(r: &NodeRef, at: u32, moves: &MoveSet) -> String {
+    if moves.contains(&(ref_key(r), at)) { ref_expr(r) } else { ref_clone(r) }
 }
 
 // ── Branch scoping (BRANCH_SCOPING_V1) ───────────────────────────────────────
@@ -2134,14 +2147,14 @@ fn render_scope(
                     i = i,
                     cond = ref_expr(cond),
                     then_body = then_body,
-                    then_tail = ref_take(then_, moves),
+                    then_tail = ref_take(then_, i as u32, moves),
                     else_body = else_body,
-                    else_tail = ref_take(else_, moves),
+                    else_tail = ref_take(else_, i as u32, moves),
                 ));
             }
             other => {
                 let expr = emit_node(
-                    other, pool_kinds, arg_kind_table, native_call_table,
+                    i as u32, other, pool_kinds, arg_kind_table, native_call_table,
                     builtin, registry, name_to_path, xbundle, pure_det, &bundle.constant_pool, moves,
                 )
                 .map_err(|e| format!("node[{}]: {}", i, e))?;
@@ -2155,6 +2168,7 @@ fn render_scope(
 // ── Node emission ─────────────────────────────────────────────────────────────
 
 fn emit_node(
+    at: u32,
     node: &Node,
     pool_kinds: &[PoolKind],
     arg_kind_table: &HashMap<&'static str, Vec<ArgKind>>,
@@ -2277,9 +2291,9 @@ fn emit_node(
                             }
                         }
                         arg_exprs.push(match native_types.and_then(|t| t.get(i)) {
-                            Some(NativeArgType::Value) => ref_take(arg, moves),   // a Value arg: moved when it can be
+                            Some(NativeArgType::Value) => ref_take(arg, at, moves),   // a Value arg: moved when it can be
                             Some(t) => format!("{}.{}()", ref_expr(arg), t.accessor()),
-                            None => ref_take(arg, moves),
+                            None => ref_take(arg, at, moves),
                         });
                     }
                 }
@@ -2332,8 +2346,8 @@ fn emit_node(
             // FAULT_AS_UNKNOWN: an Unknown condition chooses no branch -- the if yields that Unknown.
             Ok(format!(
                 "if axis_codegen_bridge::runtime::fault::is_unknown(&{c}) || axis_codegen_bridge::runtime::fault::is_err(&{c}) {{ {c}.clone() }} else if axis_codegen_bridge::runtime::value::truthy(&{c}) {{ {} }} else {{ {} }}",
-                ref_take(then_, moves),
-                ref_take(else_, moves),
+                ref_take(then_, at, moves),
+                ref_take(else_, at, moves),
                 c = ref_expr(cond),
             ))
         }
@@ -2737,7 +2751,6 @@ pub fn emit_rust_lib_from_bundle_with_dispatch(
     //   Data → `let pool_N = <constant expr>;`
     //   Param(i) → `let pool_N = __param_i.clone();`
     //   FnRef → no binding (resolved inline at callee position)
-    let moves = single_uses(bundle);
     let mut slot_uses: HashMap<u32, usize> = HashMap::new();
     for kind in &pool_kinds {
         if let PoolKind::Param(slot) = kind {
@@ -2773,6 +2786,9 @@ pub fn emit_rust_lib_from_bundle_with_dispatch(
     // before.
     let branch_paths = compute_branch_paths(bundle, pure_det)?;
     let scope_groups = group_by_scope(bundle.nodes.len(), &branch_paths);
+    let top_level: std::collections::HashSet<u32> =
+        scope_groups.get(&None).map(|v| v.iter().map(|i| *i as u32).collect()).unwrap_or_default();
+    let moves = last_uses(bundle, &top_level);
     out.push_str(&render_scope(
         None,
         &scope_groups,

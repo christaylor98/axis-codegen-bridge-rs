@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn missing_program_is_no_start_not_a_panic() {
-        let argv = Value::List(vec![]);
+        let argv = Value::List(vec![].into());
         assert_eq!(pty_open(intern_str("/nonexistent/program"), argv, 24, 80), Value::Int(NO_START));
     }
 

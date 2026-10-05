@@ -294,7 +294,7 @@ mod uaf_isolation_probe {
             let mut i: u64 = 0;
             while !w_stop.load(AtoOrd::Relaxed) {
                 let payload = format!("PAYLOAD-{:020}-END", i).into_bytes();
-                hotmem_write(Value::List(vec![Value::Bytes(payload)]));
+                hotmem_write(Value::List(vec![Value::Bytes(payload)].into()));
                 w_writes.fetch_add(1, AtoOrd::Relaxed);
                 i += 1;
             }
@@ -364,7 +364,7 @@ mod uaf_isolation_probe {
         let writer = thread::spawn(move || {
             for i in 0..WRITES {
                 let payload = format!("PAYLOAD-{:020}-END", i).into_bytes();
-                hotmem_write(Value::List(vec![Value::Bytes(payload)]));
+                hotmem_write(Value::List(vec![Value::Bytes(payload)].into()));
             }
             w_done.store(true, AtoOrd::Release);
         });

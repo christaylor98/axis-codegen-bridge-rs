@@ -24,7 +24,7 @@ fn make_payload(round: usize) -> Value {
             Value::List((0..1_000i64).map(Value::Int).collect()),
             Value::List((0..1_000i64).map(Value::Int).collect()),
             Value::List((0..1_000i64).map(Value::Int).collect()),
-        ]),
+        ].into()),
         _ => unreachable!(),
     }
 }

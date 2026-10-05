@@ -469,38 +469,38 @@ fn test_text_lt_greater() {
 #[test]
 fn test_list_concat_two_non_empty() {
     setup();
-    let a = Value::List(vec![Value::Int(1), Value::Int(2)]);
-    let b = Value::List(vec![Value::Int(3), Value::Int(4)]);
+    let a = Value::List(vec![Value::Int(1), Value::Int(2)].into());
+    let b = Value::List(vec![Value::Int(3), Value::Int(4)].into());
     let result = list::list_concat(a, b);
     assert_eq!(result, Value::List(vec![
         Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4),
-    ]));
+    ].into()));
 }
 
 #[test]
 fn test_list_concat_left_empty() {
     setup();
     let result = list::list_concat(
-        Value::List(vec![]),
-        Value::List(vec![Value::Int(1)]),
+        Value::List(vec![].into()),
+        Value::List(vec![Value::Int(1)].into()),
     );
-    assert_eq!(result, Value::List(vec![Value::Int(1)]));
+    assert_eq!(result, Value::List(vec![Value::Int(1)].into()));
 }
 
 #[test]
 fn test_list_concat_right_empty() {
     setup();
     let result = list::list_concat(
-        Value::List(vec![Value::Int(1)]),
-        Value::List(vec![]),
+        Value::List(vec![Value::Int(1)].into()),
+        Value::List(vec![].into()),
     );
-    assert_eq!(result, Value::List(vec![Value::Int(1)]));
+    assert_eq!(result, Value::List(vec![Value::Int(1)].into()));
 }
 
 #[test]
 fn test_list_str_len_lte_if_some_within_threshold() {
     setup();
-    let lst = Value::List(vec![s("hi"), s("world")]);
+    let lst = Value::List(vec![s("hi"), s("world")].into());
     // "hi" has len 2, threshold 3 → 1
     assert_eq!(
         list::list_str_len_lte_if_some(lst, 0, 3),
@@ -511,7 +511,7 @@ fn test_list_str_len_lte_if_some_within_threshold() {
 #[test]
 fn test_list_str_len_lte_if_some_exceeds_threshold() {
     setup();
-    let lst = Value::List(vec![s("hello")]);
+    let lst = Value::List(vec![s("hello")].into());
     // "hello" has len 5, threshold 3 → 0
     assert_eq!(
         list::list_str_len_lte_if_some(lst, 0, 3),
@@ -522,7 +522,7 @@ fn test_list_str_len_lte_if_some_exceeds_threshold() {
 #[test]
 fn test_list_str_len_lte_if_some_oob_index() {
     setup();
-    let lst = Value::List(vec![s("x")]);
+    let lst = Value::List(vec![s("x")].into());
     // index 5 is out of bounds → 0
     assert_eq!(
         list::list_str_len_lte_if_some(lst, 5, 10),
@@ -533,7 +533,7 @@ fn test_list_str_len_lte_if_some_oob_index() {
 #[test]
 fn test_list_str_len_lte_if_some_exact_threshold() {
     setup();
-    let lst = Value::List(vec![s("abc")]);
+    let lst = Value::List(vec![s("abc")].into());
     // "abc" has len 3, threshold 3 → 1 (≤ is inclusive)
     assert_eq!(
         list::list_str_len_lte_if_some(lst, 0, 3),
@@ -544,7 +544,7 @@ fn test_list_str_len_lte_if_some_exact_threshold() {
 #[test]
 fn test_list_get_println_if_some_in_bounds() {
     setup();
-    let lst = Value::List(vec![Value::Int(42)]);
+    let lst = Value::List(vec![Value::Int(42)].into());
     // prints "42" to stdout, returns Unit
     assert_eq!(list::list_get_println_if_some(lst, 0), Value::Unit);
 }
@@ -552,14 +552,14 @@ fn test_list_get_println_if_some_in_bounds() {
 #[test]
 fn test_list_get_println_if_some_oob() {
     setup();
-    let lst = Value::List(vec![Value::Int(1)]);
+    let lst = Value::List(vec![Value::Int(1)].into());
     assert_eq!(list::list_get_println_if_some(lst, 99), Value::Unit);
 }
 
 #[test]
 fn test_list_get_println_if_some_negative_index() {
     setup();
-    let lst = Value::List(vec![Value::Int(1)]);
+    let lst = Value::List(vec![Value::Int(1)].into());
     assert_eq!(list::list_get_println_if_some(lst, -1), Value::Unit);
 }
 
@@ -654,7 +654,7 @@ fn test_registry_get_provenance_not_found() {
 #[test]
 fn test_registry_all_entries_empty() {
     with_registry(|| {
-        assert_eq!(registry::registry_all_entries(Value::Unit), Value::List(vec![]));
+        assert_eq!(registry::registry_all_entries(Value::Unit), Value::List(vec![].into()));
     });
 }
 

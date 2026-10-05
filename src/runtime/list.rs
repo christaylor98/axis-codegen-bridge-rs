@@ -96,14 +96,14 @@ pub fn value_to_bool(v: Value) -> Value {
 
 #[track_caller]
 pub fn list_nil(_: Value) -> Value {
-    Value::List(vec![])
+    Value::List(super::value::ListBuf::new())
 }
 
 /// Build an M1 ValueList from its elements. Lowering target of
 /// `ValueList(T)(a, b, ...)`. Variadic, same calling convention as value_make.
 #[track_caller]
 pub fn list_make(args: Value) -> Value {
-    Value::List(super::tuple::fields_from_variadic(args))
+    Value::List(super::value::ListBuf::from(super::tuple::fields_from_variadic(args)))
 }
 
 #[track_caller]
@@ -112,9 +112,9 @@ pub fn list_cons(elem: Value, tail: Value) -> Value {
         Value::List(tail) => {
             let mut v = vec![elem];
             v.extend(tail);
-            Value::List(v)
+            Value::List(super::value::ListBuf::from(v))
         }
-        _ => Value::List(vec![elem]),
+        _ => Value::List(super::value::ListBuf::from(vec![elem])),
     }
 }
 
@@ -193,7 +193,7 @@ pub fn list_head(list: Value) -> Value {
 #[track_caller]
 pub fn list_tail(list: Value) -> Value {
     match list {
-        Value::List(es) if !es.is_empty() => Value::List(es[1..].to_vec()),
+        Value::List(es) if !es.is_empty() => Value::List(super::value::ListBuf::from(es[1..].to_vec())),
         Value::List(_) => panic!("list_tail: called on empty list"),
         _ => panic!("list_tail: expected List"),
     }
@@ -209,17 +209,17 @@ pub fn list_is_empty(list: Value) -> Value {
 
 #[track_caller]
 pub fn list_of_1(v: Value) -> Value {
-    Value::List(vec![v])
+    Value::List(super::value::ListBuf::from(vec![v]))
 }
 
 #[track_caller]
 pub fn list_of_2(a: Value, b: Value) -> Value {
-    Value::List(vec![a, b])
+    Value::List(super::value::ListBuf::from(vec![a, b]))
 }
 
 #[track_caller]
 pub fn list_of_3(a: Value, b: Value, c: Value) -> Value {
-    Value::List(vec![a, b, c])
+    Value::List(super::value::ListBuf::from(vec![a, b, c]))
 }
 
 /// Returns 1 if list[index] exists and str_len(list[index]) ≤ max_len, else 0. OOB-safe.

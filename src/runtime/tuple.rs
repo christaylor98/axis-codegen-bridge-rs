@@ -27,12 +27,14 @@ pub fn value_make(args: Value) -> Value {
 fn value_field(v: Value, idx: usize) -> Value {
     let n = match &v {
         Value::Ctor { fields, .. } => fields.len(),
-        Value::Tuple(es) | Value::List(es) => es.len(),
+        Value::Tuple(es) => es.len(),
+        Value::List(es) => es.len(),
         other => panic!("value_{}: not a compound value: {:?}", idx, other),
     };
     match v {
         Value::Ctor { fields, .. } => fields.into_iter().nth(idx),
-        Value::Tuple(es) | Value::List(es) => es.into_iter().nth(idx),
+        Value::Tuple(es) => es.into_iter().nth(idx),
+        Value::List(es) => es.into_iter().nth(idx),
         _ => None,
     }.unwrap_or_else(|| panic!("value_{}: index out of range (the value has {} fields)", idx, n))
 }
@@ -105,7 +107,7 @@ mod tests {
     fn tuple_field_still_reads_tuple_and_list() {
         let t = Value::Tuple(vec![Value::Int(1), Value::Int(2)]);
         assert_eq!(tuple_field(t, 1), Value::Int(2));
-        let l = Value::List(vec![Value::Int(5), Value::Int(6)]);
+        let l = Value::List(vec![Value::Int(5), Value::Int(6)].into());
         assert_eq!(tuple_field(l, 0), Value::Int(5));
     }
 }

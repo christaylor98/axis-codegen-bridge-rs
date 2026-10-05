@@ -24,7 +24,7 @@ pub fn range(args: Value) -> Value {
             } else {
                 Vec::new()
             };
-            Value::List(items)
+            Value::List(super::value::ListBuf::from(items))
         }
         _ => panic!("range: expected Tuple(Int, Int), got {:?}", args),
     }
@@ -127,7 +127,7 @@ pub fn flat_map(list: Value, callee: fn(Value) -> Value) -> Value {
                     ),
                 }
             }
-            Value::List(out)
+            Value::List(super::value::ListBuf::from(out))
         }
         other => panic!("flat_map: expected List, got {:?}", other),
     }
@@ -144,7 +144,7 @@ pub fn filter(list: Value, pred: fn(Value) -> Value) -> Value {
                 .into_iter()
                 .filter(|item| truthy(&pred(item.clone())))
                 .collect();
-            Value::List(out)
+            Value::List(super::value::ListBuf::from(out))
         }
         other => panic!("filter: expected List, got {:?}", other),
     }
@@ -158,7 +158,7 @@ pub fn map(list: Value, callee: fn(Value) -> Value) -> Value {
     match list {
         Value::List(items) => {
             let out: Vec<Value> = items.into_iter().map(callee).collect();
-            Value::List(out)
+            Value::List(super::value::ListBuf::from(out))
         }
         other => panic!("map: expected List, got {:?}", other),
     }
@@ -257,7 +257,7 @@ pub fn range_step(args: Value) -> Value {
                     i += step;
                 }
             }
-            Value::List(out)
+            Value::List(super::value::ListBuf::from(out))
         }
         _ => panic!("range_step: expected Tuple(Int, Int, Int), got {:?}", args),
     }
@@ -271,7 +271,7 @@ pub fn repeat(args: Value) -> Value {
             let v = es[0].clone();
             let n = es[1].as_int();
             let count = if n > 0 { n as usize } else { 0 };
-            Value::List(vec![v; count])
+            Value::List(super::value::ListBuf::from(vec![v; count]))
         }
         _ => panic!("repeat: expected Tuple(Value, Int), got {:?}", args),
     }
@@ -293,7 +293,7 @@ pub fn enumerate(list: Value) -> Value {
                     fields: vec![Value::Int(i as i64), v],
                 })
                 .collect();
-            Value::List(pairs)
+            Value::List(super::value::ListBuf::from(pairs))
         }
         other => panic!("enumerate: expected List, got {:?}", other),
     }
@@ -315,7 +315,7 @@ pub fn zip(args: Value) -> Value {
                         fields: vec![a.clone(), b.clone()],
                     })
                     .collect();
-                Value::List(pairs)
+                Value::List(super::value::ListBuf::from(pairs))
             }
             (a, b) => panic!("zip: expected Tuple(List, List), got ({:?}, {:?})", a, b),
         },
@@ -364,7 +364,7 @@ pub fn slice(args: Value) -> Value {
                 let lo = (*s).clamp(0, len) as usize;
                 let hi = (*e).clamp(0, len) as usize;
                 let hi = hi.max(lo);
-                Value::List(items[lo..hi].to_vec())
+                Value::List(super::value::ListBuf::from(items[lo..hi].to_vec()))
             }
             (a, b, c) => panic!(
                 "slice: expected Tuple(List, Int, Int), got ({:?}, {:?}, {:?})",
@@ -380,17 +380,23 @@ pub fn slice(args: Value) -> Value {
 pub fn flatten(list: Value) -> Value {
     match list {
         Value::List(items) => {
-            let mut out: Vec<Value> = Vec::new();
+            // SHARED_LIST_V1: the result grows from the first list's own storage -- no copy when it is unshared, and
+            // `flatten([xs])` (how PyAx re-types a list) is xs itself. Only the later lists' elements are moved in.
+            let mut out: Option<super::value::ListBuf> = None;
             for item in items {
                 match item {
-                    Value::List(inner) => out.extend(inner),
+                    Value::List(inner) => match out.as_mut() {
+                        None => out = Some(inner),
+                        Some(acc) if inner.is_empty() => { let _ = acc; }
+                        Some(acc) => acc.extend(inner),
+                    },
                     other => panic!(
                         "flatten: element must be List, got {:?}",
                         other
                     ),
                 }
             }
-            Value::List(out)
+            Value::List(out.unwrap_or_default())
         }
         other => panic!("flatten: expected List, got {:?}", other),
     }
