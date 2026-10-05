@@ -468,7 +468,7 @@ pub fn ir_free_vars(v: Value) -> Value {
         let sb = if let Value::Str(h) = b { get_str(h) } else { String::new() };
         sa.cmp(&sb)
     });
-    Value::List(result)
+    Value::List(super::value::ListBuf::from(result))
 }
 
 /// Write a Core IR 0.5 bundle to a file.
@@ -517,7 +517,7 @@ fn value_from_bundle_05(bundle: &crate::core_ir_05::CoreBundle) -> Value {
         Node::CIf { cond, then_, else_ } => make_ctor("CIf", vec![nr(cond), nr(then_), nr(else_)]),
         Node::CDeterminate => make_ctor("CDeterminate", vec![]),
     }).collect();
-    make_ctor("Bundle05", vec![Value::List(pool_vals), Value::List(node_vals), nr(&bundle.result)])
+    make_ctor("Bundle05", vec![Value::List(super::value::ListBuf::from(pool_vals)), Value::List(super::value::ListBuf::from(node_vals)), nr(&bundle.result)])
 }
 
 fn value_to_bundle_05(v: &Value) -> Result<crate::core_ir_05::CoreBundle, String> {
@@ -724,7 +724,7 @@ pub fn ir_build_program_from_spec(path: std::sync::Arc<str>) -> Value {
         let args = read_args(&mut idx, nargs, &format!("step {}", k));
         let call = make_ctor("Call", vec![
             Value::Str(intern_str(&fn_name)),
-            Value::List(args),
+            Value::List(super::value::ListBuf::from(args)),
         ]);
         steps.push((binding_name, call));
     }
@@ -746,7 +746,7 @@ pub fn ir_build_program_from_spec(path: std::sync::Arc<str>) -> Value {
     }
     let final_call = make_ctor("Call", vec![
         Value::Str(intern_str(&final_fn)),
-        Value::List(final_args),
+        Value::List(super::value::ListBuf::from(final_args)),
     ]);
 
     // Wrap steps in nested Let nodes, innermost first
@@ -859,7 +859,7 @@ pub fn ir_build_fold_from_spec(path: std::sync::Arc<str>) -> Value {
                         .unwrap_or_else(|_| panic!("ir_build_fold_from_spec: source_arg{}_val must be integer for type 2 (Argv), got {:?} in {}", i, val_str, path));
                     make_ctor("Call", vec![
                         Value::Str(intern_str("argv")),
-                        Value::List(vec![make_ctor("IntLit", vec![Value::Int(n)])]),
+                        Value::List(super::value::ListBuf::from(vec![make_ctor("IntLit", vec![Value::Int(n)])])),
                     ])
                 }
                 _ => panic!("ir_build_fold_from_spec: invalid source_arg{}_type {} in {}", i, typ_int, path),
@@ -873,14 +873,14 @@ pub fn ir_build_fold_from_spec(path: std::sync::Arc<str>) -> Value {
         let mut args = source_args;
         let piped = make_ctor("Call", vec![
             Value::Str(intern_str(&source_pipe_fn)),
-            Value::List(vec![args[0].clone()]),
+            Value::List(super::value::ListBuf::from(vec![args[0].clone()])),
         ]);
         args[0] = if source_pipe_unwrap.is_empty() {
             piped
         } else {
             make_ctor("Call", vec![
                 Value::Str(intern_str(&source_pipe_unwrap)),
-                Value::List(vec![piped]),
+                Value::List(super::value::ListBuf::from(vec![piped])),
             ])
         };
         args
@@ -890,7 +890,7 @@ pub fn ir_build_fold_from_spec(path: std::sync::Arc<str>) -> Value {
 
     let raw_source_call = make_ctor("Call", vec![
         Value::Str(intern_str(&source_fn)),
-        Value::List(source_args),
+        Value::List(super::value::ListBuf::from(source_args)),
     ]);
 
     // proc_args returns all argv including argv[0] (the binary name).
@@ -912,12 +912,12 @@ pub fn ir_build_fold_from_spec(path: std::sync::Arc<str>) -> Value {
             let final_sum_var = format!("_s{}", N - 2);
             let mut term = make_ctor("Call", vec![
                 Value::Str(intern_str("io_println")),
-                Value::List(vec![
+                Value::List(super::value::ListBuf::from(vec![
                     make_ctor("Call", vec![
                         Value::Str(intern_str("int_to_str")),
-                        Value::List(vec![make_ctor("Var", vec![Value::Str(intern_str(&final_sum_var))])]),
+                        Value::List(super::value::ListBuf::from(vec![make_ctor("Var", vec![Value::Str(intern_str(&final_sum_var))])])),
                     ]),
-                ]),
+                ])),
             ]);
 
             // Left-fold sum bindings inside-out: _s30=int_add(_s29,_b31) ... _s0=int_add(_b0,_b1)
@@ -929,10 +929,10 @@ pub fn ir_build_fold_from_spec(path: std::sync::Arc<str>) -> Value {
                     Value::Str(intern_str(&sum_name)),
                     make_ctor("Call", vec![
                         Value::Str(intern_str("int_add")),
-                        Value::List(vec![
+                        Value::List(super::value::ListBuf::from(vec![
                             make_ctor("Var", vec![Value::Str(intern_str(&lhs_name))]),
                             make_ctor("Var", vec![Value::Str(intern_str(&rhs_name))]),
-                        ]),
+                        ])),
                     ]),
                     term,
                 ]);
@@ -945,11 +945,11 @@ pub fn ir_build_fold_from_spec(path: std::sync::Arc<str>) -> Value {
                     Value::Str(intern_str(&b_name)),
                     make_ctor("Call", vec![
                         Value::Str(intern_str("list_str_len_lte_if_some")),
-                        Value::List(vec![
+                        Value::List(super::value::ListBuf::from(vec![
                             make_ctor("Var", vec![Value::Str(intern_str("lst"))]),
                             make_ctor("IntLit", vec![Value::Int((i + start_index) as i64)]),
                             make_ctor("IntLit", vec![Value::Int(threshold)]),
-                        ]),
+                        ])),
                     ]),
                     term,
                 ]);
@@ -971,10 +971,10 @@ pub fn ir_build_fold_from_spec(path: std::sync::Arc<str>) -> Value {
                 let iter_expr = if transform_fn == "io_println" {
                     make_ctor("Call", vec![
                         Value::Str(intern_str("list_get_println_if_some")),
-                        Value::List(vec![
+                        Value::List(super::value::ListBuf::from(vec![
                             make_ctor("Var", vec![Value::Str(intern_str("lst"))]),
                             make_ctor("IntLit", vec![Value::Int((i + start_index) as i64)]),
-                        ]),
+                        ])),
                     ])
                 } else {
                     // For other transforms: guard with CIf so option_unwrap is only
@@ -982,25 +982,25 @@ pub fn ir_build_fold_from_spec(path: std::sync::Arc<str>) -> Value {
                     // 0.5 lowering will still eager-evaluate both branches.
                     let cond = make_ctor("Call", vec![
                         Value::Str(intern_str("int_gt")),
-                        Value::List(vec![
+                        Value::List(super::value::ListBuf::from(vec![
                             make_ctor("Var", vec![Value::Str(intern_str("n"))]),
                             make_ctor("IntLit", vec![Value::Int((i + start_index) as i64)]),
-                        ]),
+                        ])),
                     ]);
                     let get_call = make_ctor("Call", vec![
                         Value::Str(intern_str("list_get_at")),
-                        Value::List(vec![
+                        Value::List(super::value::ListBuf::from(vec![
                             make_ctor("Var", vec![Value::Str(intern_str("lst"))]),
                             make_ctor("IntLit", vec![Value::Int((i + start_index) as i64)]),
-                        ]),
+                        ])),
                     ]);
                     let unwrapped = make_ctor("Call", vec![
                         Value::Str(intern_str("option_unwrap")),
-                        Value::List(vec![get_call]),
+                        Value::List(super::value::ListBuf::from(vec![get_call])),
                     ]);
                     let then_branch = make_ctor("Call", vec![
                         Value::Str(intern_str(&transform_fn)),
-                        Value::List(vec![unwrapped]),
+                        Value::List(super::value::ListBuf::from(vec![unwrapped])),
                     ]);
                     make_ctor("If", vec![cond, then_branch, make_ctor("UnitLit", vec![])])
                 };
@@ -1014,7 +1014,7 @@ pub fn ir_build_fold_from_spec(path: std::sync::Arc<str>) -> Value {
 
             let len_call = make_ctor("Call", vec![
                 Value::Str(intern_str("list_len")),
-                Value::List(vec![make_ctor("Var", vec![Value::Str(intern_str("lst"))])]),
+                Value::List(super::value::ListBuf::from(vec![make_ctor("Var", vec![Value::Str(intern_str("lst"))])])),
             ]);
             term = make_ctor("Let", vec![Value::Str(intern_str("n")), len_call, term]);
             make_ctor("Let", vec![Value::Str(intern_str("lst")), source_call, term])
@@ -1456,7 +1456,7 @@ threshold: 3
     #[test]
     fn list_str_len_lte_if_some_oob_returns_zero() {
         use super::super::list::list_str_len_lte_if_some;
-        let list = Value::List(vec![Value::Str(intern_str("hi"))]);
+        let list = Value::List(vec![Value::Str(intern_str("hi"))].into());
         // index 5 is OOB → 0
         let result = list_str_len_lte_if_some(list, 5, 3);
         assert!(matches!(result, Value::Int(0)));
@@ -1465,7 +1465,7 @@ threshold: 3
     #[test]
     fn list_str_len_lte_if_some_within_threshold() {
         use super::super::list::list_str_len_lte_if_some;
-        let list = Value::List(vec![Value::Str(intern_str("cat"))]);
+        let list = Value::List(vec![Value::Str(intern_str("cat"))].into());
         // "cat".len() == 3 ≤ 3 → 1
         let result = list_str_len_lte_if_some(list, 0, 3);
         assert!(matches!(result, Value::Int(1)));
@@ -1474,7 +1474,7 @@ threshold: 3
     #[test]
     fn list_str_len_lte_if_some_exceeds_threshold() {
         use super::super::list::list_str_len_lte_if_some;
-        let list = Value::List(vec![Value::Str(intern_str("hello"))]);
+        let list = Value::List(vec![Value::Str(intern_str("hello"))].into());
         // "hello".len() == 5 > 3 → 0
         let result = list_str_len_lte_if_some(list, 0, 3);
         assert!(matches!(result, Value::Int(0)));

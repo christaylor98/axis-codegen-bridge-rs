@@ -8,6 +8,14 @@
 
 use super::value::{intern_tag, truthy, Value};
 
+/// LOOPS_STOP_ON_UNKNOWN_V1: a callback that yields an Unknown or an Err (a failed assert / raise / fault in the loop
+/// body) ends the loop, and that value is the loop's result -- sticky, as everywhere else. Before this a driver
+/// kept going: an Unknown counts as truthy, so `while` re-ran its body on the poisoned state up to the iteration cap
+/// (found: a PyAx program spun at 100% CPU for 10 minutes after a failed assert).
+fn stuck(v: &Value) -> bool {
+    super::fault::is_unknown(v) || super::fault::is_err(v)
+}
+
 // ── List builders ────────────────────────────────────────────────────────────
 
 /// `range(start, end) -> ValueList(Int)` — half-open `[start, end)`.
@@ -24,7 +32,7 @@ pub fn range(args: Value) -> Value {
             } else {
                 Vec::new()
             };
-            Value::List(items)
+            Value::List(super::value::ListBuf::from(items))
         }
         _ => panic!("range: expected Tuple(Int, Int), got {:?}", args),
     }
@@ -42,7 +50,10 @@ pub fn foreach(list: Value, callee: fn(Value) -> Value) -> Value {
     match list {
         Value::List(items) => {
             for item in items {
-                let _ = callee(item);
+                let r = callee(item);
+                if stuck(&r) {
+                    return r;
+                }
             }
             Value::Unit
         }
@@ -58,6 +69,9 @@ pub fn loop_count(n: i64, init: Value, step: fn(Value) -> Value) -> Value {
     let iters = if n > 0 { n as u64 } else { 0 };
     for _ in 0..iters {
         acc = step(acc);
+        if stuck(&acc) {
+            return acc;
+        }
     }
     acc
 }
@@ -75,10 +89,17 @@ pub fn loop_while(
     let mut acc = init;
     let iters = if limit > 0 { limit as u64 } else { 0 };
     for _ in 0..iters {
-        if !truthy(&cond(acc.clone())) {
+        let c = cond(acc.clone());
+        if stuck(&c) {
+            return c;
+        }
+        if !truthy(&c) {
             break;
         }
         acc = step(acc);
+        if stuck(&acc) {
+            return acc;
+        }
     }
     acc
 }
@@ -102,6 +123,9 @@ pub fn fold(list: Value, init: Value, step: fn(Value) -> Value) -> Value {
             let mut acc = init;
             for item in items {
                 acc = step(Value::Tuple(vec![acc, item]));
+                if stuck(&acc) {
+                    return acc;
+                }
             }
             acc
         }
@@ -120,6 +144,7 @@ pub fn flat_map(list: Value, callee: fn(Value) -> Value) -> Value {
             let mut out: Vec<Value> = Vec::new();
             for item in items {
                 match callee(item) {
+                    r if stuck(&r) => return r,
                     Value::List(inner) => out.extend(inner),
                     other => panic!(
                         "flat_map: callee must return ValueList, got {:?}",
@@ -127,7 +152,7 @@ pub fn flat_map(list: Value, callee: fn(Value) -> Value) -> Value {
                     ),
                 }
             }
-            Value::List(out)
+            Value::List(super::value::ListBuf::from(out))
         }
         other => panic!("flat_map: expected List, got {:?}", other),
     }
@@ -140,11 +165,17 @@ pub fn flat_map(list: Value, callee: fn(Value) -> Value) -> Value {
 pub fn filter(list: Value, pred: fn(Value) -> Value) -> Value {
     match list {
         Value::List(items) => {
-            let out: Vec<Value> = items
-                .into_iter()
-                .filter(|item| truthy(&pred(item.clone())))
-                .collect();
-            Value::List(out)
+            let mut out: Vec<Value> = Vec::new();
+            for item in items {
+                let r = pred(item.clone());
+                if stuck(&r) {
+                    return r;
+                }
+                if truthy(&r) {
+                    out.push(item);
+                }
+            }
+            Value::List(super::value::ListBuf::from(out))
         }
         other => panic!("filter: expected List, got {:?}", other),
     }
@@ -157,8 +188,15 @@ pub fn filter(list: Value, pred: fn(Value) -> Value) -> Value {
 pub fn map(list: Value, callee: fn(Value) -> Value) -> Value {
     match list {
         Value::List(items) => {
-            let out: Vec<Value> = items.into_iter().map(callee).collect();
-            Value::List(out)
+            let mut out: Vec<Value> = Vec::new();
+            for item in items {
+                let r = callee(item);
+                if stuck(&r) {
+                    return r;
+                }
+                out.push(r);
+            }
+            Value::List(super::value::ListBuf::from(out))
         }
         other => panic!("map: expected List, got {:?}", other),
     }
@@ -170,7 +208,11 @@ pub fn any(list: Value, pred: fn(Value) -> Value) -> Value {
     match list {
         Value::List(items) => {
             for item in items {
-                if truthy(&pred(item)) {
+                let r = pred(item);
+                if stuck(&r) {
+                    return r;
+                }
+                if truthy(&r) {
                     return Value::Bool(true);
                 }
             }
@@ -186,7 +228,11 @@ pub fn all(list: Value, pred: fn(Value) -> Value) -> Value {
     match list {
         Value::List(items) => {
             for item in items {
-                if !truthy(&pred(item)) {
+                let r = pred(item);
+                if stuck(&r) {
+                    return r;
+                }
+                if !truthy(&r) {
                     return Value::Bool(false);
                 }
             }
@@ -203,7 +249,11 @@ pub fn find_index(list: Value, pred: fn(Value) -> Value) -> Value {
     match list {
         Value::List(items) => {
             for (i, item) in items.into_iter().enumerate() {
-                if truthy(&pred(item)) {
+                let r = pred(item);
+                if stuck(&r) {
+                    return r;
+                }
+                if truthy(&r) {
                     return Value::Int(i as i64);
                 }
             }
@@ -220,7 +270,11 @@ pub fn count(list: Value, pred: fn(Value) -> Value) -> Value {
         Value::List(items) => {
             let mut n: i64 = 0;
             for item in items {
-                if truthy(&pred(item)) {
+                let r = pred(item);
+                if stuck(&r) {
+                    return r;
+                }
+                if truthy(&r) {
                     n += 1;
                 }
             }
@@ -257,7 +311,7 @@ pub fn range_step(args: Value) -> Value {
                     i += step;
                 }
             }
-            Value::List(out)
+            Value::List(super::value::ListBuf::from(out))
         }
         _ => panic!("range_step: expected Tuple(Int, Int, Int), got {:?}", args),
     }
@@ -271,7 +325,7 @@ pub fn repeat(args: Value) -> Value {
             let v = es[0].clone();
             let n = es[1].as_int();
             let count = if n > 0 { n as usize } else { 0 };
-            Value::List(vec![v; count])
+            Value::List(super::value::ListBuf::from(vec![v; count]))
         }
         _ => panic!("repeat: expected Tuple(Value, Int), got {:?}", args),
     }
@@ -293,7 +347,7 @@ pub fn enumerate(list: Value) -> Value {
                     fields: vec![Value::Int(i as i64), v],
                 })
                 .collect();
-            Value::List(pairs)
+            Value::List(super::value::ListBuf::from(pairs))
         }
         other => panic!("enumerate: expected List, got {:?}", other),
     }
@@ -315,7 +369,7 @@ pub fn zip(args: Value) -> Value {
                         fields: vec![a.clone(), b.clone()],
                     })
                     .collect();
-                Value::List(pairs)
+                Value::List(super::value::ListBuf::from(pairs))
             }
             (a, b) => panic!("zip: expected Tuple(List, List), got ({:?}, {:?})", a, b),
         },
@@ -364,7 +418,7 @@ pub fn slice(args: Value) -> Value {
                 let lo = (*s).clamp(0, len) as usize;
                 let hi = (*e).clamp(0, len) as usize;
                 let hi = hi.max(lo);
-                Value::List(items[lo..hi].to_vec())
+                Value::List(super::value::ListBuf::from(items[lo..hi].to_vec()))
             }
             (a, b, c) => panic!(
                 "slice: expected Tuple(List, Int, Int), got ({:?}, {:?}, {:?})",
@@ -380,18 +434,75 @@ pub fn slice(args: Value) -> Value {
 pub fn flatten(list: Value) -> Value {
     match list {
         Value::List(items) => {
-            let mut out: Vec<Value> = Vec::new();
+            // SHARED_LIST_V1: the result grows from the first list's own storage -- no copy when it is unshared, and
+            // `flatten([xs])` (how PyAx re-types a list) is xs itself. Only the later lists' elements are moved in.
+            let mut out: Option<super::value::ListBuf> = None;
             for item in items {
                 match item {
-                    Value::List(inner) => out.extend(inner),
+                    Value::List(inner) => match out.as_mut() {
+                        None => out = Some(inner),
+                        Some(acc) if inner.is_empty() => { let _ = acc; }
+                        Some(acc) => acc.extend(inner),
+                    },
                     other => panic!(
                         "flatten: element must be List, got {:?}",
                         other
                     ),
                 }
             }
-            Value::List(out)
+            Value::List(out.unwrap_or_default())
         }
         other => panic!("flatten: expected List, got {:?}", other),
+    }
+}
+
+#[cfg(test)]
+mod stop_on_unknown_tests {
+    // LOOPS_STOP_ON_UNKNOWN_V1: a callback yielding an Unknown/Err ends the driver with that value.
+    use super::*;
+    use crate::runtime::fault;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static STEPS: AtomicUsize = AtomicUsize::new(0);
+
+    fn bad() -> Value { fault::unknown("test", "step", "boom", "here") }
+    fn ints(xs: &[i64]) -> Value { Value::List(xs.iter().map(|x| Value::Int(*x)).collect()) }
+
+    fn step_poisons_at_3(acc: Value) -> Value {
+        STEPS.fetch_add(1, Ordering::SeqCst);
+        if acc.as_int() >= 3 { bad() } else { Value::Int(acc.as_int() + 1) }
+    }
+    fn always(_: Value) -> Value { Value::Bool(true) }
+    fn cond_unknown(_: Value) -> Value { bad() }
+    fn neg_is_bad(v: Value) -> Value { if v.as_int() < 0 { bad() } else { Value::Bool(v.as_int() > 0) } }
+    fn fold_step(args: Value) -> Value {
+        match args { Value::Tuple(es) => if es[1].as_int() < 0 { bad() } else { Value::Int(es[0].as_int() + es[1].as_int()) }, _ => unreachable!() }
+    }
+
+    #[test]
+    fn loop_while_stops_when_the_step_yields_an_unknown() {
+        STEPS.store(0, Ordering::SeqCst);
+        let r = loop_while(Value::Int(0), always, step_poisons_at_3, Value::Int(1_000_000_000));
+        assert!(fault::is_unknown(&r));
+        assert_eq!(STEPS.load(Ordering::SeqCst), 4);              // 0,1,2 -> 3, then the poisoned step: not 10^9
+    }
+
+    #[test]
+    fn loop_while_stops_when_the_condition_yields_an_unknown() {
+        let r = loop_while(Value::Int(0), cond_unknown, step_poisons_at_3, Value::Int(10));
+        assert!(fault::is_unknown(&r));
+    }
+
+    #[test]
+    fn fold_map_filter_and_the_predicates_stop_on_an_unknown() {
+        assert!(fault::is_unknown(&fold(ints(&[1, 2, -1, 4]), Value::Int(0), fold_step)));
+        assert_eq!(fold(ints(&[1, 2, 3]), Value::Int(0), fold_step), Value::Int(6));   // and still fold
+        for r in [map(ints(&[1, -1, 2]), neg_is_bad), filter(ints(&[1, -1, 2]), neg_is_bad),
+                  any(ints(&[0, -1, 2]), neg_is_bad), all(ints(&[1, -1, 2]), neg_is_bad),
+                  count(ints(&[1, -1, 2]), neg_is_bad), find_index(ints(&[0, -1, 2]), neg_is_bad),
+                  foreach(ints(&[1, -1, 2]), neg_is_bad), loop_count(10, Value::Int(0), step_poisons_at_3)] {
+            assert!(fault::is_unknown(&r), "{:?}", r);
+        }
+        assert_eq!(filter(ints(&[0, 1, 2]), neg_is_bad), ints(&[1, 2]));               // unchanged otherwise
     }
 }

@@ -26,6 +26,12 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("int_add",         "axis_codegen_bridge::runtime::arith::int_add");
     m.insert("int_sub",         "axis_codegen_bridge::runtime::arith::int_sub");
     m.insert("int_mul",         "axis_codegen_bridge::runtime::arith::int_mul");
+    m.insert("int_shl",         "axis_codegen_bridge::runtime::arith::int_shl");
+    m.insert("int_shr",         "axis_codegen_bridge::runtime::arith::int_shr");
+    m.insert("int_bit_and",     "axis_codegen_bridge::runtime::arith::int_bit_and");
+    m.insert("int_bit_or",      "axis_codegen_bridge::runtime::arith::int_bit_or");
+    m.insert("int_bit_xor",     "axis_codegen_bridge::runtime::arith::int_bit_xor");
+    m.insert("int_bit_not",     "axis_codegen_bridge::runtime::arith::int_bit_not");
     m.insert("int_div",         "axis_codegen_bridge::runtime::arith::int_div");
     m.insert("fail",            "axis_codegen_bridge::runtime::fail::fail");
     m.insert("int_div_checked", "axis_codegen_bridge::runtime::arith::int_div_checked");
@@ -154,6 +160,12 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("list_get_println_if_some",   "axis_codegen_bridge::runtime::list::list_get_println_if_some");
     m.insert("list_str_len_lte_if_some",   "axis_codegen_bridge::runtime::list::list_str_len_lte_if_some");
     m.insert("list_append",              "axis_codegen_bridge::runtime::list::list_append");
+    // PYAX_LIST_IN_PLACE_V1: ValueList-typed updates that write in place when the list is unshared
+    m.insert("value_list_push",          "axis_codegen_bridge::runtime::list::list_append");
+    m.insert("list_set",                 "axis_codegen_bridge::runtime::list::list_set");
+    m.insert("list_insert",              "axis_codegen_bridge::runtime::list::list_insert");
+    m.insert("list_remove",              "axis_codegen_bridge::runtime::list::list_remove");
+    m.insert("list_drop_last",           "axis_codegen_bridge::runtime::list::list_drop_last");
     m.insert("list_concat",   "axis_codegen_bridge::runtime::list::list_concat");
     m.insert("list_reverse",  "axis_codegen_bridge::runtime::list::list_reverse");
     m.insert("list_head",     "axis_codegen_bridge::runtime::list::list_head");
@@ -709,6 +721,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     // tag. Panics naming the actual tag found on mismatch, same as value_list_to_*_list.
     m.insert("value_to_int",                      "axis_codegen_bridge::runtime::list::value_to_int");
     m.insert("value_to_text",                     "axis_codegen_bridge::runtime::list::value_to_text");
+    m.insert("value_to_bytes",           "axis_codegen_bridge::runtime::list::value_to_bytes");
     m.insert("value_to_bool",                     "axis_codegen_bridge::runtime::list::value_to_bool");
 
     m
@@ -1154,6 +1167,12 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("int_add",           vec![Int, Int]);
     m.insert("int_sub",           vec![Int, Int]);
     m.insert("int_mul",           vec![Int, Int]);
+    m.insert("int_shl",           vec![Int, Int]);
+    m.insert("int_shr",           vec![Int, Int]);
+    m.insert("int_bit_and",       vec![Int, Int]);
+    m.insert("int_bit_or",        vec![Int, Int]);
+    m.insert("int_bit_xor",       vec![Int, Int]);
+    m.insert("int_bit_not",       vec![Int]);
     m.insert("int_lt",            vec![Int, Int]);
     m.insert("cell_new_raw",      vec![Int]);
     m.insert("cell_cas_raw",      vec![Int, Int, Int]);
@@ -1164,6 +1183,11 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("tuple_field",       vec![Value, Int]);
     m.insert("list_get",          vec![Value, Int]);
     m.insert("list_append",       vec![Value, Value]);
+    m.insert("value_list_push",   vec![Value, Value]);
+    m.insert("list_set",          vec![Value, Int, Value]);
+    m.insert("list_insert",       vec![Value, Int, Value]);
+    m.insert("list_remove",       vec![Value, Int]);
+    m.insert("list_drop_last",    vec![Value]);
     m.insert("list_of_2",         vec![Value, Value]);
     m.insert("list_of_3",         vec![Value, Value, Value]);
     // 3rd slot is the FnRef arg (step) — its accessor is never used (FnRef
@@ -1883,6 +1907,60 @@ fn ref_clone(r: &NodeRef) -> String {
     format!("{}.clone()", ref_expr(r))
 }
 
+// ── Move on last use (MOVE_ON_LAST_USE_V1) ───────────────────────────────────
+//
+// Every use of a value used to be emitted as `x.clone()`, and a ValueList was a plain Vec: `xs.append(v)` copied the
+// whole list several times per call (into the guard, into the call, out of and back into a loop's state), so
+// building a list was quadratic although list_append itself pushes in place. A value is now MOVED at its last use:
+//   - a value with exactly one use (one operand slot anywhere, or the function's result) moves there;
+//   - a value with several uses, all of them in top-level nodes (none inside a CIf arm, so emission order is node
+//     order), moves at the highest-numbered node -- when that node names it once and the result doesn't use it.
+// There are no loops inside a generated function (loops are lifted to their own functions), so this is exact.
+
+type MoveSet = std::collections::HashSet<((bool, u32), u32)>;   // (ref, node index) where the ref may move
+const RESULT_USE: u32 = u32::MAX;
+
+fn ref_key(r: &NodeRef) -> (bool, u32) {
+    match r {
+        NodeRef::Node(i) => (false, *i),
+        NodeRef::Pool(i) => (true, *i),
+    }
+}
+
+fn last_uses(bundle: &CoreBundle, top_level: &std::collections::HashSet<u32>, copies: &[usize]) -> MoveSet {
+    let mut uses: HashMap<(bool, u32), Vec<u32>> = HashMap::new();
+    for (i, node) in bundle.nodes.iter().enumerate() {
+        // a node emitted in several scopes (GUARDED_SHARED_PURE_V1) uses its operands once per copy
+        let mut add = |r: &NodeRef| {
+            for _ in 0..copies[i] {
+                uses.entry(ref_key(r)).or_default().push(i as u32);
+            }
+        };
+        match node {
+            Node::CCall { args, .. } => args.iter().for_each(&mut add),
+            Node::CIf { cond, then_, else_ } => { add(cond); add(then_); add(else_); }
+            Node::CDeterminate => {}
+        }
+    }
+    uses.entry(ref_key(&bundle.result)).or_default().push(RESULT_USE);
+    let mut out = MoveSet::new();
+    for (key, at) in uses {
+        let last = *at.iter().max().expect("a recorded use");
+        let once_there = at.iter().filter(|n| **n == last).count() == 1;
+        if at.len() == 1 {
+            out.insert((key, last));
+        } else if last != RESULT_USE && once_there && at.iter().all(|n| top_level.contains(n)) {
+            out.insert((key, last));
+        }
+    }
+    out
+}
+
+/// The value at its use in node `at`: moved when this is its last use, else a clone.
+fn ref_take(r: &NodeRef, at: u32, moves: &MoveSet) -> String {
+    if moves.contains(&(ref_key(r), at)) { ref_expr(r) } else { ref_clone(r) }
+}
+
 // ── Branch scoping (BRANCH_SCOPING_V1) ───────────────────────────────────────
 //
 // The flat node list would, if emitted as a straight-line sequence of
@@ -1906,7 +1984,7 @@ fn ref_clone(r: &NodeRef) -> String {
 // index j, i < j"), so by the time we compute node i's required scope, every
 // consumer j (j > i) already has its own scope resolved.
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 enum Branch {
     Then,
     Else,
@@ -2137,6 +2215,7 @@ fn render_scope(
     name_to_path: &HashMap<&'static str, &'static str>,
     xbundle: &HashMap<Hash256, String>,
     pure_det: &std::collections::HashSet<Hash256>,
+    moves: &MoveSet,
 ) -> Result<String, String> {
     let mut out = String::new();
     let Some(indices) = groups.get(&key) else { return Ok(out) };
@@ -2160,11 +2239,11 @@ fn render_scope(
                 }
                 let then_body = render_scope(
                     Some((i as u32, Branch::Then)), groups, bundle, pool_kinds,
-                    arg_kind_table, native_call_table, builtin, registry, name_to_path, xbundle, pure_det,
+                    arg_kind_table, native_call_table, builtin, registry, name_to_path, xbundle, pure_det, moves,
                 )?;
                 let else_body = render_scope(
                     Some((i as u32, Branch::Else)), groups, bundle, pool_kinds,
-                    arg_kind_table, native_call_table, builtin, registry, name_to_path, xbundle, pure_det,
+                    arg_kind_table, native_call_table, builtin, registry, name_to_path, xbundle, pure_det, moves,
                 )?;
                 out.push_str(&format!(
                     // FAULT_AS_UNKNOWN: an Unknown condition chooses no branch; the if yields it (never a swallow).
@@ -2174,15 +2253,15 @@ fn render_scope(
                     i = i,
                     cond = ref_expr(cond),
                     then_body = then_body,
-                    then_tail = ref_clone(then_),
+                    then_tail = ref_take(then_, i as u32, moves),
                     else_body = else_body,
-                    else_tail = ref_clone(else_),
+                    else_tail = ref_take(else_, i as u32, moves),
                 ));
             }
             other => {
                 let expr = emit_node(
-                    other, pool_kinds, arg_kind_table, native_call_table,
-                    builtin, registry, name_to_path, xbundle, pure_det, &bundle.constant_pool,
+                    i as u32, other, pool_kinds, arg_kind_table, native_call_table,
+                    builtin, registry, name_to_path, xbundle, pure_det, &bundle.constant_pool, moves,
                 )
                 .map_err(|e| format!("node[{}]: {}", i, e))?;
                 out.push_str(&format!("    let node_{}: Value = {};\n", i, expr));
@@ -2195,6 +2274,7 @@ fn render_scope(
 // ── Node emission ─────────────────────────────────────────────────────────────
 
 fn emit_node(
+    at: u32,
     node: &Node,
     pool_kinds: &[PoolKind],
     arg_kind_table: &HashMap<&'static str, Vec<ArgKind>>,
@@ -2205,6 +2285,7 @@ fn emit_node(
     xbundle: &HashMap<Hash256, String>,
     pure_det: &std::collections::HashSet<Hash256>,
     constant_pool: &[ConstantPoolEntry],
+    moves: &MoveSet,
 ) -> Result<String, String> {
     match node {
         Node::CCall { target_identity, args, target_name } => {
@@ -2316,8 +2397,11 @@ fn emit_node(
                             }
                         }
                         arg_exprs.push(match native_types.and_then(|t| t.get(i)) {
+                            Some(NativeArgType::Value) => ref_take(arg, at, moves),   // a Value arg: moved when it can be
+                            Some(NativeArgType::Bytes) if moves.contains(&(ref_key(arg), at)) =>
+                                format!("{}.into_bytes()", ref_expr(arg)),           // its last use: owned, no copy
                             Some(t) => format!("{}.{}()", ref_expr(arg), t.accessor()),
-                            None => ref_clone(arg),
+                            None => ref_take(arg, at, moves),
                         });
                     }
                 }
@@ -2346,8 +2430,10 @@ fn emit_node(
                 .collect();
             // An effectful builtin (not declared pure + deterministic) does not run after this entry has faulted.
             let effectful = !call_is_pure_det(target_identity, args, constant_pool, pure_det);
-            Ok(format!("axis_codegen_bridge::runtime::fault::guard({:?}, {}, &[{}], || {})",
-                       name, effectful, data_refs.join(", "), body))
+            // MOVE_ON_LAST_USE_V1: the borrowing pre-check ends with its `let`, so the call may take moved values.
+            Ok(format!("{{ let __pre = axis_codegen_bridge::runtime::fault::guard_pre({}, &[{}]); \
+                        match __pre {{ Some(v) => v, None => axis_codegen_bridge::runtime::fault::guard_run({:?}, {}, || {}) }} }}",
+                       effectful, data_refs.join(", "), name, effectful, body))
         }
         Node::CIf { cond, then_, else_ } => {
             // cond / then / else are Data positions. A Fn-typed pool ref here
@@ -2368,8 +2454,8 @@ fn emit_node(
             // FAULT_AS_UNKNOWN: an Unknown condition chooses no branch -- the if yields that Unknown.
             Ok(format!(
                 "if axis_codegen_bridge::runtime::fault::is_unknown(&{c}) || axis_codegen_bridge::runtime::fault::is_err(&{c}) {{ {c}.clone() }} else if axis_codegen_bridge::runtime::value::truthy(&{c}) {{ {} }} else {{ {} }}",
-                ref_clone(then_),
-                ref_clone(else_),
+                ref_take(then_, at, moves),
+                ref_take(else_, at, moves),
                 c = ref_expr(cond),
             ))
         }
@@ -2449,7 +2535,7 @@ pub fn sanitise(name: &str) -> String {
 ///   (`ax_fn_<64hex>`). Populated from `--lib` / `--lib-dir` bundles by the driver.
 ///
 /// The generated library exposes:
-///   `#[no_mangle] pub extern "C" fn <fn_name>(args: Value) -> Value`
+///   `pub extern "C" fn <fn_name>(args: Value) -> Value`   ← Rust-mangled (USER_NAMES_STAY_MANGLED_V1)
 ///   `#[no_mangle] pub extern "C" fn ax_fn_<hex>(args: Value) -> Value`  ← identity export
 ///   `#[no_mangle] pub extern "C" fn _ax_exe_<fn_name>(args: Value) -> Value`
 pub fn emit_rust_lib_from_bundle(
@@ -2712,9 +2798,13 @@ pub fn emit_rust_lib_from_bundle_with_dispatch(
         out.push_str("\n");
     }
 
-    // Emit main function
+    // Emit main function. NOT #[no_mangle] (USER_NAMES_STAY_MANGLED_V1): an unmangled export takes the bare C
+    // symbol, so a user fn named `write`, `read`, `free`, `time`... replaced the C library's own -- the first print
+    // jumped into the user's `write` (segfault), `free`/`read` hung the program. Nothing links this name: other
+    // bundles and every harness call the identity export `ax_fn_<hash>`, the exe driver calls `_ax_exe_<name>`,
+    // both below and both still unmangled.
     out.push_str(&format!(
-        "#[no_mangle]\npub extern \"C-unwind\" fn {}(args: Value) -> Value {{\n",
+        "#[allow(non_snake_case)]\npub extern \"C-unwind\" fn {}(args: Value) -> Value {{\n",
         safe_name
     ));
     out.push_str("    init_runtime();\n");
@@ -2751,11 +2841,11 @@ pub fn emit_rust_lib_from_bundle_with_dispatch(
     match param_count {
         0 => {}
         1 => {
-            out.push_str("    let __param_0: Value = args.clone();\n");
+            out.push_str("    let __param_0: Value = args;\n");      // MOVE_ON_LAST_USE_V1: args is not used again
         }
         n => {
             out.push_str(&format!(
-                "    let (__params_vec): Vec<Value> = match args.clone() {{\n\
+                "    #[allow(unused_mut)] let mut __params_vec: Vec<Value> = match args {{\n\
                  \x20       Value::Tuple(es) if es.len() == {n} => es,\n\
                  \x20       other => panic!(\"{safe_name}: expected Value::Tuple of {n} args, got {{:?}}\", other),\n\
                  \x20   }};\n",
@@ -2763,7 +2853,7 @@ pub fn emit_rust_lib_from_bundle_with_dispatch(
             ));
             for i in 0..n {
                 out.push_str(&format!(
-                    "    let __param_{i}: Value = __params_vec[{i}].clone();\n", i = i,
+                    "    let __param_{i}: Value = std::mem::replace(&mut __params_vec[{i}], Value::Unit);\n", i = i,
                 ));
             }
         }
@@ -2773,15 +2863,23 @@ pub fn emit_rust_lib_from_bundle_with_dispatch(
     //   Data → `let pool_N = <constant expr>;`
     //   Param(i) → `let pool_N = __param_i.clone();`
     //   FnRef → no binding (resolved inline at callee position)
+    let mut slot_uses: HashMap<u32, usize> = HashMap::new();
+    for kind in &pool_kinds {
+        if let PoolKind::Param(slot) = kind {
+            *slot_uses.entry(*slot).or_insert(0) += 1;
+        }
+    }
     for (i, kind) in pool_kinds.iter().enumerate() {
         match kind {
             PoolKind::Data(expr) => {
                 out.push_str(&format!("    let pool_{}: Value = {};\n", i, expr));
             }
             PoolKind::Param(slot) => {
+                // one pool entry per param slot (the usual case): the param moves into it
+                let take = if slot_uses.get(slot) == Some(&1) { "" } else { ".clone()" };
                 out.push_str(&format!(
-                    "    let pool_{}: Value = __param_{}.clone();\n",
-                    i, slot
+                    "    let pool_{}: Value = __param_{}{};\n",
+                    i, slot, take
                 ));
             }
             PoolKind::FnRef(_) => {}
@@ -2800,6 +2898,10 @@ pub fn emit_rust_lib_from_bundle_with_dispatch(
     // before.
     let branch_paths = compute_branch_paths(bundle, pure_det)?;
     let scope_groups = group_by_scope(bundle.nodes.len(), &branch_paths);
+    let top_level: std::collections::HashSet<u32> =
+        scope_groups.get(&None).map(|v| v.iter().map(|i| *i as u32).collect()).unwrap_or_default();
+    let copies: Vec<usize> = branch_paths.iter().map(|p| p.len()).collect();
+    let moves = last_uses(bundle, &top_level, &copies);
     out.push_str(&render_scope(
         None,
         &scope_groups,
@@ -2812,6 +2914,7 @@ pub fn emit_rust_lib_from_bundle_with_dispatch(
         &name_to_path,
         xbundle_providers,
         pure_det,
+        &moves,
     )?);
 
     // Result: the bundle's own authoritative `result` ref (BUG2_RESULT_FIELD_V1)

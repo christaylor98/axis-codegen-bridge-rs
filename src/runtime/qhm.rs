@@ -406,8 +406,8 @@ fn lf_flush() {
 /// its content hash into the selected variant's index. Insert-if-absent (content
 /// immutable). No fsync, no disk I/O. `off` no-ops.
 #[track_caller]
-pub fn qhm_put(hash: std::sync::Arc<str>, bytes: Vec<u8>) -> Value {
-    lf_put(hash.to_string(), bytes);
+pub fn qhm_put(hash: std::sync::Arc<str>, bytes: super::value::BytesBuf) -> Value {
+    lf_put(hash.to_string(), bytes.into_vec());
     Value::Unit
 }
 
@@ -415,7 +415,7 @@ pub fn qhm_put(hash: std::sync::Arc<str>, bytes: Vec<u8>) -> Value {
 /// (caller falls through to the existing durable tiers).
 #[track_caller]
 pub fn qhm_get(hash: std::sync::Arc<str>) -> Value {
-    Value::Bytes(lf_get(&hash))
+    Value::Bytes(lf_get(&hash).into())
 }
 
 /// `qhm_flush(_: Unit) -> Unit` — seal every shard's pending batch so the whole

@@ -55,11 +55,11 @@ const BATCH_MARK: i64 = 200;
 fn synth_frame(i: usize) -> Value {
     // Small fixed-size payload; frame CONTENT is irrelevant to the fsync-cost
     // question, only frame COUNT/total bytes matter for the WAL segment write.
-    Value::Bytes(format!("frame-payload-{:06}", i).into_bytes())
+    Value::Bytes(format!("frame-payload-{:06}", i).into_bytes().into())
 }
 
 fn synth_bind_line(i: usize) -> Value {
-    Value::Bytes(format!("{}\tBIND\tsha256:{:064x}\n", i, i).into_bytes())
+    Value::Bytes(format!("{}\tBIND\tsha256:{:064x}\n", i, i).into_bytes().into())
 }
 
 /// Deterministic name-log path for slot `i` out of `cardinality` distinct names.

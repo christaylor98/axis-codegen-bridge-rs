@@ -71,5 +71,5 @@ pub fn fs_read_range(path: std::sync::Arc<str>, offset: i64, len: i64) -> Value 
             &format!("bytes={}\twall_ns={}\tcpu_ns={}", buf.len(), wall, cpu),
         );
     }
-    Value::Bytes(buf)
+    Value::Bytes(buf.into())
 }

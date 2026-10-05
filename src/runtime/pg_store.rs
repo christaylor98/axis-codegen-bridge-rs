@@ -158,7 +158,7 @@ fn provision_scratch_db() -> String {
 /// `objseg::seg_append` — one pwrite + one fsync); the postgres row is only
 /// the pointer.
 #[track_caller]
-pub fn pg_bytes_put(addr: std::sync::Arc<str>, content: Vec<u8>) -> Value {
+pub fn pg_bytes_put(addr: std::sync::Arc<str>, content: super::value::BytesBuf) -> Value {
     let addr = addr.to_string();
     let (seg_id, off) = super::objseg::seg_append(&content);
     let len = content.len() as i64;
@@ -191,9 +191,9 @@ pub fn pg_bytes_get(addr: std::sync::Arc<str>) -> Value {
             let seg_id: i64 = row.get(0);
             let off: i64 = row.get(1);
             let len: i64 = row.get(2);
-            Value::Bytes(super::objseg::seg_read(seg_id, off, len))
+            Value::Bytes(super::objseg::seg_read(seg_id, off, len).into())
         }
-        None => Value::Bytes(Vec::new()),
+        None => Value::Bytes(Vec::new().into()),
     }
 }
 
@@ -207,7 +207,7 @@ pub fn pg_bytes_get(addr: std::sync::Arc<str>) -> Value {
 /// two-step crash window, and the segment append itself is durable
 /// (fsync'd) before any pointer row can reference it.
 #[track_caller]
-pub fn pg_obj_block_put(block: Vec<u8>, index: std::sync::Arc<str>) -> Value {
+pub fn pg_obj_block_put(block: super::value::BytesBuf, index: std::sync::Arc<str>) -> Value {
     let index = index.to_string();
 
     let mut objs: Vec<(String, i64, i64)> = Vec::new(); // (addr, off-in-block, len)
@@ -327,7 +327,7 @@ mod tests {
     #[test]
     fn round_trips() {
         let a1 = intern_str("sha256:aa");
-        let res = pg_bytes_put(a1.clone(), b"hello".to_vec());
+        let res = pg_bytes_put(a1.clone(), b"hello".to_vec().into());
         assert_eq!(res, Value::Unit);
 
         let got = pg_bytes_get(a1.clone());
@@ -360,7 +360,7 @@ mod tests {
         let block = b"AAAthequickBBBbrownfox".to_vec();
         let index = "sha256:x\t3\t8\nsha256:y\t14\t8\n";
         assert_eq!(
-            pg_obj_block_put(block, intern_str(index)),
+            pg_obj_block_put(block.into(), intern_str(index)),
             Value::Unit
         );
         match pg_bytes_get(intern_str("sha256:x")) {

@@ -147,7 +147,7 @@ fn parse_canonical(data: &[u8]) -> Value {
                 }
                 nodes.push(Value::Ctor {
                     tag:    intern_tag("CCall"),
-                    fields: vec![name_val, identity, Value::List(args)],
+                    fields: vec![name_val, identity, Value::List(super::value::ListBuf::from(args))],
                 });
             }
             1 => {
@@ -169,7 +169,7 @@ fn parse_canonical(data: &[u8]) -> Value {
 
     let (result, _pos) = read_edge(data, pos, node_count as u32, pool_len);
 
-    Value::Tuple(vec![Value::List(pool), Value::List(nodes), result])
+    Value::Tuple(vec![Value::List(super::value::ListBuf::from(pool)), Value::List(super::value::ListBuf::from(nodes)), result])
 }
 
 // ── Public bridge function ────────────────────────────────────────────────────
@@ -262,7 +262,7 @@ mod tests {
         match &pool[0] {
             Value::Tuple(es) => {
                 assert_eq!(es[0], Value::Str(intern_str(&"00".repeat(32))));
-                assert_eq!(es[1], Value::List(vec![Value::Int(0x01)]));
+                assert_eq!(es[1], Value::List(vec![Value::Int(0x01)].into()));
             }
             _ => panic!("pool entry not Tuple"),
         }

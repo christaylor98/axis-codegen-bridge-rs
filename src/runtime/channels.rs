@@ -215,7 +215,7 @@ pub fn wait(handler: fn(Value) -> Value) -> Value {
     }
 
     // Synchronous, in-frame invocation. WAIT_ALWAYS_LIST: the argument is a List.
-    handler(Value::List(drained))
+    handler(Value::List(super::value::ListBuf::from(drained)))
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -440,7 +440,7 @@ pub fn bchan_send(name: std::sync::Arc<str>, item: Value) -> Value {
 pub fn bchan_drain(name: std::sync::Arc<str>, max: i64, window_ms: i64) -> Value {
     let max = if max >= 1 { max as usize } else { 1 };
     let window_ms = if window_ms >= 0 { window_ms as u64 } else { 0 };
-    Value::List(bounded_drain_batch(&name, max, window_ms))
+    Value::List(super::value::ListBuf::from(bounded_drain_batch(&name, max, window_ms)))
 }
 
 // ── Unbounded channel_send → event_subscribe → wait unit coverage ────────────

@@ -38,7 +38,7 @@ fn main() {
             let n: usize = a[4].parse().unwrap();
             for i in 0..n {
                 let rec = format!("rec-{}", i).into_bytes();
-                let off = as_int(mmapseg_append(h, rec));
+                let off = as_int(mmapseg_append(h, rec.into()));
                 assert!(off >= 0, "segment full at record {}", i);
             }
             println!("APPENDED {} (no msync); holding for SIGKILL", n);

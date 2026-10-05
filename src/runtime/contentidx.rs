@@ -108,7 +108,7 @@ fn shard(key: &str) -> usize {
 /// under its content hash. Insert-if-absent (immutable content); locks one shard;
 /// O(1); no fsync. Evicts the shard's oldest entry (FIFO) if at the per-shard cap.
 #[track_caller]
-pub fn contentidx_put(hash: std::sync::Arc<str>, bytes: Vec<u8>) -> Value {
+pub fn contentidx_put(hash: std::sync::Arc<str>, bytes: super::value::BytesBuf) -> Value {
     let hash = hash.to_string();
     let cap = per_shard_cap();
     let s = shard(&hash);
@@ -124,7 +124,7 @@ pub fn contentidx_put(hash: std::sync::Arc<str>, bytes: Vec<u8>) -> Value {
         }
     }
     g.fifo.push_back(hash.clone());
-    g.map.insert(hash, bytes);
+    g.map.insert(hash, bytes.into_vec());
     Value::Unit
 }
 
@@ -136,7 +136,7 @@ pub fn contentidx_get(hash: std::sync::Arc<str>) -> Value {
     let hash = hash.to_string();
     let s = shard(&hash);
     let g = idx().shards[s].lock().unwrap_or_else(|p| p.into_inner());
-    Value::Bytes(g.map.get(&hash).cloned().unwrap_or_default())
+    Value::Bytes(g.map.get(&hash).cloned().unwrap_or_default().into())
 }
 
 #[cfg(test)]
@@ -145,11 +145,11 @@ mod tests {
     use crate::runtime::value::intern_str;
 
     fn put(h: &str, b: &[u8]) {
-        contentidx_put(intern_str(h), b.to_vec());
+        contentidx_put(intern_str(h), b.to_vec().into());
     }
     fn get(h: &str) -> Vec<u8> {
         match contentidx_get(intern_str(h)) {
-            Value::Bytes(b) => b,
+            Value::Bytes(b) => b.into_vec(),
             other => panic!("{:?}", other),
         }
     }

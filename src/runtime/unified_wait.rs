@@ -288,7 +288,7 @@ pub fn uwait(handler: fn(Value) -> Value) -> Value {
     let first = ctx.inbox.pop_blocking();
     let mut drained = vec![first];
     drain_rest(&ctx, &mut drained);
-    handler(Value::List(drained))
+    handler(Value::List(super::value::ListBuf::from(drained)))
 }
 
 /// Deadline-bounded wait: block until ≥1 descriptor OR `deadline`. On
@@ -302,8 +302,8 @@ pub fn uwait_deadline(handler: fn(Value) -> Value, deadline: Instant) -> Value {
         Some(first) => {
             let mut drained = vec![first];
             drain_rest(&ctx, &mut drained);
-            handler(Value::List(drained))
+            handler(Value::List(super::value::ListBuf::from(drained)))
         }
-        None => handler(Value::List(vec![tick()])),
+        None => handler(Value::List(super::value::ListBuf::from(vec![tick()]))),
     }
 }

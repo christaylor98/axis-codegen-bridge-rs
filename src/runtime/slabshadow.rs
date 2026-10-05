@@ -94,11 +94,11 @@ fn env_i64(key: &str, default: i64) -> i64 {
 /// janitor dead; counted, never blocking), -1 = shadow disabled. The caller
 /// (pg_exec_insert, post-ack) discards the return either way.
 #[track_caller]
-pub fn slab_shadow_submit(bytes: Vec<u8>, name: std::sync::Arc<str>) -> Value {
+pub fn slab_shadow_submit(bytes: super::value::BytesBuf, name: std::sync::Arc<str>) -> Value {
     if !enabled() {
         return Value::Int(-1);
     }
-    let item = Value::Tuple(vec![Value::Int(mono_nanos()), Value::Bytes(bytes), Value::Str(name)]);
+    let item = Value::Tuple(vec![Value::Int(mono_nanos()), Value::Bytes(bytes.into()), Value::Str(name)]);
     if bounded_try_send(SHADOW_CHAN, item) {
         SUBMITTED.fetch_add(1, Ordering::Relaxed);
         Value::Int(1)
@@ -248,7 +248,7 @@ mod tests {
     }
 
     fn submit(bytes: &[u8], name: &str) -> i64 {
-        match slab_shadow_submit(bytes.to_vec(), intern_str(name)) {
+        match slab_shadow_submit(bytes.to_vec().into(), intern_str(name)) {
             Value::Int(r) => r,
             other => panic!("submit returned {:?}", other),
         }

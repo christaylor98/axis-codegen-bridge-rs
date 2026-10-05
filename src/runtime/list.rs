@@ -89,6 +89,12 @@ pub fn value_to_text(v: Value) -> Value {
     narrow_value("value_to_text", "Text", v, |v| matches!(v, Value::Str(_)))
 }
 
+/// `value_to_bytes(v)`: v when it holds Bytes (PyAx unpacks a Bytes variable from loop state with it).
+#[track_caller]
+pub fn value_to_bytes(v: Value) -> Value {
+    narrow_value("value_to_bytes", "Bytes", v, |v| matches!(v, Value::Bytes(_)))
+}
+
 #[track_caller]
 pub fn value_to_bool(v: Value) -> Value {
     narrow_value("value_to_bool", "Bool", v, |v| matches!(v, Value::Bool(_)))
@@ -96,14 +102,14 @@ pub fn value_to_bool(v: Value) -> Value {
 
 #[track_caller]
 pub fn list_nil(_: Value) -> Value {
-    Value::List(vec![])
+    Value::List(super::value::ListBuf::new())
 }
 
 /// Build an M1 ValueList from its elements. Lowering target of
 /// `ValueList(T)(a, b, ...)`. Variadic, same calling convention as value_make.
 #[track_caller]
 pub fn list_make(args: Value) -> Value {
-    Value::List(super::tuple::fields_from_variadic(args))
+    Value::List(super::value::ListBuf::from(super::tuple::fields_from_variadic(args)))
 }
 
 #[track_caller]
@@ -112,9 +118,9 @@ pub fn list_cons(elem: Value, tail: Value) -> Value {
         Value::List(tail) => {
             let mut v = vec![elem];
             v.extend(tail);
-            Value::List(v)
+            Value::List(super::value::ListBuf::from(v))
         }
-        _ => Value::List(vec![elem]),
+        _ => Value::List(super::value::ListBuf::from(vec![elem])),
     }
 }
 
@@ -149,16 +155,113 @@ pub fn list_get_at(list: Value, idx: i64) -> Value {
 #[track_caller]
 pub fn list_append(list: Value, elem: Value) -> Value {
     match list {
-        // `list` already arrived as an owned clone (native call site's
-        // `.clone()` accessor) — push in place, no second clone needed
-        // (the old boxed path cloned once to unwrap the Tuple arg, then
-        // cloned `elems` again here; this is strictly cheaper, not just
-        // relocated).
+        // SHARED_LIST_V1 + MOVE_ON_LAST_USE_V1: `list` arrives moved when this is its last use, so the push is in
+        // place; if another value still shares the elements, ListBuf copies them first (copy-on-write).
         Value::List(mut elems) => {
             elems.push(elem);
             Value::List(elems)
         }
         _ => panic!("list_append: expected List as first element"),
+    }
+}
+
+// ── In-place list updates (PYAX_LIST_IN_PLACE_V1) ────────────────────────────
+// The list arrives owned; ListBuf copies the elements only if they are still shared. Indices are already checked
+// and normalized by the caller (PyAx's prelude raises IndexError first): out of range here is a defect.
+
+/// `list_set(xs, i, v)`: xs with element i replaced by v.
+#[track_caller]
+pub fn list_set(list: Value, idx: i64, elem: Value) -> Value {
+    match list {
+        Value::List(mut elems) => {
+            let n = elems.len();
+            match usize::try_from(idx).ok().filter(|i| *i < n) {
+                Some(i) => elems[i] = elem,
+                None => panic!("list_set: index {} out of range (length {})", idx, n),
+            }
+            Value::List(elems)
+        }
+        _ => panic!("list_set: expected List"),
+    }
+}
+
+/// `list_insert(xs, i, v)`: xs with v inserted before element i (i == len appends).
+#[track_caller]
+pub fn list_insert(list: Value, idx: i64, elem: Value) -> Value {
+    match list {
+        Value::List(mut elems) => {
+            let n = elems.len();
+            match usize::try_from(idx).ok().filter(|i| *i <= n) {
+                Some(i) => elems.insert(i, elem),
+                None => panic!("list_insert: index {} out of range (length {})", idx, n),
+            }
+            Value::List(elems)
+        }
+        _ => panic!("list_insert: expected List"),
+    }
+}
+
+/// `list_remove(xs, i)`: xs without element i.
+#[track_caller]
+pub fn list_remove(list: Value, idx: i64) -> Value {
+    match list {
+        Value::List(mut elems) => {
+            let n = elems.len();
+            match usize::try_from(idx).ok().filter(|i| *i < n) {
+                Some(i) => { elems.remove(i); }
+                None => panic!("list_remove: index {} out of range (length {})", idx, n),
+            }
+            Value::List(elems)
+        }
+        _ => panic!("list_remove: expected List"),
+    }
+}
+
+/// `list_drop_last(xs)`: xs without its last element (the rest of a pop).
+#[track_caller]
+pub fn list_drop_last(list: Value) -> Value {
+    match list {
+        Value::List(mut elems) => {
+            if elems.pop().is_none() {
+                panic!("list_drop_last: empty list");
+            }
+            Value::List(elems)
+        }
+        _ => panic!("list_drop_last: expected List"),
+    }
+}
+
+#[cfg(test)]
+mod in_place_tests {
+    use super::*;
+    fn ints(xs: &[i64]) -> Value { Value::List(xs.iter().map(|x| Value::Int(*x)).collect()) }
+
+    #[test]
+    fn updates_give_the_new_list_and_never_touch_a_shared_one() {
+        let xs = ints(&[1, 2, 3]);
+        let keep = xs.clone();                                     // shared: the update must copy, not write through
+        assert_eq!(list_set(xs.clone(), 1, Value::Int(9)), ints(&[1, 9, 3]));
+        assert_eq!(list_insert(xs.clone(), 3, Value::Int(4)), ints(&[1, 2, 3, 4]));
+        assert_eq!(list_insert(xs.clone(), 0, Value::Int(0)), ints(&[0, 1, 2, 3]));
+        assert_eq!(list_remove(xs.clone(), 0), ints(&[2, 3]));
+        assert_eq!(list_drop_last(xs.clone()), ints(&[1, 2]));
+        assert_eq!(list_append(xs, Value::Int(4)), ints(&[1, 2, 3, 4]));
+        assert_eq!(keep, ints(&[1, 2, 3]));
+    }
+
+    #[test]
+    fn an_unshared_list_is_updated_in_place() {
+        let xs = ints(&[1, 2, 3]);
+        let before = match &xs { Value::List(es) => es.as_ptr(), _ => unreachable!() };
+        let ys = list_set(xs, 0, Value::Int(7));
+        let after = match &ys { Value::List(es) => es.as_ptr(), _ => unreachable!() };
+        assert_eq!(before, after);                                 // same storage: nothing was copied
+    }
+
+    #[test]
+    #[should_panic(expected = "list_set: index 3 out of range")]
+    fn out_of_range_is_a_defect() {
+        list_set(ints(&[1, 2, 3]), 3, Value::Int(0));
     }
 }
 
@@ -193,7 +296,7 @@ pub fn list_head(list: Value) -> Value {
 #[track_caller]
 pub fn list_tail(list: Value) -> Value {
     match list {
-        Value::List(es) if !es.is_empty() => Value::List(es[1..].to_vec()),
+        Value::List(es) if !es.is_empty() => Value::List(super::value::ListBuf::from(es[1..].to_vec())),
         Value::List(_) => panic!("list_tail: called on empty list"),
         _ => panic!("list_tail: expected List"),
     }
@@ -209,17 +312,17 @@ pub fn list_is_empty(list: Value) -> Value {
 
 #[track_caller]
 pub fn list_of_1(v: Value) -> Value {
-    Value::List(vec![v])
+    Value::List(super::value::ListBuf::from(vec![v]))
 }
 
 #[track_caller]
 pub fn list_of_2(a: Value, b: Value) -> Value {
-    Value::List(vec![a, b])
+    Value::List(super::value::ListBuf::from(vec![a, b]))
 }
 
 #[track_caller]
 pub fn list_of_3(a: Value, b: Value, c: Value) -> Value {
-    Value::List(vec![a, b, c])
+    Value::List(super::value::ListBuf::from(vec![a, b, c]))
 }
 
 /// Returns 1 if list[index] exists and str_len(list[index]) ≤ max_len, else 0. OOB-safe.

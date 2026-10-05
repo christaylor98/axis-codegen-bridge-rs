@@ -266,7 +266,7 @@ pub fn mmapseg_open(path: std::sync::Arc<str>, cap: i64) -> Value {
 /// `mmapseg_append(handle: Int, data: Bytes) -> Int` — memcpy a framed record;
 /// return its offset, or -1 if the segment is full (caller rotates).
 #[track_caller]
-pub fn mmapseg_append(h: i64, data: Vec<u8>) -> Value {
+pub fn mmapseg_append(h: i64, data: super::value::BytesBuf) -> Value {
     SEGS.with(|s| {
         let mut s = s.borrow_mut();
         let seg = s
@@ -289,7 +289,7 @@ pub fn mmapseg_read(h: i64, off: i64) -> Value {
         let seg = s
             .get(&h)
             .unwrap_or_else(|| panic!("mmapseg_read: unknown handle {}", h));
-        Value::Bytes(seg.read_at(off).unwrap_or_default())
+        Value::Bytes(seg.read_at(off).unwrap_or_default().into())
     })
 }
 

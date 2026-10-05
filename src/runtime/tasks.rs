@@ -180,7 +180,7 @@ pub fn join(handles: Value) -> Value {
             .unwrap_or_else(|_| panic!("join: task {} panicked", h));
         out.push(handle_value(h, result));
     }
-    Value::List(out)
+    Value::List(super::value::ListBuf::from(out))
 }
 
 #[cfg(test)]
@@ -201,7 +201,7 @@ mod tests {
     }
 
     fn list(vs: Vec<Value>) -> Value {
-        Value::List(vs)
+        Value::List(vs.into())
     }
 
     /// The (id, result) pairs of a joined `HandleList`.

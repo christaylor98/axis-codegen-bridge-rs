@@ -193,7 +193,7 @@ fn param_section(msg: &[u8]) -> Option<(usize, usize, bool)> {
 /// an ARM-B row, use the normal path" — when there is no registered shape, the
 /// message will not parse, or any parameter is in binary format.
 #[track_caller]
-pub fn pgb_bind_capture(msg: Vec<u8>) -> Value {
+pub fn pgb_bind_capture(msg: super::value::BytesBuf) -> Value {
     let Some((id, _, _)) = SHAPE.with(|s| s.borrow().clone()) else {
         return Value::Int(0);
     };
@@ -221,7 +221,7 @@ pub fn pgb_payload(_: Value) -> Value {
         let mut out = Vec::with_capacity(20 + p.len());
         out.extend_from_slice(format!("{:020}", id).as_bytes());
         out.extend_from_slice(&p);
-        Value::Bytes(out)
+        Value::Bytes(out.into())
     })
 }
 
@@ -230,7 +230,7 @@ pub fn pgb_payload(_: Value) -> Value {
 /// The pool-side derivation for ARM B. Returns `""` when the shape id is not
 /// resolvable, which the caller reports rather than silently dropping.
 #[track_caller]
-pub fn pgb_record(payload: Vec<u8>) -> Value {
+pub fn pgb_record(payload: super::value::BytesBuf) -> Value {
     if payload.len() < 20 {
         return Value::Str(intern_str(""));
     }

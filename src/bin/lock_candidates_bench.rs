@@ -103,7 +103,7 @@ fn content_distinct(ops_total: usize, p: usize) -> f64 {
             let mut acc = 0usize;
             for i in 0..per {
                 let hash = format!("sha256:t{}_{:08x}", tid, i & 0x3fff); // per-thread distinct
-                contentidx_put(s(&hash), payload.clone());
+                contentidx_put(s(&hash), payload.clone().into());
                 if let Value::Bytes(b) = contentidx_get(s(&hash)) { acc = acc.wrapping_add(b.len()); }
             }
             sink.fetch_add(acc, Ordering::Relaxed);

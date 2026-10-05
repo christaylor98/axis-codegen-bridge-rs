@@ -15,7 +15,7 @@ fn deep_list(depth: usize) -> Value {
     if depth == 0 {
         Value::Int(0)
     } else {
-        Value::List(vec![deep_list(depth - 1)])
+        Value::List(vec![deep_list(depth - 1)].into())
     }
 }
 
@@ -54,7 +54,7 @@ fn test_value_clone_drop_tight_loop() {
             Value::Str(intern_str("x")),
             Value::Bool(i % 2 == 0),
             Value::Tuple(vec![Value::Int(i * 2), Value::Unit]),
-        ]);
+        ].into());
         let c = v.clone();
         drop(v);
         drop(c);
@@ -151,7 +151,7 @@ fn test_intern_concurrent_mixed_shared_unique() {
 #[test]
 fn test_list_cons_chain_10k() {
     setup();
-    let mut acc = Value::List(vec![]);
+    let mut acc = Value::List(vec![].into());
     for i in 0..10_000 {
         acc = list::list_cons(Value::Int(i), acc);
     }
@@ -161,7 +161,7 @@ fn test_list_cons_chain_10k() {
 #[test]
 fn test_list_append_10k() {
     setup();
-    let mut acc = Value::List(vec![]);
+    let mut acc = Value::List(vec![].into());
     for i in 0..10_000 {
         acc = list::list_append(acc, Value::Int(i));
     }
@@ -197,13 +197,13 @@ fn test_list_head_tail_chain() {
         assert_eq!(list::list_head(lst.clone()), Value::Int(expected));
         lst = list::list_tail(lst);
     }
-    assert_eq!(lst, Value::List(vec![]));
+    assert_eq!(lst, Value::List(vec![].into()));
 }
 
 #[test]
 fn test_list_get_at_oob_returns_none() {
     setup();
-    let lst = Value::List(vec![Value::Int(1), Value::Int(2)]);
+    let lst = Value::List(vec![Value::Int(1), Value::Int(2)].into());
     let result = list::list_get_at(lst, 99);
     assert!(matches!(result, Value::Ctor { tag, .. } if {
         use axis_codegen_bridge::runtime::value::get_tag_name;
@@ -215,7 +215,7 @@ fn test_list_get_at_oob_returns_none() {
 fn test_list_nested_lists_large() {
     setup();
     let inner = Value::List((0..100).map(Value::Int).collect());
-    let outer = Value::List(vec![inner.clone(); 500]);
+    let outer = Value::List(vec![inner.clone(); 500].into());
     assert_eq!(list::list_len(outer.clone()), Value::Int(500));
     let first = list::list_head(outer);
     assert_eq!(first, inner);
@@ -281,7 +281,7 @@ fn test_panic_during_list_op_no_leak() {
             let _ = lst.clone();
             if i % 2 == 0 {
                 // trigger a real panic path through the runtime
-                list::list_head(Value::List(vec![]));
+                list::list_head(Value::List(vec![].into()));
             }
             lst
         });
@@ -489,7 +489,7 @@ fn test_concurrent_list_ops_independent_threads() {
     setup();
     let handles: Vec<_> = (0..8).map(|tid| {
         thread::spawn(move || {
-            let mut lst = Value::List(vec![]);
+            let mut lst = Value::List(vec![].into());
             for i in 0..500i64 {
                 lst = list::list_append(lst, Value::Int(tid * 1000 + i));
             }
@@ -524,7 +524,7 @@ fn test_value_equality_under_clone_stress() {
         Value::Str(intern_str("hello")),
         Value::Bool(true),
         Value::Tuple(vec![Value::Int(99), Value::Unit]),
-    ]);
+    ].into());
     let mut clones: Vec<Value> = (0..1_000).map(|_| original.clone()).collect();
     for c in &clones {
         assert_eq!(c, &original);

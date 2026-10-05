@@ -47,13 +47,13 @@ use super::value::{Value, intern_str};
 
 #[track_caller]
 pub fn text_to_bytes(s: std::sync::Arc<str>) -> Value {
-    Value::Bytes(s.as_bytes().to_vec())
+    Value::Bytes(s.as_bytes().to_vec().into())
 }
 
 // ── fs_write_bytes ───────────────────────────────────────────────────────────
 
 #[track_caller]
-pub fn fs_write_bytes(path: std::sync::Arc<str>, content: Vec<u8>) -> Value {
+pub fn fs_write_bytes(path: std::sync::Arc<str>, content: super::value::BytesBuf) -> Value {
     if let Err(e) = write_durable(&path, &content) {
         panic!("fs_write_bytes({}): {}", path, e);
     }
@@ -102,7 +102,7 @@ pub fn fs_write_raw(path: std::sync::Arc<str>, ptr: i64, offset: i64, len: i64) 
 #[track_caller]
 pub fn fs_read_bytes(path: std::sync::Arc<str>) -> Value {
     match std::fs::read(&*path) {
-        Ok(bs) => Value::Bytes(bs),
+        Ok(bs) => Value::Bytes(bs.into()),
         Err(e) => panic!("fs_read_bytes({}): {}", path, e),
     }
 }
@@ -184,7 +184,7 @@ fn write_durable(path: &str, content: &[u8]) -> std::io::Result<()> {
 /// + 64 lowercase hex chars. Same crypto as `content_hash`, but consumes
 /// `Value::Bytes` directly without per-element list coercion.
 #[track_caller]
-pub fn bytes_hash(b: Vec<u8>) -> Value {
+pub fn bytes_hash(b: super::value::BytesBuf) -> Value {
     let digest = Sha256::digest(&b);
     let hex: String = digest.iter().map(|byte| format!("{:02x}", byte)).collect();
     Value::Str(intern_str(&format!("sha256:{}", hex)))
@@ -211,8 +211,8 @@ pub fn fs_mkdir_p(path: std::sync::Arc<str>) -> Value {
 /// Checked UTF-8 decode. Returns the decoded Text. Panics on invalid UTF-8.
 /// Symmetric inverse of `text_to_bytes` for valid UTF-8 inputs.
 #[track_caller]
-pub fn bytes_to_text(b: Vec<u8>) -> Value {
-    match String::from_utf8(b) {
+pub fn bytes_to_text(b: super::value::BytesBuf) -> Value {
+    match String::from_utf8(b.into_vec()) {
         Ok(s) => Value::Str(intern_str(&s)),
         Err(e) => panic!("bytes_to_text: invalid UTF-8: {}", e),
     }
@@ -246,7 +246,7 @@ pub fn bytes_to_text(b: Vec<u8>) -> Value {
 // converter silently narrows the accepted surface (the ASCII-only shortcut the
 // shim's own test suite exists to catch).
 #[track_caller]
-pub fn bytes_is_utf8(b: Vec<u8>) -> Value {
+pub fn bytes_is_utf8(b: super::value::BytesBuf) -> Value {
     Value::Bool(std::str::from_utf8(&b).is_ok())
 }
 
@@ -256,7 +256,7 @@ mod tests {
     use crate::runtime::value::intern_str;
 
     fn is_utf8(v: &[u8]) -> bool {
-        match bytes_is_utf8(v.to_vec()) {
+        match bytes_is_utf8(v.to_vec().into()) {
             Value::Bool(b) => b,
             other => panic!("expected Bool, got {:?}", other),
         }
@@ -302,7 +302,7 @@ mod tests {
         for a in 0u16..=255 {
             for b in 0u16..=255 {
                 let v = vec![a as u8, b as u8];
-                let converts = std::panic::catch_unwind(|| bytes_to_text(v.clone())).is_ok();
+                let converts = std::panic::catch_unwind(|| bytes_to_text(v.clone().into())).is_ok();
                 assert_eq!(
                     is_utf8(&v), converts,
                     "predicate and converter disagree on {:02X?}", v
@@ -315,7 +315,7 @@ mod tests {
 
     fn bytes(v: Value) -> Vec<u8> {
         match v {
-            Value::Bytes(b) => b,
+            Value::Bytes(b) => b.into_vec(),
             other => panic!("expected Bytes, got {:?}", other),
         }
     }
@@ -333,7 +333,7 @@ mod tests {
         assert_eq!(s.as_bytes().to_vec(), expect, "sanity: matches Rust's own UTF-8");
 
         // Round-trips back through bytes_to_text unchanged.
-        let back = bytes_to_text(expect);
+        let back = bytes_to_text(expect.into());
         assert_eq!(back, Value::Str(intern_str(s)));
 
         // A 4-byte emoji (😀 = U+1F600 -> F0 9F 98 80) also survives.

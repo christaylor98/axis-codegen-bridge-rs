@@ -645,13 +645,13 @@ pub fn tcp_read(handle: i64) -> Value {
                                        | std::io::ErrorKind::TimedOut) => 0,
         Err(e) => panic!("tcp_read({}): {}", handle, e),
     };
-    Value::Bytes(buf[..n].to_vec())
+    Value::Bytes(buf[..n].to_vec().into())
 }
 
 // ── tcp_write ────────────────────────────────────────────────────────────────
 
 #[track_caller]
-pub fn tcp_write(handle: i64, data: Vec<u8>) -> Value {
+pub fn tcp_write(handle: i64, data: super::value::BytesBuf) -> Value {
     // AXVERITY_SLAB_TO_WIRE_BUILD_V1: coalesce into the per-conn buffer when the
     // flag is on (drained before the next tcp_read / on close / at the cap).
     // Off => the original immediate write+flush (preserved fallback).
@@ -724,7 +724,7 @@ mod tests {
                 }
             }
             // Reply, to exercise tcp_write from the bridge side.
-            tcp_write(conn, b"ack".to_vec());
+            tcp_write(conn, b"ack".to_vec().into());
             tcp_close(conn);
             got
         });
@@ -780,7 +780,7 @@ mod tests {
                     other => panic!("tcp_read returned {:?}", other),
                 }
             }
-            tcp_write(conn, b"ok".to_vec());
+            tcp_write(conn, b"ok".to_vec().into());
             tcp_close(conn);
             got
         });
@@ -790,7 +790,7 @@ mod tests {
             tcp_connect(intern_str("127.0.0.1"), port),
             "client",
         );
-        tcp_write(client, payload.clone());
+        tcp_write(client, payload.clone().into());
 
         let mut reply = Vec::new();
         loop {

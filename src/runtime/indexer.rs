@@ -208,7 +208,7 @@ fn append_entries(entries: &[Entry]) {
 #[track_caller]
 pub fn index_build_batch(arg: Value) -> Value {
     let items = match arg {
-        Value::List(items) => items,
+        Value::List(items) => items.into_vec(),
         bare @ (Value::Ctor { .. } | Value::Tuple(_)) => vec![bare],
         other => panic!(
             "index_build_batch: expected List of descriptors or a bare descriptor, got {:?}",
@@ -403,7 +403,7 @@ mod tests {
         let payload = b"PAYLOAD-block-0-contents".to_vec();
         std::fs::write(format!("{}/block-0.bin", dir), &payload).unwrap();
         let cell = mint_cell(UNINDEXED);
-        let out = index_build_batch(Value::List(vec![descriptor(0, &dir, payload.len() as i64, cell)]));
+        let out = index_build_batch(Value::List(vec![descriptor(0, &dir, payload.len() as i64, cell)].into()));
         assert_eq!(out, Value::Int(1));
         assert_entry_correct(&dir, 0, &payload);
         assert_eq!(cell_load(cell), INDEXED);
@@ -424,7 +424,7 @@ mod tests {
                 Value::Int(cell),
             ],
         };
-        index_build_batch(Value::List(vec![desc]));
+        index_build_batch(Value::List(vec![desc].into()));
         assert_entry_correct(&dir, 7, &payload);
         assert_eq!(cell_load(cell), INDEXED);
     }
@@ -454,7 +454,7 @@ mod tests {
             items.push(descriptor(seq, &dir, payload.len() as i64, mint_cell(UNINDEXED)));
             payloads.push(payload);
         }
-        index_build_batch(Value::List(items));
+        index_build_batch(Value::List(items.into()));
         assert_eq!(seg_count(&dir), 1, "batched artifacts must be ONE file per worker");
         for (seq, p) in payloads.iter().enumerate() {
             assert_entry_correct(&dir, seq as i64, p);
@@ -467,7 +467,7 @@ mod tests {
         let payload = b"idempotent-body".to_vec();
         std::fs::write(format!("{}/block-0.bin", dir), &payload).unwrap();
         let cell = mint_cell(UNINDEXED);
-        let d = || Value::List(vec![descriptor(0, &dir, payload.len() as i64, cell)]);
+        let d = || Value::List(vec![descriptor(0, &dir, payload.len() as i64, cell)].into());
         index_build_batch(d());
         assert_eq!(cell_load(cell), INDEXED);
         index_build_batch(d()); // duplicate entry appended; last-wins read, same content
@@ -565,7 +565,7 @@ mod tests {
                         .iter()
                         .map(|&(seq, cell, len)| descriptor(seq, &d, len as i64, cell))
                         .collect();
-                    index_build_batch(Value::List(items));
+                    index_build_batch(Value::List(items.into()));
                 })
             })
             .collect();
@@ -655,7 +655,7 @@ mod tests {
             cells.push(cell);
             items.push(descriptor(seq, &dir, payload.len() as i64, cell));
         }
-        let out = index_build_batch(Value::List(items));
+        let out = index_build_batch(Value::List(items.into()));
         assert_eq!(out, Value::Int(10_000));
         assert_eq!(seg_count(&dir), 1, "10k-block batch must land in one segment");
         for (seq, cell) in cells.iter().enumerate() {
@@ -677,7 +677,7 @@ mod tests {
         let dir = unique_dir("short");
         std::fs::write(format!("{}/block-0.bin", dir), b"only-8b?").unwrap();
         let cell = mint_cell(UNINDEXED);
-        index_build_batch(Value::List(vec![descriptor(0, &dir, 999, cell)]));
+        index_build_batch(Value::List(vec![descriptor(0, &dir, 999, cell)].into()));
     }
 
     #[test]

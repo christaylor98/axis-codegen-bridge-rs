@@ -27,12 +27,14 @@ pub fn value_make(args: Value) -> Value {
 fn value_field(v: Value, idx: usize) -> Value {
     let n = match &v {
         Value::Ctor { fields, .. } => fields.len(),
-        Value::Tuple(es) | Value::List(es) => es.len(),
+        Value::Tuple(es) => es.len(),
+        Value::List(es) => es.len(),
         other => panic!("value_{}: not a compound value: {:?}", idx, other),
     };
     match v {
         Value::Ctor { fields, .. } => fields.into_iter().nth(idx),
-        Value::Tuple(es) | Value::List(es) => es.into_iter().nth(idx),
+        Value::Tuple(es) => es.into_iter().nth(idx),
+        Value::List(es) => es.into_iter().nth(idx),
         _ => None,
     }.unwrap_or_else(|| panic!("value_{}: index out of range (the value has {} fields)", idx, n))
 }
@@ -49,8 +51,8 @@ pub fn tuple_field(bundle: Value, idx: i64) -> Value {
     let oob = |n: usize| -> ! { panic!("tuple_field: index {} out of range (length {})", idx, n) };
     let i = usize::try_from(idx).ok();
     match bundle {
-        Value::Tuple(fields) => { let n = fields.len(); i.and_then(|i| fields.get(i).cloned()).unwrap_or_else(|| oob(n)) }
-        Value::List(items) => { let n = items.len(); i.and_then(|i| items.get(i).cloned()).unwrap_or_else(|| oob(n)) }
+        Value::Tuple(mut fields) => { let n = fields.len(); match i.filter(|i| *i < n) { Some(i) => fields.swap_remove(i), None => oob(n) } }
+        Value::List(mut items) => { let n = items.len(); match i.filter(|i| *i < n) { Some(i) => items.swap_remove(i), None => oob(n) } }
         other => panic!(
             "tuple_field: expected Tuple or List, got {:?} (use ctor_field for a Value(..)(..)-constructed Ctor)",
             other
@@ -61,10 +63,13 @@ pub fn tuple_field(bundle: Value, idx: i64) -> Value {
 #[track_caller]
 pub fn ctor_field(bundle: Value, idx: i64) -> Value {
     match bundle {
-        Value::Ctor { fields, .. } => {
+        Value::Ctor { mut fields, .. } => {
+            // the Ctor is owned here: move the field out, never clone it (a list in a loop's state is not copied)
             let n = fields.len();
-            usize::try_from(idx).ok().and_then(|i| fields.get(i).cloned())
-                .unwrap_or_else(|| panic!("ctor_field: index {} out of range ({} fields)", idx, n))
+            match usize::try_from(idx).ok().filter(|i| *i < n) {
+                Some(i) => fields.swap_remove(i),
+                None => panic!("ctor_field: index {} out of range ({} fields)", idx, n),
+            }
         }
         other => panic!(
             "ctor_field: expected Ctor, got {:?} (use tuple_field for a raw Tuple/List)",
@@ -102,7 +107,7 @@ mod tests {
     fn tuple_field_still_reads_tuple_and_list() {
         let t = Value::Tuple(vec![Value::Int(1), Value::Int(2)]);
         assert_eq!(tuple_field(t, 1), Value::Int(2));
-        let l = Value::List(vec![Value::Int(5), Value::Int(6)]);
+        let l = Value::List(vec![Value::Int(5), Value::Int(6)].into());
         assert_eq!(tuple_field(l, 0), Value::Int(5));
     }
 }

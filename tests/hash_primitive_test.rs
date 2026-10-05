@@ -21,7 +21,7 @@ fn str_of(v: &Value) -> String {
 
 #[test]
 fn t1_content_hash_empty_bytes_matches_known_sha256_vector() {
-    let r = content_hash(Value::List(vec![]));
+    let r = content_hash(Value::List(vec![].into()));
     let expected =
         "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
     assert_eq!(r, Value::Str(intern_str(expected)));
@@ -31,7 +31,7 @@ fn t1_content_hash_empty_bytes_matches_known_sha256_vector() {
 
 #[test]
 fn t2_content_hash_output_has_sha256_prefix() {
-    let r = content_hash(Value::List(vec![Value::Int(42)]));
+    let r = content_hash(Value::List(vec![Value::Int(42)].into()));
     assert!(str_of(&r).starts_with("sha256:"));
 }
 
@@ -120,7 +120,7 @@ fn t10_hash256_parse_rejects_non_hex_chars_in_body() {
 #[test]
 #[should_panic(expected = "UNKNOWN gate")]
 fn t11_content_hash_rejects_out_of_range_byte() {
-    content_hash(Value::List(vec![Value::Int(256)]));
+    content_hash(Value::List(vec![Value::Int(256)].into()));
 }
 
 // ── T12: negative byte panics ──────────────────────────────────────────────
@@ -128,7 +128,7 @@ fn t11_content_hash_rejects_out_of_range_byte() {
 #[test]
 #[should_panic(expected = "UNKNOWN gate")]
 fn t12_content_hash_rejects_negative_byte() {
-    content_hash(Value::List(vec![Value::Int(-1)]));
+    content_hash(Value::List(vec![Value::Int(-1)].into()));
 }
 
 // ── T13: non-List input panics ─────────────────────────────────────────────
@@ -154,7 +154,7 @@ fn t14_hash256_parse_rejects_non_text_input() {
 
 #[test]
 fn t15_content_hash_output_feeds_hash256_parse() {
-    let addr = content_hash(Value::List(vec![Value::Int(1), Value::Int(2)]));
+    let addr = content_hash(Value::List(vec![Value::Int(1), Value::Int(2)].into()));
     let parsed = hash256_parse(addr.as_text());
     assert_eq!(parsed, addr);
 }

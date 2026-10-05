@@ -82,7 +82,7 @@ fn main() {
     let h = as_int(slablock::slab_open(Arc::from(dir.as_str()), 200_000, cap));
     let t = Instant::now();
     for _ in 0..n {
-        slablock::slab_append(h, src.clone());
+        slablock::slab_append(h, src.clone().into());
     }
     let slab_ns = t.elapsed().as_nanos() as f64 / n as f64;
 

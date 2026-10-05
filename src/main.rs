@@ -546,7 +546,7 @@ fn cmd_build(args: &[String]) {
                  fn {fn}(args: Value) -> Value;\n\
              }}\n\n\
              fn run(args: Vec<Value>) -> i32 {{\n\
-                 let result = match std::panic::catch_unwind(|| unsafe {{ {fn}(Value::List(args)) }}) {{\n\
+                 let result = match std::panic::catch_unwind(|| unsafe {{ {fn}(Value::List(args.into())) }}) {{\n\
                      Ok(v) => v,\n\
                      Err(p) if axis_codegen_bridge::runtime::fault::is_defect_payload(&*p) => return 4,\n\
                      Err(p) => std::panic::resume_unwind(p),\n\
@@ -628,7 +628,7 @@ fn cmd_build(args: &[String]) {
         s += "    let _argv: Vec<Value> = std::env::args().skip(1)\n";
         s += "        .map(|s| Value::Str(intern_str(&s)))\n";
         s += "        .collect();\n";
-        s += "    let args = Value::List(_argv);\n";
+        s += "    let args = Value::List(_argv.into());\n";
         // Per-entry verdict sinks: harness-internal, opt-in via --entries.
         s += &format!("    let _sink_cells: Vec<Arc<Mutex<AdaptiveCell<u8>>>> = (0..{n}).map(|_| Arc::new(Mutex::new(AdaptiveCell::new()))).collect();\n", n = n_entries);
         s += &format!("    let _sink_regs: Vec<Arc<AdaptiveRegistry>>          = (0..{n}).map(|_| Arc::new(AdaptiveRegistry::new())).collect();\n", n = n_entries);

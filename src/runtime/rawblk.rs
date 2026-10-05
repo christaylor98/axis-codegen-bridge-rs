@@ -180,8 +180,8 @@ pub fn rawblk_frame(args: Value) -> Value {
         other => panic!("rawblk_frame: arg 1 (ts) expected Int, got {:?}", other),
     };
     match payload {
-        Value::Bytes(b) => Value::Bytes(encode_frame(k, ts, &b)),
-        Value::Str(h) => Value::Bytes(encode_frame(k, ts, get_str(&h).as_bytes())),
+        Value::Bytes(b) => Value::Bytes(encode_frame(k, ts, &b).into()),
+        Value::Str(h) => Value::Bytes(encode_frame(k, ts, get_str(&h).as_bytes()).into()),
         other => panic!("rawblk_frame: arg 2 (payload) expected Bytes|Text, got {:?}", other),
     }
 }

@@ -181,7 +181,7 @@ fn advance_watermark(generation: i64, to: i64) -> Option<i64> {
 
 fn as_bytes(field: &'static str, v: Value) -> Vec<u8> {
     match v {
-        Value::Bytes(b) => b,
+        Value::Bytes(b) => b.into_vec(),
         other => panic!("block_flush_write: {} expected Bytes, got {:?}", field, other),
     }
 }
@@ -281,7 +281,7 @@ fn advance_anchor(committed_block: &[u8]) {
     let prev_hex = anchor_raw.split('\n').next().unwrap_or("");
     let mut combined = prev_hex.as_bytes().to_vec();
     combined.extend_from_slice(committed_block);
-    let hashed = super::bytes_io::bytes_hash(combined);
+    let hashed = super::bytes_io::bytes_hash(combined.into());
     let hex_with_prefix = match hashed {
         Value::Str(h) => get_str(&h),
         other => panic!("block_flush_write: bytes_hash returned non-Text: {:?}", other),
@@ -329,7 +329,7 @@ fn commit_job(job: Job) {
             }
         }
         Job::Obj { block, index } => {
-            pg_store::pg_obj_block_put(block.clone(), intern_str(&index));
+            pg_store::pg_obj_block_put(block.clone().into(), intern_str(&index));
             advance_anchor(&block);
         }
         Job::Checkpoint { generation, ptr, to } => {
@@ -344,7 +344,7 @@ fn commit_job(job: Job) {
                 Value::Bytes(b) => b,
                 other => panic!("block_flush_write: mem_read_raw returned non-Bytes: {:?}", other),
             };
-            let text = String::from_utf8(delta.clone()).unwrap_or_else(|e| {
+            let text = String::from_utf8(delta.clone().into_vec()).unwrap_or_else(|e| {
                 panic!("block_flush_write: checkpoint delta is not valid UTF-8: {}", e)
             });
             pg_store::pg_log_append(intern_str(&text));
@@ -361,7 +361,7 @@ fn commit_job(job: Job) {
 #[track_caller]
 pub fn block_flush_write(arg: Value) -> Value {
     let items = match arg {
-        Value::List(items) => items,
+        Value::List(items) => items.into_vec(),
         Value::Unit => return Value::Unit,
         bare @ (Value::Ctor { .. } | Value::Tuple(_)) => vec![bare],
         other => panic!(
@@ -389,19 +389,19 @@ mod tests {
                 Value::Str(intern_str("")),
                 Value::Int(0),
                 Value::Int(0),
-                Value::Bytes(bytes.to_vec()),
+                Value::Bytes(bytes.to_vec().into()),
             ],
         }
     }
 
     fn tuple_obj_job(block: &[u8], index: &str) -> Value {
-        Value::Tuple(vec![Value::Bytes(block.to_vec()), Value::Str(intern_str(index))])
+        Value::Tuple(vec![Value::Bytes(block.to_vec().into()), Value::Str(intern_str(index))])
     }
 
     #[test]
     fn empty_drain_is_noop() {
         assert_eq!(block_flush_write(Value::Unit), Value::Unit);
-        assert_eq!(block_flush_write(Value::List(vec![])), Value::Int(0));
+        assert_eq!(block_flush_write(Value::List(vec![].into())), Value::Int(0));
     }
 
     // The remaining tests hit the local postgres (peer-auth superuser on the
@@ -428,7 +428,7 @@ mod tests {
             Value::Str(h) => get_str(&h),
             other => panic!("expected Text, got {:?}", other),
         };
-        let out = block_flush_write(Value::List(vec![ctor_log_job(marker.as_bytes())]));
+        let out = block_flush_write(Value::List(vec![ctor_log_job(marker.as_bytes())].into()));
         assert_eq!(out, Value::Int(1));
         let scan = match pg_store::pg_log_scan(Value::Unit) {
             Value::Str(h) => get_str(&h),
@@ -460,10 +460,10 @@ mod tests {
                 Value::Str(intern_str(&shard)),
                 Value::Int(0),
                 Value::Int(0),
-                Value::Bytes(marker.into_bytes()),
+                Value::Bytes(marker.into_bytes().into()),
             ],
         };
-        let out = block_flush_write(Value::List(vec![job]));
+        let out = block_flush_write(Value::List(vec![job].into()));
         assert_eq!(out, Value::Int(1));
         let (taken_ptr, taken_cell) = hotblk_pool::pool_take(&shard);
         assert_eq!(taken_ptr, ptr, "pool must hand back the same ptr the committed job carried");
@@ -481,7 +481,7 @@ mod tests {
             Value::Str(h) => get_str(&h),
             other => panic!("expected Text, got {:?}", other),
         };
-        let out = block_flush_write(Value::List(vec![tuple_obj_job(&block, &index)]));
+        let out = block_flush_write(Value::List(vec![tuple_obj_job(&block, &index)].into()));
         assert_eq!(out, Value::Int(1));
         match pg_store::pg_bytes_get(intern_str(&addr_x)) {
             Value::Bytes(b) => assert_eq!(b, b"thequick"),
@@ -508,7 +508,7 @@ mod tests {
         let out = block_flush_write(Value::List(vec![
             ctor_log_job(marker.as_bytes()),
             tuple_obj_job(&block, &index),
-        ]));
+        ].into()));
         assert_eq!(out, Value::Int(2));
         let scan = match pg_store::pg_log_scan(Value::Unit) {
             Value::Str(h) => get_str(&h),
@@ -533,7 +533,7 @@ mod tests {
                 Value::Str(intern_str(shard)),
                 Value::Int(generation),
                 Value::Int(0),
-                Value::Bytes(bytes.to_vec()),
+                Value::Bytes(bytes.to_vec().into()),
             ],
         }
     }
@@ -558,19 +558,19 @@ mod tests {
             },
             other => panic!("expected Tuple, got {:?}", other),
         };
-        rawmem::mem_write_raw(ptr, 0, full.to_vec());
+        rawmem::mem_write_raw(ptr, 0, full.to_vec().into());
 
         let generation = 900_000_000 + std::process::id() as i64;
         let split = full.len() as i64 / 2;
 
         // Timer checkpoints the first half.
-        let out = block_flush_write(Value::List(vec![ctor_checkpoint_job(generation, ptr, split)]));
+        let out = block_flush_write(Value::List(vec![ctor_checkpoint_job(generation, ptr, split)].into()));
         assert_eq!(out, Value::Int(1));
 
         // Seal arrives with the FULL bytes (as pg_hotblk_seal_mint.m1
         // always sends them, from offset 0) for the SAME generation.
         let shard = format!("checkpoint-test-shard-{}", std::process::id());
-        let out = block_flush_write(Value::List(vec![ctor_log_job_g(ptr, &shard, generation, full)]));
+        let out = block_flush_write(Value::List(vec![ctor_log_job_g(ptr, &shard, generation, full)].into()));
         assert_eq!(out, Value::Int(1));
 
         // The durable log must contain the marker text exactly ONCE, not
@@ -610,7 +610,7 @@ mod tests {
             &shard,
             generation_new,
             marker.as_bytes(),
-        )]));
+        )].into()));
         assert_eq!(out, Value::Int(1));
 
         let before = match pg_store::pg_log_scan(Value::Unit) {
@@ -626,7 +626,7 @@ mod tests {
             generation_old,
             i64::MAX / 2, // deliberately bogus -- must never be dereferenced
             999_999,
-        )]));
+        )].into()));
         assert_eq!(out, Value::Int(1), "block_flush_write still counts the job as processed, even when dropped");
 
         let after = match pg_store::pg_log_scan(Value::Unit) {

@@ -149,7 +149,7 @@ pub fn hotmem_write(arg: Value) -> Value {
             // SAFETY: sole `&mut` owner of `writer` on the single writer
             // thread — `write_lazy`'s single-writer contract is upheld.
             unsafe {
-                writer.write_lazy(Arc::new(bytes), reg);
+                writer.write_lazy(Arc::new(bytes.into_vec()), reg);
             }
         }
         // Opportunistic, watermark-gated — bounds retired-list growth without
@@ -211,7 +211,7 @@ pub fn hotmem_read(last_epoch: i64) -> Value {
         Some(cell) => cell,
         None => {
             LAST.with(|l| l.set((0, 0)));
-            return Value::Bytes(Vec::new());
+            return Value::Bytes(Vec::new().into());
         }
     };
     READER.with(|r| {
@@ -225,7 +225,7 @@ pub fn hotmem_read(last_epoch: i64) -> Value {
         match cell.read_ref(handle, last_epoch) {
             None => {
                 LAST.with(|l| l.set((0, 0)));
-                Value::Bytes(Vec::new())
+                Value::Bytes(Vec::new().into())
             }
             Some(read_ref) => {
                 let epoch = read_ref.epoch;
@@ -235,7 +235,7 @@ pub fn hotmem_read(last_epoch: i64) -> Value {
                 // clone is done — this ordering is what closes the race.
                 let bytes = (**read_ref).clone();
                 LAST.with(|l| l.set((epoch as i64, missed as i64)));
-                Value::Bytes(bytes)
+                Value::Bytes(bytes.into())
             }
         }
     })
@@ -294,7 +294,7 @@ mod uaf_isolation_probe {
             let mut i: u64 = 0;
             while !w_stop.load(AtoOrd::Relaxed) {
                 let payload = format!("PAYLOAD-{:020}-END", i).into_bytes();
-                hotmem_write(Value::List(vec![Value::Bytes(payload)]));
+                hotmem_write(Value::List(vec![Value::Bytes(payload.into())].into()));
                 w_writes.fetch_add(1, AtoOrd::Relaxed);
                 i += 1;
             }
@@ -312,7 +312,7 @@ mod uaf_isolation_probe {
                 if let Value::Bytes(b) = v {
                     if !b.is_empty() {
                         r_nonempty.fetch_add(1, AtoOrd::Relaxed);
-                        match String::from_utf8(b) {
+                        match String::from_utf8(b.into_vec()) {
                             Ok(s) => {
                                 let ok = s.len() == TAG_LEN
                                     && s.starts_with("PAYLOAD-")
@@ -364,7 +364,7 @@ mod uaf_isolation_probe {
         let writer = thread::spawn(move || {
             for i in 0..WRITES {
                 let payload = format!("PAYLOAD-{:020}-END", i).into_bytes();
-                hotmem_write(Value::List(vec![Value::Bytes(payload)]));
+                hotmem_write(Value::List(vec![Value::Bytes(payload.into())].into()));
             }
             w_done.store(true, AtoOrd::Release);
         });
@@ -377,7 +377,7 @@ mod uaf_isolation_probe {
                 let v = hotmem_read(last_epoch);
                 if let Value::Bytes(b) = v {
                     if !b.is_empty() {
-                        let ok = match String::from_utf8(b) {
+                        let ok = match String::from_utf8(b.into_vec()) {
                             Ok(s) => {
                                 s.len() == TAG_LEN
                                     && s.starts_with("PAYLOAD-")
