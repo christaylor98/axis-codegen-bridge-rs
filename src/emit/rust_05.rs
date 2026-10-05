@@ -715,6 +715,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     // tag. Panics naming the actual tag found on mismatch, same as value_list_to_*_list.
     m.insert("value_to_int",                      "axis_codegen_bridge::runtime::list::value_to_int");
     m.insert("value_to_text",                     "axis_codegen_bridge::runtime::list::value_to_text");
+    m.insert("value_to_bytes",           "axis_codegen_bridge::runtime::list::value_to_bytes");
     m.insert("value_to_bool",                     "axis_codegen_bridge::runtime::list::value_to_bool");
 
     m

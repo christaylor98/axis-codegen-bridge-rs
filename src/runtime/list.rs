@@ -89,6 +89,12 @@ pub fn value_to_text(v: Value) -> Value {
     narrow_value("value_to_text", "Text", v, |v| matches!(v, Value::Str(_)))
 }
 
+/// `value_to_bytes(v)`: v when it holds Bytes (PyAx unpacks a Bytes variable from loop state with it).
+#[track_caller]
+pub fn value_to_bytes(v: Value) -> Value {
+    narrow_value("value_to_bytes", "Bytes", v, |v| matches!(v, Value::Bytes(_)))
+}
+
 #[track_caller]
 pub fn value_to_bool(v: Value) -> Value {
     narrow_value("value_to_bool", "Bool", v, |v| matches!(v, Value::Bool(_)))
