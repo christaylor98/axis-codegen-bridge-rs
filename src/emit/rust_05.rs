@@ -26,6 +26,12 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("int_add",         "axis_codegen_bridge::runtime::arith::int_add");
     m.insert("int_sub",         "axis_codegen_bridge::runtime::arith::int_sub");
     m.insert("int_mul",         "axis_codegen_bridge::runtime::arith::int_mul");
+    m.insert("int_shl",         "axis_codegen_bridge::runtime::arith::int_shl");
+    m.insert("int_shr",         "axis_codegen_bridge::runtime::arith::int_shr");
+    m.insert("int_bit_and",     "axis_codegen_bridge::runtime::arith::int_bit_and");
+    m.insert("int_bit_or",      "axis_codegen_bridge::runtime::arith::int_bit_or");
+    m.insert("int_bit_xor",     "axis_codegen_bridge::runtime::arith::int_bit_xor");
+    m.insert("int_bit_not",     "axis_codegen_bridge::runtime::arith::int_bit_not");
     m.insert("int_div",         "axis_codegen_bridge::runtime::arith::int_div");
     m.insert("fail",            "axis_codegen_bridge::runtime::fail::fail");
     m.insert("int_div_checked", "axis_codegen_bridge::runtime::arith::int_div_checked");
@@ -1116,6 +1122,12 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("int_add",           vec![Int, Int]);
     m.insert("int_sub",           vec![Int, Int]);
     m.insert("int_mul",           vec![Int, Int]);
+    m.insert("int_shl",           vec![Int, Int]);
+    m.insert("int_shr",           vec![Int, Int]);
+    m.insert("int_bit_and",       vec![Int, Int]);
+    m.insert("int_bit_or",        vec![Int, Int]);
+    m.insert("int_bit_xor",       vec![Int, Int]);
+    m.insert("int_bit_not",       vec![Int]);
     m.insert("int_lt",            vec![Int, Int]);
     m.insert("cell_new_raw",      vec![Int]);
     m.insert("cell_cas_raw",      vec![Int, Int, Int]);

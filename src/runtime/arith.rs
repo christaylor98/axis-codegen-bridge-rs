@@ -48,6 +48,66 @@ pub fn int_add(x: i64, y: i64) -> Value { Value::Int(x.checked_add(y).unwrap_or_
 pub fn int_sub(x: i64, y: i64) -> Value { Value::Int(x.checked_sub(y).unwrap_or_else(|| panic!("int_sub: overflow ({} - {})", x, y))) }
 #[track_caller]
 pub fn int_mul(x: i64, y: i64) -> Value { Value::Int(x.checked_mul(y).unwrap_or_else(|| panic!("int_mul: overflow ({} * {})", x, y))) }
+
+// ── Bit operations (INT_BIT_OPS_V1): Python's meaning on a 64-bit Int ───────────────────────────────────────────────
+// & | ^ ~ are exact in two's complement. << is x * 2**n: a result that doesn't fit is an overflow (never a silent
+// wrap), like int_mul. >> is floor(x / 2**n) (arithmetic: -5 >> 1 == -3); a count past 63 gives 0 or -1. A negative
+// count is a ValueError in Python, here a panic -- both stop the program.
+#[track_caller]
+pub fn int_shl(x: i64, n: i64) -> Value {
+    if n < 0 { panic!("int_shl: negative shift count {}", n) }
+    if x == 0 { return Value::Int(0) }
+    if n > 63 { panic!("int_shl: overflow ({} << {})", x, n) }
+    let r = x.wrapping_shl(n as u32);
+    if (r >> n) != x { panic!("int_shl: overflow ({} << {})", x, n) }
+    Value::Int(r)
+}
+#[track_caller]
+pub fn int_shr(x: i64, n: i64) -> Value {
+    if n < 0 { panic!("int_shr: negative shift count {}", n) }
+    Value::Int(if n > 63 { if x < 0 { -1 } else { 0 } } else { x >> n })
+}
+#[track_caller]
+pub fn int_bit_and(x: i64, y: i64) -> Value { Value::Int(x & y) }
+#[track_caller]
+pub fn int_bit_or(x: i64, y: i64) -> Value { Value::Int(x | y) }
+#[track_caller]
+pub fn int_bit_xor(x: i64, y: i64) -> Value { Value::Int(x ^ y) }
+#[track_caller]
+pub fn int_bit_not(x: i64) -> Value { Value::Int(!x) }
+
+#[cfg(test)]
+mod bit_ops_tests {
+    use super::*;
+    fn i(v: Value) -> i64 { v.as_int() }
+
+    #[test]
+    fn bit_ops_match_python() {
+        // values checked against CPython: 1<<40, -3<<2, 5>>1, -5>>1, -1>>70, 6&3, -6&3, 6|3, 6^3, ~5, ~-1
+        assert_eq!(i(int_shl(1, 40)), 1_099_511_627_776);
+        assert_eq!(i(int_shl(-3, 2)), -12);
+        assert_eq!(i(int_shl(0, 500)), 0);
+        assert_eq!(i(int_shr(5, 1)), 2);
+        assert_eq!(i(int_shr(-5, 1)), -3);
+        assert_eq!(i(int_shr(-1, 70)), -1);
+        assert_eq!(i(int_shr(7, 70)), 0);
+        assert_eq!(i(int_bit_and(6, 3)), 2);
+        assert_eq!(i(int_bit_and(-6, 3)), 2);
+        assert_eq!(i(int_bit_or(6, 3)), 7);
+        assert_eq!(i(int_bit_xor(6, 3)), 5);
+        assert_eq!(i(int_bit_not(5)), -6);
+        assert_eq!(i(int_bit_not(-1)), 0);
+        assert_eq!(i(int_shl(i64::MIN >> 1, 1)), i64::MIN);     // fits exactly
+    }
+
+    #[test]
+    #[should_panic(expected = "int_shl: overflow")]
+    fn shl_past_64_bits_is_an_overflow() { int_shl(1, 63); }
+
+    #[test]
+    #[should_panic(expected = "negative shift count")]
+    fn negative_count_stops() { int_shr(1, -1); }
+}
 #[track_caller]
 pub fn int_lt(x: i64, y: i64) -> Value { Value::Bool(x < y) }
 
