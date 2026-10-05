@@ -1870,10 +1870,15 @@ fn ref_key(r: &NodeRef) -> (bool, u32) {
     }
 }
 
-fn last_uses(bundle: &CoreBundle, top_level: &std::collections::HashSet<u32>) -> MoveSet {
+fn last_uses(bundle: &CoreBundle, top_level: &std::collections::HashSet<u32>, copies: &[usize]) -> MoveSet {
     let mut uses: HashMap<(bool, u32), Vec<u32>> = HashMap::new();
     for (i, node) in bundle.nodes.iter().enumerate() {
-        let mut add = |r: &NodeRef| uses.entry(ref_key(r)).or_default().push(i as u32);
+        // a node emitted in several scopes (PURE_NODES_STAY_IN_THEIR_BRANCHES_V1) uses its operands once per copy
+        let mut add = |r: &NodeRef| {
+            for _ in 0..copies[i] {
+                uses.entry(ref_key(r)).or_default().push(i as u32);
+            }
+        };
         match node {
             Node::CCall { args, .. } => args.iter().for_each(&mut add),
             Node::CIf { cond, then_, else_ } => { add(cond); add(then_); add(else_); }
@@ -1922,7 +1927,7 @@ fn ref_take(r: &NodeRef, at: u32, moves: &MoveSet) -> String {
 // index j, i < j"), so by the time we compute node i's required scope, every
 // consumer j (j > i) already has its own scope resolved.
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 enum Branch {
     Then,
     Else,
@@ -1990,10 +1995,21 @@ fn longest_common_prefix(paths: &[ScopePath]) -> ScopePath {
 /// `else_` node was rejected and `then_` node + `else_` pool accepted, for the
 /// same shape. Do not reintroduce a positional form of this check; the
 /// guarantee belongs in the producer, where the arm structure still exists.
+/// PURE_NODES_STAY_IN_THEIR_BRANCHES_V1: the smallest set of scopes that covers every required scope (a scope
+/// covers itself and everything nested in it).
+fn minimal_cover(mut req: Vec<ScopePath>) -> Vec<ScopePath> {
+    req.sort();
+    req.dedup();
+    req.iter()
+        .filter(|p| !req.iter().any(|q| q.len() < p.len() && p[..q.len()] == q[..]))
+        .cloned()
+        .collect()
+}
+
 fn compute_branch_paths(
     bundle: &CoreBundle,
     pure_det: &std::collections::HashSet<Hash256>,
-) -> Result<Vec<ScopePath>, String> {
+) -> Result<Vec<Vec<ScopePath>>, String> {
     let n = bundle.nodes.len();
     let mut uses: Vec<Vec<Use>> = (0..n).map(|_| Vec::new()).collect();
     // `bundle.result` — not "the last node" — is the authoritative root (see
@@ -2026,32 +2042,36 @@ fn compute_branch_paths(
         }
     }
 
-    let mut path: Vec<ScopePath> = (0..n).map(|_| Vec::new()).collect();
+    // PURE_NODES_STAY_IN_THEIR_BRANCHES_V1: a node's placements -- the scopes it is emitted in. An effectful node has
+    // exactly one, the longest common prefix of its uses (it must run once, in program order: EFFECT_ORDER_V1 below).
+    // A pure node is emitted in EACH scope that needs it (the minimal cover of its uses) instead of being hoisted to
+    // their common prefix: hoisting ran it on paths that never use it, so a pure op that can FAIL failed there --
+    // `base * base` overflowed in the iteration that doesn't square (`2 ** 40`), `int(args[3])` ran for a mode with
+    // no third argument. The compiler merges identical pure calls (only those), which is how one node came to serve
+    // both arms. Arms are exclusive, so a pure node used in both arms of one CIf still runs at most once.
+    let mut place: Vec<Vec<ScopePath>> = (0..n).map(|_| vec![Vec::new()]).collect();
     for i in (0..n).rev() {
-        let required: Vec<ScopePath> = uses[i]
-            .iter()
-            .map(|u| match u {
-                Use::Result => Vec::new(),
-                Use::Same(j) => path[*j as usize].clone(),
+        let mut required: Vec<ScopePath> = Vec::new();
+        for u in &uses[i] {
+            match u {
+                Use::Result => required.push(Vec::new()),
+                Use::Same(j) => required.extend(place[*j as usize].iter().cloned()),
                 Use::ThenArm(j) => {
-                    let mut p = path[*j as usize].clone();
-                    p.push((*j, Branch::Then));
-                    p
+                    for p in &place[*j as usize] {
+                        let mut q = p.clone();
+                        q.push((*j, Branch::Then));
+                        required.push(q);
+                    }
                 }
                 Use::ElseArm(j) => {
-                    let mut p = path[*j as usize].clone();
-                    p.push((*j, Branch::Else));
-                    p
+                    for p in &place[*j as usize] {
+                        let mut q = p.clone();
+                        q.push((*j, Branch::Else));
+                        required.push(q);
+                    }
                 }
-            })
-            .collect();
-        // A node with no recorded uses has no consumer edge to anchor a
-        // scope to, so its `required` set is empty and `longest_common_prefix`
-        // yields the empty path — unconditional, top-level, ordered by index.
-        // That is ORPHAN_IS_TOP_LEVEL_V1 (see this fn's doc comment), the IR's
-        // defined meaning for such a node, which the producer upholds by
-        // seq-threading any arm-local discarded effect into its arm result.
-        path[i] = longest_common_prefix(&required);
+            }
+        }
         // EFFECT_ORDER_V1: sinking is unconditionally safe only for values.
         // An effectful node written before the `CIf` (its consumers all sit in
         // one arm) must NOT be deferred into the arm if that would let a
@@ -2059,11 +2079,8 @@ fn compute_branch_paths(
         // reorders effects relative to program order (the cursor_get-after-
         // cursor_close bug). Unsink one level at a time until no outer
         // effectful node sits between this node and the CIf it would defer to.
-        // Arm-local effects (seq-threaded by nf_lowering into the arm result,
-        // with no outer effect between them and their CIf) never trip this,
-        // so BRANCH_SCOPING_V1 semantics are preserved. `CIf` counts as
-        // effectful (it may gate sunk effects); unknown identities count as
-        // effectful (absent implies ordered).
+        // `CIf` counts as effectful (it may gate sunk effects); unknown
+        // identities count as effectful (absent implies ordered).
         let effectful = |idx: usize| -> bool {
             match &bundle.nodes[idx] {
                 Node::CCall { target_identity, args, .. } => {
@@ -2073,34 +2090,46 @@ fn compute_branch_paths(
                 Node::CDeterminate => false,
             }
         };
+        if !effectful(i) && !required.is_empty() {
+            place[i] = minimal_cover(required);
+            continue;
+        }
+        // A node with no recorded uses has no consumer edge to anchor a
+        // scope to, so its `required` set is empty and `longest_common_prefix`
+        // yields the empty path — unconditional, top-level, ordered by index.
+        // That is ORPHAN_IS_TOP_LEVEL_V1, the IR's defined meaning for such a
+        // node, which the producer upholds by seq-threading any arm-local
+        // discarded effect into its arm result.
+        let mut path_i = longest_common_prefix(&required);
         if effectful(i) {
-            while let Some(&(k, _)) = path[i].last() {
+            while let Some(&(k, _)) = path_i.last() {
                 let k = k as usize;
                 let reordered = ((i + 1)..k).any(|j| {
-                    effectful(j)
-                        && path[j].len() < path[i].len()
-                        && path[i][..path[j].len()] == path[j][..]
+                    let pj = &place[j][0];               // an effectful node has one placement
+                    effectful(j) && pj.len() < path_i.len() && path_i[..pj.len()] == pj[..]
                 });
                 if reordered {
-                    path[i].pop();
+                    path_i.pop();
                 } else {
                     break;
                 }
             }
         }
+        place[i] = vec![path_i];
     }
-    Ok(path)
+    Ok(place)
 }
 
 /// Group node indices by the innermost scope they were assigned — `None` is
 /// the unconditional top-level prelude; `Some((k, arm))` is the direct
 /// contents of that arm of CIf `k`. Order within each group is ascending by
 /// index, matching the bundle's required topological order.
-fn group_by_scope(n: usize, path: &[ScopePath]) -> HashMap<Option<(u32, Branch)>, Vec<usize>> {
+fn group_by_scope(n: usize, place: &[Vec<ScopePath>]) -> HashMap<Option<(u32, Branch)>, Vec<usize>> {
     let mut groups: HashMap<Option<(u32, Branch)>, Vec<usize>> = HashMap::new();
     for i in 0..n {
-        let key = path[i].last().copied();
-        groups.entry(key).or_default().push(i);
+        for p in &place[i] {                         // a pure node may be emitted in several scopes
+            groups.entry(p.last().copied()).or_default().push(i);
+        }
     }
     groups
 }
@@ -2802,7 +2831,8 @@ pub fn emit_rust_lib_from_bundle_with_dispatch(
     let scope_groups = group_by_scope(bundle.nodes.len(), &branch_paths);
     let top_level: std::collections::HashSet<u32> =
         scope_groups.get(&None).map(|v| v.iter().map(|i| *i as u32).collect()).unwrap_or_default();
-    let moves = last_uses(bundle, &top_level);
+    let copies: Vec<usize> = branch_paths.iter().map(|p| p.len()).collect();
+    let moves = last_uses(bundle, &top_level, &copies);
     out.push_str(&render_scope(
         None,
         &scope_groups,
