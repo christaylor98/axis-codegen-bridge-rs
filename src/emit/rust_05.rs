@@ -2470,7 +2470,7 @@ pub fn sanitise(name: &str) -> String {
 ///   (`ax_fn_<64hex>`). Populated from `--lib` / `--lib-dir` bundles by the driver.
 ///
 /// The generated library exposes:
-///   `#[no_mangle] pub extern "C" fn <fn_name>(args: Value) -> Value`
+///   `pub extern "C" fn <fn_name>(args: Value) -> Value`   ← Rust-mangled (USER_NAMES_STAY_MANGLED_V1)
 ///   `#[no_mangle] pub extern "C" fn ax_fn_<hex>(args: Value) -> Value`  ← identity export
 ///   `#[no_mangle] pub extern "C" fn _ax_exe_<fn_name>(args: Value) -> Value`
 pub fn emit_rust_lib_from_bundle(
@@ -2733,9 +2733,13 @@ pub fn emit_rust_lib_from_bundle_with_dispatch(
         out.push_str("\n");
     }
 
-    // Emit main function
+    // Emit main function. NOT #[no_mangle] (USER_NAMES_STAY_MANGLED_V1): an unmangled export takes the bare C
+    // symbol, so a user fn named `write`, `read`, `free`, `time`... replaced the C library's own -- the first print
+    // jumped into the user's `write` (segfault), `free`/`read` hung the program. Nothing links this name: other
+    // bundles and every harness call the identity export `ax_fn_<hash>`, the exe driver calls `_ax_exe_<name>`,
+    // both below and both still unmangled.
     out.push_str(&format!(
-        "#[no_mangle]\npub extern \"C-unwind\" fn {}(args: Value) -> Value {{\n",
+        "#[allow(non_snake_case)]\npub extern \"C-unwind\" fn {}(args: Value) -> Value {{\n",
         safe_name
     ));
     out.push_str("    init_runtime();\n");
