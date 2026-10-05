@@ -105,6 +105,75 @@ pub fn hex_to_hash256(s: &str) -> Result<Hash256, String> {
     Ok(out)
 }
 
+// ── Bundle identity ──────────────────────────────────────────────────────────
+//
+// Matches axis-lang-lab ir/core_ir_05::{serialize_canonical, bundle_identity}
+// byte for byte: sha256 of the canonical encoding, version excluded. This is
+// the hash a registry `body 0x…` line names, and what `axis` prints as a
+// compiled bundle's `identity`.
+
+fn write_varint(buf: &mut Vec<u8>, mut v: u64) {
+    loop {
+        let byte = (v & 0x7f) as u8;
+        v >>= 7;
+        if v == 0 {
+            buf.push(byte);
+            break;
+        }
+        buf.push(byte | 0x80);
+    }
+}
+
+fn write_bytes(buf: &mut Vec<u8>, data: &[u8]) {
+    write_varint(buf, data.len() as u64);
+    buf.extend_from_slice(data);
+}
+
+fn write_noderef(buf: &mut Vec<u8>, r: &NodeRef) {
+    write_varint(buf, match *r {
+        NodeRef::Node(i) => (i as u64) << 1,
+        NodeRef::Pool(i) => ((i as u64) << 1) | 1,
+    });
+}
+
+/// Canonical bytes of a bundle (excludes version).
+pub fn serialize_canonical(bundle: &CoreBundle) -> Vec<u8> {
+    let mut buf = Vec::new();
+    write_varint(&mut buf, bundle.constant_pool.len() as u64);
+    for entry in &bundle.constant_pool {
+        buf.extend_from_slice(&entry.def_hash);
+        write_bytes(&mut buf, &entry.payload);
+    }
+    write_varint(&mut buf, bundle.nodes.len() as u64);
+    for node in &bundle.nodes {
+        match node {
+            Node::CCall { target_identity, args, target_name } => {
+                write_varint(&mut buf, 0);
+                write_bytes(&mut buf, target_name.as_bytes());
+                buf.extend_from_slice(target_identity);
+                write_varint(&mut buf, args.len() as u64);
+                for a in args {
+                    write_noderef(&mut buf, a);
+                }
+            }
+            Node::CIf { cond, then_, else_ } => {
+                write_varint(&mut buf, 1);
+                write_noderef(&mut buf, cond);
+                write_noderef(&mut buf, then_);
+                write_noderef(&mut buf, else_);
+            }
+            Node::CDeterminate => write_varint(&mut buf, 2),
+        }
+    }
+    write_noderef(&mut buf, &bundle.result);
+    buf
+}
+
+/// The bundle's content identity: what a registry `body` line names.
+pub fn bundle_identity(bundle: &CoreBundle) -> Hash256 {
+    sha256_bytes(&serialize_canonical(bundle))
+}
+
 fn hex_nibble(c: u8) -> Option<u8> {
     match c {
         b'0'..=b'9' => Some(c - b'0'),

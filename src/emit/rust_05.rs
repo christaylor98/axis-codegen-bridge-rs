@@ -769,6 +769,51 @@ pub fn load_registry_identity_map(paths: &[String]) -> HashMap<Hash256, String> 
     map
 }
 
+/// Parse `--reg` files and return identity → body for every entry with a
+/// `body 0x<hex>` line (the composites). The body is the content identity of
+/// the bundle that implements the fn, so the driver can find its provider in
+/// the `--lib` set by content rather than by sha256(name): a composite's
+/// identity is minted, not derived from its name.
+pub fn load_registry_composite_bodies(paths: &[String]) -> HashMap<Hash256, Hash256> {
+    let mut map = HashMap::new();
+    for path in paths {
+        let content = match std::fs::read_to_string(path) {
+            Ok(c)  => c,
+            Err(e) => { eprintln!("warning: could not read --reg {}: {}", path, e); continue; }
+        };
+        let mut current_identity: Option<Hash256> = None;
+        let mut current_body: Option<Hash256> = None;
+        let mut in_contract = false;
+        for line in content.lines() {
+            let t = line.trim();
+            if let Some(rest) = t.strip_prefix("fn ") {
+                let name = rest.split_whitespace().next().unwrap_or("");
+                current_identity =
+                    if name.is_empty() { None } else { Some(sha256_bytes(name.as_bytes())) };
+                current_body = None;
+                in_contract = false;
+            } else if let Some(rest) = t.strip_prefix("identity ") {
+                if let Ok(id) = crate::core_ir_05::hex_to_hash256(rest.trim()) {
+                    current_identity = Some(id);
+                }
+            } else if let Some(rest) = t.strip_prefix("body ") {
+                if let Ok(b) = crate::core_ir_05::hex_to_hash256(rest.trim()) {
+                    current_body = Some(b);
+                }
+            } else if t == "bridge_contract" {
+                in_contract = true;
+            } else if t == "end" {
+                if in_contract {
+                    in_contract = false;
+                } else if let (Some(id), Some(b)) = (current_identity.take(), current_body.take()) {
+                    map.insert(id, b);
+                }
+            }
+        }
+    }
+    map
+}
+
 /// EFFECT_ORDER_V1: identities declared BOTH `effect pure` AND `deterministic
 /// true` across the `--reg` files — the same classification the compiler's
 /// CSE gate uses (hash-cons shareable only for pure+deterministic leaves).
@@ -1932,7 +1977,7 @@ fn longest_common_prefix(paths: &[ScopePath]) -> ScopePath {
 fn compute_branch_paths(
     bundle: &CoreBundle,
     pure_det: &std::collections::HashSet<Hash256>,
-) -> Result<Vec<ScopePath>, String> {
+) -> Result<Vec<Vec<ScopePath>>, String> {
     let n = bundle.nodes.len();
     let mut uses: Vec<Vec<Use>> = (0..n).map(|_| Vec::new()).collect();
     // `bundle.result` — not "the last node" — is the authoritative root (see
@@ -1965,22 +2010,32 @@ fn compute_branch_paths(
         }
     }
 
+    // GUARDED_SHARED_PURE_V1: a pure, deterministic node may be needed in SEVERAL scopes that share no
+    // arm -- e.g. the same `str_char_code(s, i)` guarded by two different `if`s (node interning makes it one
+    // node). Hoisting it to their common prefix (the top level) ran it unguarded: a crash exactly when every
+    // guard said "don't". Such a node is emitted in each minimal scope that needs it instead (`paths[i]` is an
+    // antichain: no scope in it encloses another), so it runs only where a guard lets it. Rust allows the same
+    // `let node_i` in sibling blocks. Effectful nodes (and `CIf`) keep the single common-prefix scope: running
+    // an effect once per arm would change how many times it runs.
+    let mut paths: Vec<Vec<ScopePath>> = (0..n).map(|_| vec![Vec::new()]).collect();
     let mut path: Vec<ScopePath> = (0..n).map(|_| Vec::new()).collect();
     for i in (0..n).rev() {
         let required: Vec<ScopePath> = uses[i]
             .iter()
-            .map(|u| match u {
-                Use::Result => Vec::new(),
-                Use::Same(j) => path[*j as usize].clone(),
-                Use::ThenArm(j) => {
-                    let mut p = path[*j as usize].clone();
-                    p.push((*j, Branch::Then));
-                    p
-                }
-                Use::ElseArm(j) => {
-                    let mut p = path[*j as usize].clone();
-                    p.push((*j, Branch::Else));
-                    p
+            .flat_map(|u| -> Vec<ScopePath> {
+                match u {
+                    Use::Result => vec![Vec::new()],
+                    Use::Same(j) => paths[*j as usize].clone(),
+                    Use::ThenArm(j) => paths[*j as usize].iter().map(|p| {
+                        let mut p = p.clone();
+                        p.push((*j, Branch::Then));
+                        p
+                    }).collect(),
+                    Use::ElseArm(j) => paths[*j as usize].iter().map(|p| {
+                        let mut p = p.clone();
+                        p.push((*j, Branch::Else));
+                        p
+                    }).collect(),
                 }
             })
             .collect();
@@ -2012,6 +2067,22 @@ fn compute_branch_paths(
                 Node::CDeterminate => false,
             }
         };
+        let pure_value = !effectful(i);
+        if pure_value && required.len() > 1 {
+            // the minimal scopes: drop any required scope that another required scope encloses
+            let mut minimal: Vec<ScopePath> = Vec::new();
+            for p in &required {
+                if required.iter().any(|q| q.len() < p.len() && p[..q.len()] == q[..]) {
+                    continue;
+                }
+                if !minimal.contains(p) {
+                    minimal.push(p.clone());
+                }
+            }
+            paths[i] = minimal;
+        } else {
+            paths[i] = vec![path[i].clone()];
+        }
         if effectful(i) {
             while let Some(&(k, _)) = path[i].last() {
                 let k = k as usize;
@@ -2026,20 +2097,26 @@ fn compute_branch_paths(
                     break;
                 }
             }
+            paths[i] = vec![path[i].clone()];
         }
     }
-    Ok(path)
+    Ok(paths)
 }
 
 /// Group node indices by the innermost scope they were assigned — `None` is
 /// the unconditional top-level prelude; `Some((k, arm))` is the direct
 /// contents of that arm of CIf `k`. Order within each group is ascending by
 /// index, matching the bundle's required topological order.
-fn group_by_scope(n: usize, path: &[ScopePath]) -> HashMap<Option<(u32, Branch)>, Vec<usize>> {
+fn group_by_scope(n: usize, paths: &[Vec<ScopePath>]) -> HashMap<Option<(u32, Branch)>, Vec<usize>> {
     let mut groups: HashMap<Option<(u32, Branch)>, Vec<usize>> = HashMap::new();
     for i in 0..n {
-        let key = path[i].last().copied();
-        groups.entry(key).or_default().push(i);
+        for p in &paths[i] {
+            let key = p.last().copied();
+            let g = groups.entry(key).or_default();
+            if g.last() != Some(&i) {
+                g.push(i);
+            }
+        }
     }
     groups
 }

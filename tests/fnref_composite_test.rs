@@ -308,3 +308,101 @@ fn ccall_to_composite_with_registry_entry_resolves_via_xbundle() {
         String::from_utf8_lossy(&run.stderr)
     );
 }
+
+// ── COMPOSITE_LINK_BY_BODY ──────────────────────────────────────────────────
+//
+// A composite's registry identity is minted, not sha256(name). The bridge
+// used to key every --lib provider by sha256(file stem) only, so a composite
+// with any other identity verified in the compiler and then failed here:
+//     registry name 'double' (identity …) has no bridge implementation and no
+//     xbundle provider
+// It now follows identity → registry `body` → the --lib bundle whose content
+// identity is that body.
+
+/// Provider `double(v: Int) -> Int` body: `int_add(v, v)`.
+fn make_double() -> CoreBundle {
+    CoreBundle {
+        version: "0.5".into(),
+        constant_pool: vec![
+            ConstantPoolEntry { def_hash: param_type_hash(), payload: vec![0x00] },
+        ],
+        nodes: vec![Node::CCall {
+            target_identity: sha256_bytes(b"int_add"),
+            args: vec![NodeRef::Pool(0), NodeRef::Pool(0)],
+            target_name: "int_add".into(),
+        }],
+        result: NodeRef::Node(0),
+    }
+}
+
+/// An identity that is deliberately NOT sha256("double").
+const MINTED: [u8; 32] = [0x5a; 32];
+
+/// Caller: `double(Int(21))`, called by the minted identity.
+fn make_caller_double() -> CoreBundle {
+    CoreBundle {
+        version: "0.5".into(),
+        constant_pool: vec![
+            ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(21) },
+        ],
+        nodes: vec![Node::CCall {
+            target_identity: MINTED,
+            args: vec![NodeRef::Pool(0)],
+            target_name: "double".into(),
+        }],
+        result: NodeRef::Node(0),
+    }
+}
+
+fn build_minted_caller(with_reg: bool) -> (std::process::Output, TempDir) {
+    use axis_codegen_bridge::core_ir_05::{bundle_identity, hash256_to_hex};
+    let dir = TempDir::new().unwrap();
+    let provider = make_double();
+    let lib = dir.path().join("lib");
+    std::fs::create_dir(&lib).unwrap();
+    std::fs::write(lib.join("double.coreir"), create_core_bundle_05(&provider)).unwrap();
+    let caller_path = write_bundle(&dir, "caller.coreir", &make_caller_double());
+    let reg = dir.path().join("local.axreg");
+    std::fs::write(&reg, format!(
+        "registry local 0.5\n\nfn double\n  identity 0x{}\n  kind composite\n  in (Int)\n  out Int\n  body 0x{}\nend\n",
+        hash256_to_hex(&MINTED), hash256_to_hex(&bundle_identity(&provider)),
+    )).unwrap();
+    let exe = dir.path().join("caller_exe");
+    let mut cmd = Command::new(bridge());
+    cmd.args([
+        "build", caller_path.to_str().unwrap(),
+        "--out", exe.to_str().unwrap(),
+        "--lib-dir", lib.to_str().unwrap(),
+        "--exe",
+    ]);
+    if with_reg {
+        cmd.args(["--reg", reg.to_str().unwrap()]);
+    }
+    (cmd.output().expect("bridge invocation failed"), dir)
+}
+
+#[test]
+fn composite_with_minted_identity_links_by_body() {
+    let (out, dir) = build_minted_caller(true);
+    assert!(
+        out.status.success(),
+        "bridge build failed (minted composite):\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(dir.path().join("caller_exe")).output().expect("failed to run exe");
+    assert!(run.status.success(), "exe failed: {:?}", String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "42");
+}
+
+/// Without the registry entry nothing names the body, so the minted identity
+/// stays unresolved: the stem `double` must not be guessed at.
+#[test]
+fn composite_with_minted_identity_needs_its_registry_entry() {
+    let (out, _dir) = build_minted_caller(false);
+    assert!(!out.status.success(), "minted identity linked with no registry entry");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("UNKNOWN_GATE"),
+        "unexpected error: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

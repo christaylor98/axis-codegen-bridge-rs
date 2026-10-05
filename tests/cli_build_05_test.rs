@@ -1276,3 +1276,71 @@ fn test_no_flag_build_glue_unchanged() {
         "no-flag build's generated glue must be byte-identical to emit_rust_lib_from_bundle's output"
     );
 }
+
+// ── GUARDED_SHARED_PURE_V1: a pure node shared by two guards runs only under a guard ──────────────────────
+//
+// Node interning makes the same pure expression one node wherever it appears. Used inside two different
+// `if`s, its scopes share no arm, and the old common-prefix rule hoisted it to the unconditional top level:
+// a partial operation (here `str_char_code` past the end of the string) then crashed on exactly the path
+// both guards ruled out. Each guarded scope now gets its own copy, so it only runs where a guard allows.
+//
+//   node0 = str_char_code("ab", 5)             -- a Defect if it ever runs
+//   node1 = if false { node0 } else { 0 }
+//   node2 = if true  { 0 } else { node0 }
+//   node3 = int_add(node1, node2)              -- 0, and node0 never runs
+#[test]
+fn test_pure_node_shared_by_two_guards_is_not_hoisted() {
+    let dir = TempDir::new().unwrap();
+    let bundle = CoreBundle {
+        version: "0.5".to_string(),
+        constant_pool: vec![
+            ConstantPoolEntry {
+                def_hash: axis_codegen_bridge::core_ir_05::text_type_hash(),
+                payload: axis_codegen_bridge::core_ir_05::encode_text_payload("ab"),
+            },
+            ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(5) },
+            ConstantPoolEntry { def_hash: bool_type_hash(), payload: encode_bool_payload(false) },
+            ConstantPoolEntry { def_hash: bool_type_hash(), payload: encode_bool_payload(true) },
+            ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(0) },
+        ],
+        nodes: vec![
+            Node::CCall {
+                target_identity: sha256_bytes(b"str_char_code"),
+                target_name: "str_char_code".to_string(),
+                args: vec![NodeRef::Pool(0), NodeRef::Pool(1)],
+            },
+            Node::CIf { cond: NodeRef::Pool(2), then_: NodeRef::Node(0), else_: NodeRef::Pool(4) },
+            Node::CIf { cond: NodeRef::Pool(3), then_: NodeRef::Pool(4), else_: NodeRef::Node(0) },
+            Node::CCall {
+                target_identity: sha256_bytes(b"int_add"),
+                target_name: "int_add".to_string(),
+                args: vec![NodeRef::Node(1), NodeRef::Node(2)],
+            },
+        ],
+        result: NodeRef::Node(3),
+    };
+    let fixture = write_05_bundle(&dir, "shared_guard.coreir", &bundle);
+    // Only a node the registry declares pure + deterministic may be copied into several scopes; without
+    // a --reg it counts as effectful and keeps the single common-prefix scope (EFFECT_ORDER_V1).
+    let reg = dir.path().join("pure.axreg");
+    let ident: String = sha256_bytes(b"str_char_code").iter().map(|b| format!("{:02x}", b)).collect();
+    std::fs::write(&reg, format!(
+        "registry shared-guard-test 0.5\n\nfn str_char_code\n  identity 0x{ident}\n  kind leaf\n  in (Text, Int)\n  \
+         out Int\n  effect pure\n  deterministic true\n  idempotent true\nend\n"
+    )).unwrap();
+    let out = dir.path().join("shared_guard");
+    let status = Command::new(bridge())
+        .args(["build", fixture.to_str().unwrap(), "--out", out.to_str().unwrap(), "--exe",
+               "--reg", reg.to_str().unwrap()])
+        .status()
+        .expect("bridge failed to run");
+    assert!(status.success(), "a pure node shared by two CIf arms is a legal bundle and must build");
+    let run = Command::new(&out).output().expect("failed to run exe");
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "GUARDED_SHARED_PURE regression: the guarded str_char_code ran unguarded; stderr: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "0");
+}

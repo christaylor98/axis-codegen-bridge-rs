@@ -99,18 +99,23 @@ fn compute_lib_path(out_arg: &str) -> std::path::PathBuf {
 /// `extra_roots` are provider identities (e.g. §5b entry points not called
 /// from the root bundle) whose bundles are also traversed, and whose own
 /// identity is added to the ordered list so they get compiled.
+///
+/// `by_body` maps a composite's registry identity to the provider key of the
+/// `--lib` bundle its `body` names. A call to such an identity is followed to
+/// that provider, so a composite links whatever its identity is.
 fn collect_xbundle_closure(
     root: &CoreBundle,
     available: &HashMap<Hash256, (String, CoreBundle)>,
+    by_body: &HashMap<Hash256, Hash256>,
     extra_roots: &[Hash256],
     overlay: &rust_05::DispatchOverlay,
 ) -> Vec<Hash256> {
     let mut ordered: Vec<Hash256> = Vec::new();
     let mut visited: HashSet<Hash256> = HashSet::new();
-    collect_closure_dfs(root, available, &mut visited, &mut ordered, overlay);
+    collect_closure_dfs(root, available, by_body, &mut visited, &mut ordered, overlay);
     for eid in extra_roots {
         if let Some((_, eb)) = available.get(eid) {
-            collect_closure_dfs(eb, available, &mut visited, &mut ordered, overlay);
+            collect_closure_dfs(eb, available, by_body, &mut visited, &mut ordered, overlay);
         }
         if visited.insert(*eid) {
             ordered.push(*eid);
@@ -122,6 +127,7 @@ fn collect_xbundle_closure(
 fn collect_closure_dfs(
     bundle: &CoreBundle,
     available: &HashMap<Hash256, (String, CoreBundle)>,
+    by_body: &HashMap<Hash256, Hash256>,
     visited: &mut HashSet<Hash256>,
     ordered: &mut Vec<Hash256>,
     overlay: &rust_05::DispatchOverlay,
@@ -129,11 +135,16 @@ fn collect_closure_dfs(
     for node in &bundle.nodes {
         if let Node::CCall { target_identity, target_name, .. } = node {
             if rust_05::is_bridge_builtin_with_dispatch(target_identity, overlay) { continue; }
-            if target_name.is_empty() || sha256_bytes(target_name.as_bytes()) != *target_identity { continue; }
-            if !visited.insert(*target_identity) { continue; } // cycle or already processed
-            if let Some((_, dep_bundle)) = available.get(target_identity) {
-                collect_closure_dfs(dep_bundle, available, visited, ordered, overlay);
-                ordered.push(*target_identity);
+            let key = match by_body.get(target_identity) {
+                Some(k) => *k,
+                None if !target_name.is_empty()
+                    && sha256_bytes(target_name.as_bytes()) == *target_identity => *target_identity,
+                None => continue,
+            };
+            if !visited.insert(key) { continue; } // cycle or already processed
+            if let Some((_, dep_bundle)) = available.get(&key) {
+                collect_closure_dfs(dep_bundle, available, by_body, visited, ordered, overlay);
+                ordered.push(key);
             }
         }
     }
@@ -148,10 +159,11 @@ fn collect_closure_dfs(
         let mut id: Hash256 = [0u8; 32];
         id.copy_from_slice(&entry.payload);
         if rust_05::is_bridge_builtin_with_dispatch(&id, overlay) { continue; }
-        if !visited.insert(id) { continue; }
-        if let Some((_, dep_bundle)) = available.get(&id) {
-            collect_closure_dfs(dep_bundle, available, visited, ordered, overlay);
-            ordered.push(id);
+        let key = by_body.get(&id).copied().unwrap_or(id);
+        if !visited.insert(key) { continue; }
+        if let Some((_, dep_bundle)) = available.get(&key) {
+            collect_closure_dfs(dep_bundle, available, by_body, visited, ordered, overlay);
+            ordered.push(key);
         }
     }
 }
@@ -173,6 +185,8 @@ fn cmd_build(args: &[String]) {
     let mut provider_crates: Vec<(String, String)> = Vec::new();
     let mut entry_names: Vec<String> = Vec::new();
     let mut entry_stack_size: usize  = 1048576; // 1 MiB default
+    // single-root exe: run the entry on its own thread only when a stack size is asked for (else the main thread)
+    let mut entry_stack_given = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -207,7 +221,7 @@ fn cmd_build(args: &[String]) {
             "--entry"            if i + 1 < args.len() => { entry_names.push(args[i+1].clone()); i += 2; }
             "--entry-stack-size" if i + 1 < args.len() => {
                 match args[i+1].parse::<usize>() {
-                    Ok(n) => entry_stack_size = n,
+                    Ok(n) => { entry_stack_size = n; entry_stack_given = true; }
                     Err(_) => {
                         eprintln!("error: --entry-stack-size must be a positive integer, got {:?}", args[i+1]);
                         std::process::exit(1);
@@ -315,6 +329,19 @@ fn cmd_build(args: &[String]) {
         provider_map.insert(pid, (pfn, pbundle));
     }
 
+    // A composite's registry identity is minted, not sha256(name), so it is
+    // linked through its `body`: identity → body → the --lib bundle whose
+    // content identity is that body. Entries whose identity already keys a
+    // provider (the §5b name rule) need nothing here.
+    let provider_by_content: HashMap<Hash256, Hash256> = provider_map.iter()
+        .map(|(pid, (_, b))| (core_ir_05::bundle_identity(b), *pid))
+        .collect();
+    let by_body: HashMap<Hash256, Hash256> = rust_05::load_registry_composite_bodies(&reg_paths)
+        .into_iter()
+        .filter(|(id, _)| !provider_map.contains_key(id))
+        .filter_map(|(id, body)| provider_by_content.get(&body).map(|pid| (id, *pid)))
+        .collect();
+
     // ── Named-entry resolution (BRIDGE_ENTRY_POINTS_V1) ─────────────────
     // Validate each named entry and collect §5b entry provider IDs for the
     // closure sweep. Built-in entries are ABI-checked (must have `in (TextList)`)
@@ -357,13 +384,16 @@ fn cmd_build(args: &[String]) {
     // Collect the full transitive closure of §5b providers needed by the root
     // plus any §5b entry-point providers (extra_roots), using DFS with a visited
     // set for cycle safety (CYCLES_ARE_LEGAL).
-    let all_providers = collect_xbundle_closure(&bundle, &provider_map, &xbundle_entry_ids, &dispatch_overlay);
+    let all_providers = collect_xbundle_closure(&bundle, &provider_map, &by_body, &xbundle_entry_ids, &dispatch_overlay);
 
     // Build xbundle_providers map: identity → "ax_fn_<hex>" symbol.
     // This covers the full closure so each bundle (root + providers) can emit
     // extern decls for any §5b target in the closure.
+    // A composite linked by body calls its provider's export, so callers
+    // resolve its identity to that symbol.
     let xbundle_providers: HashMap<Hash256, String> = provider_map.keys()
         .map(|id| (*id, format!("ax_fn_{}", hash256_to_hex(id))))
+        .chain(by_body.iter().map(|(id, pid)| (*id, format!("ax_fn_{}", hash256_to_hex(pid)))))
         .collect();
 
     // Compile each provider in the closure to its own rlib.
@@ -515,28 +545,44 @@ fn cmd_build(args: &[String]) {
              extern \"C-unwind\" {{\n\
                  fn {fn}(args: Value) -> Value;\n\
              }}\n\n\
+             fn run(args: Vec<Value>) -> i32 {{\n\
+                 let result = match std::panic::catch_unwind(|| unsafe {{ {fn}(Value::List(args)) }}) {{\n\
+                     Ok(v) => v,\n\
+                     Err(p) if axis_codegen_bridge::runtime::fault::is_defect_payload(&*p) => return 4,\n\
+                     Err(p) => std::panic::resume_unwind(p),\n\
+                 }};\n\
+                 if axis_codegen_bridge::runtime::fault::is_err(&result) {{\n\
+                     eprintln!(\"{{}}\", axis_codegen_bridge::runtime::fault::describe(&result));\n\
+                     return 2;\n\
+                 }}\n\
+                 if axis_codegen_bridge::runtime::fault::is_unknown(&result) {{\n\
+                     eprintln!(\"{{}}\", axis_codegen_bridge::runtime::fault::describe(&result));\n\
+                     return 3;\n\
+                 }}\n\
+                 // A fault whose Unknown did not reach the result (its value was discarded, e.g. a statement)\n\
+                 // still stopped every later effect: the run failed, so it must not exit 0.\n\
+                 if let Some(first) = axis_codegen_bridge::runtime::fault::first_fault() {{\n\
+                     eprintln!(\"{{}}\", axis_codegen_bridge::runtime::fault::describe(&first));\n\
+                     return 3;\n\
+                 }}\n\
+                 if !matches!(result, Value::Unit) {{ println!(\"{{}}\", result); }}\n\
+                 0\n\
+             }}\n\n\
              fn main() {{\n\
                  init_runtime();\n\
                  let args: Vec<Value> = std::env::args().skip(1)\n\
                      .map(|s| Value::Str(intern_str(&s)))\n\
                      .collect();\n\
-                 let result = match std::panic::catch_unwind(|| unsafe {{ {fn}(Value::List(args)) }}) {{\n\
-                     Ok(v) => v,\n\
-                     Err(p) if axis_codegen_bridge::runtime::fault::is_defect_payload(&*p) => std::process::exit(4),\n\
-                     Err(p) => std::panic::resume_unwind(p),\n\
-                 }};\n\
-                 if axis_codegen_bridge::runtime::fault::is_err(&result) {{\n\
-                     eprintln!(\"{{}}\", axis_codegen_bridge::runtime::fault::describe(&result));\n\
-                     std::process::exit(2);\n\
-                 }}\n\
-                 if axis_codegen_bridge::runtime::fault::is_unknown(&result) {{\n\
-                     eprintln!(\"{{}}\", axis_codegen_bridge::runtime::fault::describe(&result));\n\
-                     std::process::exit(3);\n\
-                 }}\n\
-                 if !matches!(result, Value::Unit) {{ println!(\"{{}}\", result); }}\n\
+                 let code = {run_call};\n\
+                 if code != 0 {{ std::process::exit(code); }}\n\
              }}\n",
             extern_crates = extern_crate_lines,
-            fn = shim_fn
+            fn = shim_fn,
+            run_call = if entry_stack_given {
+                format!("std::thread::Builder::new().stack_size({}).spawn(move || run(args)).expect(\"spawn entry thread\").join().unwrap_or_else(|p| std::panic::resume_unwind(p))", entry_stack_size)
+            } else {
+                "run(args)".to_string()
+            }
         )
     } else {
         // Multi-entry thread driver (BRIDGE_ENTRY_POINTS_V1 §PART5).

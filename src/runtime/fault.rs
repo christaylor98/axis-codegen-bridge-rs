@@ -84,6 +84,11 @@ pub fn raise(message: &str, location: &str) -> Value {
     u
 }
 
+/// The first fault this entry (thread) raised, if any: undischarged faults last for the entry's life.
+pub fn first_fault() -> Option<Value> {
+    FAULTED.with(|c| c.borrow().clone())
+}
+
 pub fn is_err(v: &Value) -> bool {
     matches!(v, Value::Ctor { tag, .. } if *tag == ERR_TAG)
 }
