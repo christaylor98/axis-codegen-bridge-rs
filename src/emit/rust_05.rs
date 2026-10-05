@@ -154,6 +154,12 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("list_get_println_if_some",   "axis_codegen_bridge::runtime::list::list_get_println_if_some");
     m.insert("list_str_len_lte_if_some",   "axis_codegen_bridge::runtime::list::list_str_len_lte_if_some");
     m.insert("list_append",              "axis_codegen_bridge::runtime::list::list_append");
+    // PYAX_LIST_IN_PLACE_V1: ValueList-typed updates that write in place when the list is unshared
+    m.insert("value_list_push",          "axis_codegen_bridge::runtime::list::list_append");
+    m.insert("list_set",                 "axis_codegen_bridge::runtime::list::list_set");
+    m.insert("list_insert",              "axis_codegen_bridge::runtime::list::list_insert");
+    m.insert("list_remove",              "axis_codegen_bridge::runtime::list::list_remove");
+    m.insert("list_drop_last",           "axis_codegen_bridge::runtime::list::list_drop_last");
     m.insert("list_concat",   "axis_codegen_bridge::runtime::list::list_concat");
     m.insert("list_reverse",  "axis_codegen_bridge::runtime::list::list_reverse");
     m.insert("list_head",     "axis_codegen_bridge::runtime::list::list_head");
@@ -1119,6 +1125,11 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("tuple_field",       vec![Value, Int]);
     m.insert("list_get",          vec![Value, Int]);
     m.insert("list_append",       vec![Value, Value]);
+    m.insert("value_list_push",   vec![Value, Value]);
+    m.insert("list_set",          vec![Value, Int, Value]);
+    m.insert("list_insert",       vec![Value, Int, Value]);
+    m.insert("list_remove",       vec![Value, Int]);
+    m.insert("list_drop_last",    vec![Value]);
     m.insert("list_of_2",         vec![Value, Value]);
     m.insert("list_of_3",         vec![Value, Value, Value]);
     // 3rd slot is the FnRef arg (step) — its accessor is never used (FnRef
