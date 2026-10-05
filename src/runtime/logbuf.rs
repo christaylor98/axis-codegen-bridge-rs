@@ -172,7 +172,7 @@ pub fn logbuf_open(path: std::sync::Arc<str>) -> Value {
 /// Spike 1 enforces no cap, so this never returns -1 — the Int return simply
 /// must not foreclose it. Rotation itself is out of scope for Spike 1.
 #[track_caller]
-pub fn logbuf_append(h: i64, data: Vec<u8>) -> Value {
+pub fn logbuf_append(h: i64, data: super::value::BytesBuf) -> Value {
     LOGS.with(|logs| {
         let mut logs = logs.borrow_mut();
         let lb = logs
@@ -361,7 +361,7 @@ pub fn logbuf_read(h: i64, off: i64, len: i64) -> Value {
             let bend = (end - lb.file_len) as usize;
             out.extend_from_slice(&lb.buf[bstart..bend]);
         }
-        Value::Bytes(out)
+        Value::Bytes(out.into())
     })
 }
 

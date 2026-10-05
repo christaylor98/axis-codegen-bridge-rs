@@ -28,19 +28,19 @@ fn s(v: &str) -> Value { Value::Str(intern_str(v)) }
 #[test]
 fn t1_text_to_bytes_ascii() {
     let r = text_to_bytes(intern_str("hello"));
-    assert_eq!(r, Value::Bytes(b"hello".to_vec()));
+    assert_eq!(r, Value::Bytes(b"hello".to_vec().into()));
 }
 
 #[test]
 fn t2_text_to_bytes_utf8() {
     let r = text_to_bytes(intern_str("héllo")); // é = 0xC3 0xA9
-    assert_eq!(r, Value::Bytes(vec![b'h', 0xC3, 0xA9, b'l', b'l', b'o']));
+    assert_eq!(r, Value::Bytes(vec![b'h', 0xC3, 0xA9, b'l', b'l', b'o'].into()));
 }
 
 #[test]
 fn t3_text_to_bytes_empty() {
     let r = text_to_bytes(intern_str(""));
-    assert_eq!(r, Value::Bytes(vec![]));
+    assert_eq!(r, Value::Bytes(vec![].into()));
 }
 
 #[test]
@@ -60,11 +60,11 @@ fn t5_round_trip_ascii() {
     let path = unique_tmp_path("rt_ascii");
     let payload = b"hello".to_vec();
 
-    let w = fs_write_bytes(intern_str(&path), payload.clone());
+    let w = fs_write_bytes(intern_str(&path), payload.clone().into());
     assert_eq!(w, Value::Unit);
 
     let r = fs_read_bytes(intern_str(&path));
-    assert_eq!(r, Value::Bytes(payload));
+    assert_eq!(r, Value::Bytes(payload.into()));
 
     let _ = std::fs::remove_file(&path);
 }
@@ -74,11 +74,11 @@ fn t6_round_trip_binary_with_nulls_and_high_bytes() {
     let path = unique_tmp_path("rt_bin");
     let payload: Vec<u8> = (0u8..=255u8).collect();
 
-    let w = fs_write_bytes(intern_str(&path), payload.clone());
+    let w = fs_write_bytes(intern_str(&path), payload.clone().into());
     assert_eq!(w, Value::Unit);
 
     let r = fs_read_bytes(intern_str(&path));
-    assert_eq!(r, Value::Bytes(payload));
+    assert_eq!(r, Value::Bytes(payload.into()));
 
     let _ = std::fs::remove_file(&path);
 }
@@ -86,11 +86,11 @@ fn t6_round_trip_binary_with_nulls_and_high_bytes() {
 #[test]
 fn t7_round_trip_empty() {
     let path = unique_tmp_path("rt_empty");
-    let w = fs_write_bytes(intern_str(&path), vec![]);
+    let w = fs_write_bytes(intern_str(&path), vec![].into());
     assert_eq!(w, Value::Unit);
 
     let r = fs_read_bytes(intern_str(&path));
-    assert_eq!(r, Value::Bytes(vec![]));
+    assert_eq!(r, Value::Bytes(vec![].into()));
 
     let _ = std::fs::remove_file(&path);
 }
@@ -104,13 +104,13 @@ fn t8_write_is_atomic_no_partial_file_visible_after_second_write() {
     let v1 = b"first".to_vec();
     let v2 = b"second-different-length".to_vec();
 
-    let w1 = fs_write_bytes(intern_str(&path), v1.clone());
+    let w1 = fs_write_bytes(intern_str(&path), v1.clone().into());
     assert_eq!(w1, Value::Unit);
-    let w2 = fs_write_bytes(intern_str(&path), v2.clone());
+    let w2 = fs_write_bytes(intern_str(&path), v2.clone().into());
     assert_eq!(w2, Value::Unit);
 
     let r = fs_read_bytes(intern_str(&path));
-    assert_eq!(r, Value::Bytes(v2));
+    assert_eq!(r, Value::Bytes(v2.into()));
 
     let _ = std::fs::remove_file(&path);
 }
@@ -141,7 +141,7 @@ fn t10_fs_read_bytes_missing_file_panics() {
 #[should_panic(expected = "fs_write_bytes(")]
 fn t11_fs_write_bytes_to_bad_dir_panics() {
     let path = "/nonexistent_axv_dir_abc/sub/file.bin".to_string();
-    fs_write_bytes(intern_str(&path), b"x".to_vec());
+    fs_write_bytes(intern_str(&path), b"x".to_vec().into());
 }
 
 #[test]
@@ -174,7 +174,7 @@ fn t14_bytes_to_text_round_trips_utf8() {
 
 #[test]
 fn t15_bytes_to_text_empty() {
-    let r = bytes_to_text(vec![]);
+    let r = bytes_to_text(vec![].into());
     match r {
         Value::Str(h) => assert_eq!(get_str(h), ""),
         other => panic!("expected Text, got {:?}", other),
@@ -184,7 +184,7 @@ fn t15_bytes_to_text_empty() {
 #[test]
 #[should_panic(expected = "bytes_to_text: invalid UTF-8")]
 fn t16_bytes_to_text_invalid_utf8_panics() {
-    bytes_to_text(vec![0xFF]);
+    bytes_to_text(vec![0xFF].into());
 }
 
 #[test]

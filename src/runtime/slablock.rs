@@ -413,7 +413,7 @@ pub fn slab_open(dir: std::sync::Arc<str>, sla_us: i64, block_bytes: i64) -> Val
 /// alone in a fresh block, which may exceed the capacity by that record — the
 /// pack-tier oversize rule.
 #[track_caller]
-pub fn slab_append(h: i64, bytes: Vec<u8>) -> Value {
+pub fn slab_append(h: i64, bytes: super::value::BytesBuf) -> Value {
     let offset = with_slab(h, |slab| {
         // Rotate a non-empty active block the incoming record would overflow.
         let needs_rotation = match slab.active.as_ref() {
@@ -664,7 +664,7 @@ mod tests {
     }
 
     fn append(h: i64, b: &[u8]) -> i64 {
-        match slab_append(h, b.to_vec()) {
+        match slab_append(h, b.to_vec().into()) {
             Value::Int(off) => off,
             other => panic!("slab_append returned {:?}", other),
         }
@@ -745,7 +745,7 @@ mod tests {
         assert_eq!(n, 2, "full block + active block");
         assert_eq!(stat_field(h, "sealed"), 1);
         // Sealed hash must be byte-identical to bytes_hash over the same bytes.
-        let expect = match bytes_hash(a.to_vec()) {
+        let expect = match bytes_hash(a.to_vec().into()) {
             Value::Str(s) => get_str(&s),
             other => panic!("bytes_hash returned {:?}", other),
         };
@@ -774,7 +774,7 @@ mod tests {
         assert_eq!(append(h, b"aaaa"), 0);
         assert_eq!(append(h, b"bb"), 4, "offset = prior bytes in block");
         let all = b"aaaabb";
-        let expect = match bytes_hash(all.to_vec()) {
+        let expect = match bytes_hash(all.to_vec().into()) {
             Value::Str(s) => get_str(&s),
             other => panic!("bytes_hash returned {:?}", other),
         };

@@ -107,9 +107,9 @@ fn window_ms_env() -> u64 {
 /// bounded channel — BLOCKING the caller only if the channel is full
 /// (backpressure). Returns the oneshot id; the caller then `oneshot_wait`s it.
 #[track_caller]
-pub fn reclog_submit(frame: Vec<u8>, logp: std::sync::Arc<str>, bind_line: Vec<u8>) -> Value {
+pub fn reclog_submit(frame: super::value::BytesBuf, logp: std::sync::Arc<str>, bind_line: super::value::BytesBuf) -> Value {
     let id = new_oneshot();
-    let item = Value::Tuple(vec![Value::Int(id), Value::Bytes(frame), Value::Str(logp), Value::Bytes(bind_line)]);
+    let item = Value::Tuple(vec![Value::Int(id), Value::Bytes(frame.into()), Value::Str(logp), Value::Bytes(bind_line.into())]);
     stream_submit(STREAM_FUSED, item);
     Value::Int(id)
 }

@@ -14,8 +14,8 @@ fn main() {
     // Enough to force several rotations in each, interleaved as the two
     // streams really do fill.
     for i in 0..6 {
-        slablock::slab_append(ha, vec![b'S'; 600]);
-        if i % 2 == 0 { slablock::slab_append(hb, vec![b'P'; 600]); }
+        slablock::slab_append(ha, vec![b'S'; 600].into());
+        if i % 2 == 0 { slablock::slab_append(hb, vec![b'P'; 600].into()); }
     }
     slablock::slab_seal(ha);
     slablock::slab_seal(hb);

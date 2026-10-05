@@ -76,22 +76,22 @@ use super::value::Value;
 // ── bytes_concat ─────────────────────────────────────────────────────────────
 
 #[track_caller]
-pub fn bytes_concat(mut a: Vec<u8>, b: Vec<u8>) -> Value {
+pub fn bytes_concat(mut a: super::value::BytesBuf, b: super::value::BytesBuf) -> Value {
     a.extend_from_slice(&b);
-    Value::Bytes(a)
+    Value::Bytes(a.into())
 }
 
 // ── bytes_len ────────────────────────────────────────────────────────────────
 
 #[track_caller]
-pub fn bytes_len(v: Vec<u8>) -> Value {
+pub fn bytes_len(v: super::value::BytesBuf) -> Value {
     Value::Int(v.len() as i64)
 }
 
 // ── bytes_slice ──────────────────────────────────────────────────────────────
 
 #[track_caller]
-pub fn bytes_slice(bytes: Vec<u8>, start: i64, end: i64) -> Value {
+pub fn bytes_slice(bytes: super::value::BytesBuf, start: i64, end: i64) -> Value {
     if start < 0 || end < 0 {
         panic!("bytes_slice: negative bound(s) start={} end={}", start, end);
     }
@@ -102,7 +102,7 @@ pub fn bytes_slice(bytes: Vec<u8>, start: i64, end: i64) -> Value {
     if end > bytes.len() {
         panic!("bytes_slice: end {} out of range for Bytes of len {}", end, bytes.len());
     }
-    Value::Bytes(bytes[start..end].to_vec())
+    Value::Bytes(bytes[start..end].to_vec().into())
 }
 
 // ── bytes_get ────────────────────────────────────────────────────────────────
@@ -117,7 +117,7 @@ pub fn bytes_slice(bytes: Vec<u8>, start: i64, end: i64) -> Value {
 /// fields, so BE-width decoding becomes M1 composition (see `be16_decode` /
 /// `be32_decode`) instead of a width-named bridge fn.
 #[track_caller]
-pub fn bytes_get(bytes: Vec<u8>, idx: i64) -> Value {
+pub fn bytes_get(bytes: super::value::BytesBuf, idx: i64) -> Value {
     if idx < 0 || idx as usize >= bytes.len() {
         panic!("bytes_get: index {} out of range for Bytes of len {}", idx, bytes.len());
     }
@@ -142,10 +142,10 @@ pub fn bytes_get(bytes: Vec<u8>, idx: i64) -> Value {
 /// fold it in M1 over `text_to_bytes(Text(""))`, the same "composition over
 /// speculative arity" discipline that keeps `bytes_concat` binary.
 #[track_caller]
-pub fn bytes_push(mut bytes: Vec<u8>, byte: i64) -> Value {
+pub fn bytes_push(mut bytes: super::value::BytesBuf, byte: i64) -> Value {
     if !(0..=255).contains(&byte) { panic!("bytes_push: {} is not a byte value (0..=255)", byte) }
     bytes.push(byte as u8);
-    Value::Bytes(bytes)
+    Value::Bytes(bytes.into())
 }
 
 // ── int16_be_encode ──────────────────────────────────────────────────────────
@@ -158,7 +158,7 @@ pub fn int16_be_encode(n: i64) -> Value {
     }
     // `n as u16` takes the low 16 bits, i.e. two's-complement for negatives:
     // -1 -> 0xFFFF, -32768 -> 0x8000. Identical bytes to the unsigned value.
-    Value::Bytes((n as u16).to_be_bytes().to_vec())
+    Value::Bytes((n as u16).to_be_bytes().to_vec().into())
 }
 
 // int16_be_decode was RETIRED by BYTE_INT_CODEC_COLLAPSE_V1 Phase 7 (zero live
@@ -175,7 +175,7 @@ pub fn int32_be_encode(n: i64) -> Value {
     }
     // `n as u32` takes the low 32 bits (two's-complement for negatives):
     // -1 -> 0xFFFFFFFF. Identical bytes to the unsigned value.
-    Value::Bytes((n as u32).to_be_bytes().to_vec())
+    Value::Bytes((n as u32).to_be_bytes().to_vec().into())
 }
 
 // int32_be_decode was RETIRED by BYTE_INT_CODEC_COLLAPSE_V1 Phase 7 (zero live
@@ -188,7 +188,7 @@ mod tests {
 
     fn bytes(v: Value) -> Vec<u8> {
         match v {
-            Value::Bytes(b) => b,
+            Value::Bytes(b) => b.into_vec(),
             other => panic!("expected Bytes, got {:?}", other),
         }
     }
@@ -200,10 +200,10 @@ mod tests {
     }
 
     fn get(b: &[u8], i: i64) -> i64 {
-        int(bytes_get(b.to_vec(), i))
+        int(bytes_get(b.to_vec().into(), i))
     }
     fn push(b: Vec<u8>, n: i64) -> Vec<u8> {
-        bytes(bytes_push(b, n))
+        bytes(bytes_push(b.into(), n))
     }
 
     // ── Rust mirrors of the M1 BE codec compositions ──────────────────────────
@@ -334,16 +334,16 @@ mod tests {
         let name = bytes(text_to_bytes(intern_str("id")));
         let mut msg = name;
         let nul = vec![0x00];
-        msg = bytes(bytes_concat(msg, nul));                          // "id\0"
-        msg = bytes(bytes_concat(msg, bytes(int32_be_encode(0))));     // tableOID
-        msg = bytes(bytes_concat(msg, bytes(int16_be_encode(0))));     // attnum
-        msg = bytes(bytes_concat(msg, bytes(int32_be_encode(23))));    // typeOID
-        msg = bytes(bytes_concat(msg, bytes(int16_be_encode(4))));     // typeSize
-        msg = bytes(bytes_concat(msg, bytes(int32_be_encode(-1))));    // typmod
-        msg = bytes(bytes_concat(msg, bytes(int16_be_encode(0))));     // format
+        msg = bytes(bytes_concat(msg.into(), nul.into()));                          // "id\0"
+        msg = bytes(bytes_concat(msg.into(), bytes(int32_be_encode(0)).into()));     // tableOID
+        msg = bytes(bytes_concat(msg.into(), bytes(int16_be_encode(0)).into()));     // attnum
+        msg = bytes(bytes_concat(msg.into(), bytes(int32_be_encode(23)).into()));    // typeOID
+        msg = bytes(bytes_concat(msg.into(), bytes(int16_be_encode(4)).into()));     // typeSize
+        msg = bytes(bytes_concat(msg.into(), bytes(int32_be_encode(-1)).into()));    // typmod
+        msg = bytes(bytes_concat(msg.into(), bytes(int16_be_encode(0)).into()));     // format
 
         // name(3) + 4 + 2 + 4 + 2 + 4 + 2 = 21 bytes.
-        assert_eq!(int(bytes_len(msg.clone())), 21);
+        assert_eq!(int(bytes_len(msg.clone().into())), 21);
 
         // Byte-for-byte expected assembly.
         assert_eq!(
@@ -360,15 +360,15 @@ mod tests {
         );
 
         // Slice fields back out (hand-computed offsets) and decode them.
-        let type_oid = bytes_slice(msg.clone(), 9, 13);
+        let type_oid = bytes_slice(msg.clone().into(), 9, 13);
         assert_eq!(be32_dec(&bytes(type_oid)), 23);
-        let typmod = bytes_slice(msg.clone(), 15, 19);
+        let typmod = bytes_slice(msg.clone().into(), 15, 19);
         assert_eq!(be32_dec(&bytes(typmod)), -1);
-        let format = bytes_slice(msg.clone(), 19, 21);
+        let format = bytes_slice(msg.clone().into(), 19, 21);
         assert_eq!(be16_dec(&bytes(format)), 0);
 
         // byte_at composes as bytes_slice(b, i, i+1): first byte is 'i' = 0x69.
-        let first = bytes_slice(msg, 0, 1);
+        let first = bytes_slice(msg.into(), 0, 1);
         assert_eq!(bytes(first), vec![0x69]);
     }
 
@@ -488,19 +488,55 @@ mod tests {
     #[test]
     fn bytes_slice_empty_and_full_ranges() {
         let b = vec![1, 2, 3, 4];
-        assert_eq!(bytes(bytes_slice(b.clone(), 2, 2)), Vec::<u8>::new());
-        assert_eq!(bytes(bytes_slice(b, 0, 4)), vec![1, 2, 3, 4]);
+        assert_eq!(bytes(bytes_slice(b.clone().into(), 2, 2)), Vec::<u8>::new());
+        assert_eq!(bytes(bytes_slice(b.into(), 0, 4)), vec![1, 2, 3, 4]);
     }
 
     #[test]
     #[should_panic(expected = "out of range")]
     fn bytes_slice_end_past_len_panics() {
-        bytes_slice(vec![1, 2], 0, 3);
+        bytes_slice(vec![1, 2].into(), 0, 3);
     }
 
     #[test]
     #[should_panic(expected = "start 3 > end 1")]
     fn bytes_slice_start_after_end_panics() {
-        bytes_slice(vec![1, 2, 3, 4], 3, 1);
+        bytes_slice(vec![1, 2, 3, 4].into(), 3, 1);
+    }
+}
+
+#[cfg(test)]
+mod shared_bytes_tests {
+    // SHARED_BYTES_V1: a read never copies; a write copies only while shared; never writes through a share.
+    use super::*;
+    use crate::runtime::value::BytesBuf;
+
+    fn ptr(v: &Value) -> *const u8 { match v { Value::Bytes(b) => b.as_ptr(), _ => unreachable!() } }
+
+    #[test]
+    fn as_bytes_shares_and_reads_never_copy() {
+        let v = Value::Bytes(BytesBuf::from(vec![7u8; 4096]));
+        let h = v.as_bytes();
+        assert_eq!(h.as_ptr(), ptr(&v));                       // the same storage, not a copy
+        assert_eq!(bytes_get(h, 4095), Value::Int(7));
+    }
+
+    #[test]
+    fn a_write_to_a_shared_value_copies_and_leaves_the_original() {
+        let v = Value::Bytes(BytesBuf::from(vec![1u8, 2, 3]));
+        let pushed = bytes_push(v.as_bytes(), 4);               // v still holds the bytes: copy-on-write
+        assert_eq!(v, Value::Bytes(BytesBuf::from(vec![1u8, 2, 3])));
+        assert_eq!(pushed, Value::Bytes(BytesBuf::from(vec![1u8, 2, 3, 4])));
+    }
+
+    #[test]
+    fn an_unshared_value_is_written_in_place() {
+        let mut b = BytesBuf::from(Vec::with_capacity(64));
+        b.extend_from_slice(&[1, 2, 3]);
+        let before = b.as_ptr();
+        let v = bytes_push(b, 4);                               // owned (a last use): pushed in place
+        assert_eq!(ptr(&v), before);
+        let w = bytes_concat(v.into_bytes(), BytesBuf::from(vec![5u8]));
+        assert_eq!(ptr(&w), before);
     }
 }

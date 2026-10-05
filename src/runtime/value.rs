@@ -60,6 +60,65 @@ impl std::fmt::Debug for ListBuf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.0.fmt(f) }   // as the Vec printed
 }
 
+/// SHARED_BYTES_V1: a Bytes value's storage, the byte twin of ListBuf. Reads through Deref (`&Vec<u8>`), writes
+/// through DerefMut (copy only if shared), `into_vec` moves the bytes out when unshared.
+#[derive(Clone, Default)]
+pub struct BytesBuf(Arc<Vec<u8>>);
+
+impl BytesBuf {
+    pub fn new() -> Self { BytesBuf(Arc::new(Vec::new())) }
+    pub fn into_vec(self) -> Vec<u8> { Arc::try_unwrap(self.0).unwrap_or_else(|a| (*a).clone()) }
+}
+
+impl std::ops::Deref for BytesBuf {
+    type Target = Vec<u8>;
+    fn deref(&self) -> &Vec<u8> { &self.0 }
+}
+
+impl std::ops::DerefMut for BytesBuf {
+    fn deref_mut(&mut self) -> &mut Vec<u8> { Arc::make_mut(&mut self.0) }
+}
+
+impl AsRef<[u8]> for BytesBuf {
+    fn as_ref(&self) -> &[u8] { &self.0 }
+}
+
+impl From<Vec<u8>> for BytesBuf {
+    fn from(v: Vec<u8>) -> Self { BytesBuf(Arc::new(v)) }
+}
+
+impl From<&[u8]> for BytesBuf {
+    fn from(v: &[u8]) -> Self { BytesBuf(Arc::new(v.to_vec())) }
+}
+
+impl PartialEq for BytesBuf {
+    fn eq(&self, other: &Self) -> bool { Arc::ptr_eq(&self.0, &other.0) || *self.0 == *other.0 }
+}
+
+impl PartialEq<Vec<u8>> for BytesBuf {
+    fn eq(&self, other: &Vec<u8>) -> bool { *self.0 == *other }
+}
+
+impl PartialEq<BytesBuf> for Vec<u8> {
+    fn eq(&self, other: &BytesBuf) -> bool { *self == *other.0 }
+}
+
+impl<const N: usize> PartialEq<&[u8; N]> for BytesBuf {
+    fn eq(&self, other: &&[u8; N]) -> bool { self.0.as_slice() == &other[..] }
+}
+
+impl<const N: usize> PartialEq<[u8; N]> for BytesBuf {
+    fn eq(&self, other: &[u8; N]) -> bool { self.0.as_slice() == &other[..] }
+}
+
+impl PartialEq<&[u8]> for BytesBuf {
+    fn eq(&self, other: &&[u8]) -> bool { self.0.as_slice() == *other }
+}
+
+impl std::fmt::Debug for BytesBuf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.0.fmt(f) }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Int(i64),
@@ -87,7 +146,9 @@ pub enum Value {
     // BRIDGE_BYTES_IO_M1: opaque byte blob (PrimCode::Bytes=4). Carrier for
     // fs_read_bytes / fs_write_bytes / text_to_bytes. NOT a List<Int> — kept
     // as Vec<u8> so the bridge can pass blobs without per-element overhead.
-    Bytes(Vec<u8>),
+    // SHARED_BYTES_V1: shared like ListBuf -- a clone or `as_bytes()` is a refcount bump, a write copies only while
+    // shared. Was a plain Vec<u8>, copied on every clone and on every natively-called read (bytes_get: ~1.9 us/byte).
+    Bytes(BytesBuf),
 }
 
 // M1_VALUE_STR_ARC_IMPLEMENTATION_V1 hard invariant (VALUE_MUST_STAY_SEND_SYNC):
@@ -134,10 +195,20 @@ impl Value {
     /// unconditionally cloned before being packed into a `Value::Tuple`
     /// (`ref_clone` in rust_05.rs), so this just relocates the same clone.
     #[track_caller]
-    pub fn as_bytes(&self) -> Vec<u8> {
+    /// A Bytes argument for a natively-called builtin: a shared handle, not a copy (SHARED_BYTES_V1).
+    pub fn as_bytes(&self) -> BytesBuf {
         match self {
             Value::Bytes(b) => b.clone(),
             _ => panic!("expected Bytes, got {:?}", self),
+        }
+    }
+
+    /// The same, taking the value: used at its last use, so an in-place builtin (bytes_push, bytes_concat's left
+    /// side) writes without copying.
+    pub fn into_bytes(self) -> BytesBuf {
+        match self {
+            Value::Bytes(b) => b,
+            other => panic!("expected Bytes, got {:?}", other),
         }
     }
 }

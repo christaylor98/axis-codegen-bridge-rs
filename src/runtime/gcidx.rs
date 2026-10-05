@@ -203,8 +203,8 @@ pub fn gcidx_get(addr: std::sync::Arc<str>) -> Value {
     if content.is_empty() {
         return Value::Str(intern_str(&format!("A{}", gs)));
     }
-    put_cached(&addr, Arc::new(content.clone()));
-    let text = String::from_utf8(content)
+    put_cached(&addr, Arc::new(content.clone().into_vec()));
+    let text = String::from_utf8(content.into_vec())
         .unwrap_or_else(|e| panic!("gcidx_get: fetched artifact is not valid UTF-8: {}", e));
     Value::Str(intern_str(&format!("F{}{}", gs, text)))
 }
@@ -222,7 +222,7 @@ mod tests {
     fn miss_then_hit_skips_the_second_postgres_round_trip() {
         let a = addr("mth");
         let content = b"gcidx round-trip test content".to_vec();
-        pg_store::pg_bytes_put(intern_str(&a), content.clone());
+        pg_store::pg_bytes_put(intern_str(&a), content.clone().into());
 
         // First call: cache miss, must hit postgres and return the right bytes.
         let r1 = gcidx_get(intern_str(&a));
@@ -243,7 +243,7 @@ mod tests {
                 .unwrap_or_else(|e| panic!("test setup: DELETE failed: {}", e));
         }
         let gone = pg_store::pg_bytes_get(intern_str(&a));
-        assert_eq!(gone, Value::Bytes(Vec::new()), "row must be genuinely absent from postgres now");
+        assert_eq!(gone, Value::Bytes(Vec::new().into()), "row must be genuinely absent from postgres now");
 
         let r2 = gcidx_get(intern_str(&a));
         assert_eq!(r1, r2, "cache-served hit must be identical even though postgres no longer has the row");

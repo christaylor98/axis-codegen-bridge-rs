@@ -40,7 +40,7 @@ fn tuple_ints(v: Value) -> (i64, i64) {
     }
 }
 fn bytes(v: Value, who: &str) -> Vec<u8> {
-    match v { Value::Bytes(b) => b, other => panic!("{who}: expected Bytes, got {other:?}") }
+    match v { Value::Bytes(b) => b.into_vec(), other => panic!("{who}: expected Bytes, got {other:?}") }
 }
 
 /// One connection's fixed-size framed payload stamped with (cid, iter).
@@ -68,7 +68,7 @@ fn run(mode: &str, clients: usize) -> f64 {
             for _ in 0..M {
                 let req = bytes(tcp_read(conn), "wread");
                 // echo exactly what was read back to the client
-                tcp_write(conn, req);
+                tcp_write(conn, req.into());
             }
             tcp_close(conn);
         }));
@@ -83,7 +83,7 @@ fn run(mode: &str, clients: usize) -> f64 {
             let conn = as_int(tcp_connect(intern_str("127.0.0.1"), port), "connect");
             for it in 0..M {
                 let p = payload(cid, it);
-                tcp_write(conn, p.clone());
+                tcp_write(conn, p.clone().into());
                 let echo = bytes(tcp_read(conn), "cread");
                 assert_eq!(echo, p, "echo mismatch cid={cid} it={it} — mis-routed handle?");
             }

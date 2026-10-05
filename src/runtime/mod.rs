@@ -77,4 +77,4 @@ pub mod objseg;
 pub mod u32v;
 pub mod tasks;
 
-pub use value::Value;
+pub use value::{BytesBuf, ListBuf, Value};

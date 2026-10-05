@@ -59,11 +59,11 @@ fn concurrent_distinct_regions_write_read_free_never_corrupt() {
                     let payload: Vec<u8> = (0..32)
                         .map(|k| ((tid * 7 + round * 13 + k) % 256) as u8)
                         .collect();
-                    mem_write_raw(ptr, 0, payload.clone());
+                    mem_write_raw(ptr, 0, payload.clone().into());
                     let read_back = mem_read_raw(ptr, 0, 32);
                     assert_eq!(
                         read_back,
-                        Value::Bytes(payload),
+                        Value::Bytes(payload.into()),
                         "thread {} round {}: read-back mismatch — cross-thread corruption",
                         tid,
                         round

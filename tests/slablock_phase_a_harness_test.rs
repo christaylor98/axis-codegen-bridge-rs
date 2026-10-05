@@ -162,7 +162,7 @@ fn run_combo(root: &std::path::Path, tier: &'static str, sla_us: i64, load: usiz
         for i in 0..load {
             let row = synth_row(w * load + i);
             let t0 = Instant::now();
-            let off = slab_append(h, row);
+            let off = slab_append(h, row.into());
             append_lat.push(t0.elapsed());
             match off {
                 Value::Int(_) => {}
@@ -377,7 +377,7 @@ fn phase_a_parallel_shared_nothing() {
             let h = open(&dir, 5_000, 0);
             let t0 = Instant::now();
             for i in 0..rows_per_thread {
-                slab_append(h, synth_row(i));
+                slab_append(h, synth_row(i).into());
                 if i % 64 == 0 {
                     slab_tick(h);
                 }
@@ -500,7 +500,7 @@ fn run_sweep_combo(
         joins.push(std::thread::spawn(move || {
             let h = open(&dir, sla_us, cap_bytes);
             for i in 0..rows_per_thread {
-                slab_append(h, synth_row(i));
+                slab_append(h, synth_row(i).into());
                 if i % 64 == 0 {
                     slab_tick(h);
                 }
@@ -784,7 +784,7 @@ fn run_ceiling_step_debug(
 
             for i in 0..rows_per_thread {
                 let a0 = Instant::now();
-                slab_append(h, synth_row(i));
+                slab_append(h, synth_row(i).into());
                 let a_us = a0.elapsed().as_secs_f64() * 1e6;
                 append_calls += 1;
                 append_total_us += a_us;

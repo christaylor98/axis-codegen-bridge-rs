@@ -197,19 +197,19 @@ pub fn pty_read(handle: i64, timeout_ms: i64) -> Value {
     let ready = unsafe { libc::poll(&mut pfd, 1, timeout) };
     if ready <= 0 {
         // 0 = timed out; < 0 = interrupted (EINTR) -- nothing read either way
-        return Value::Bytes(Vec::new());
+        return Value::Bytes(Vec::new().into());
     }
     let mut buf = vec![0u8; READ_CHUNK];
     let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
     if n > 0 {
         buf.truncate(n as usize);
-        return Value::Bytes(buf);
+        return Value::Bytes(buf.into());
     }
     let err = std::io::Error::last_os_error();
     match err.raw_os_error() {
         // n == 0 or EIO: the child side is closed. EAGAIN/EINTR: nothing now.
-        _ if n == 0 => Value::Bytes(Vec::new()),
-        Some(libc::EIO) | Some(libc::EAGAIN) | Some(libc::EINTR) => Value::Bytes(Vec::new()),
+        _ if n == 0 => Value::Bytes(Vec::new().into()),
+        Some(libc::EIO) | Some(libc::EAGAIN) | Some(libc::EINTR) => Value::Bytes(Vec::new().into()),
         _ => panic!("pty_read({}): {}", handle, err),
     }
 }
@@ -219,7 +219,7 @@ pub fn pty_read(handle: i64, timeout_ms: i64) -> Value {
 /// Write all of `data` to the child's input. The child side being gone (EIO)
 /// is a no-op, as a vanished TCP peer is; `pty_status` reports it.
 #[track_caller]
-pub fn pty_write(handle: i64, data: Vec<u8>) -> Value {
+pub fn pty_write(handle: i64, data: super::value::BytesBuf) -> Value {
     let pty = get(handle, "pty_write");
     let fd = pty.master.as_raw_fd();
     let mut rest = &data[..];
@@ -344,7 +344,7 @@ mod tests {
 
     fn read(h: i64, ms: i64) -> Vec<u8> {
         match pty_read(h, ms) {
-            Value::Bytes(b) => b,
+            Value::Bytes(b) => b.into_vec(),
             other => panic!("pty_read returned {:?}", other),
         }
     }
@@ -418,7 +418,7 @@ mod tests {
     #[test]
     fn write_reaches_the_child() {
         let h = sh("read line; echo \"got:$line\"");
-        pty_write(h, b"hello\n".to_vec());
+        pty_write(h, b"hello\n".to_vec().into());
         let (out, st) = drain(h);
         assert!(out.contains("got:hello"), "{:?}", out);
         assert_eq!(st, 0);
@@ -430,7 +430,7 @@ mod tests {
         let h = sh("read line; echo \"got:$line\"");
         assert!(read(h, 300).is_empty());
         assert_eq!(status(h), PTY_RUNNING);
-        pty_write(h, b"late\n".to_vec());
+        pty_write(h, b"late\n".to_vec().into());
         let (out, _) = drain(h);
         assert!(out.contains("got:late"), "{:?}", out);
         pty_close(h);
@@ -440,7 +440,7 @@ mod tests {
     fn resize_is_seen_by_the_child() {
         let h = sh("read x; stty size");
         pty_resize(h, 40, 120);
-        pty_write(h, b"\n".to_vec());
+        pty_write(h, b"\n".to_vec().into());
         let (out, _) = drain(h);
         assert!(out.contains("40 120"), "{:?}", out);
         pty_close(h);
@@ -450,7 +450,7 @@ mod tests {
     fn write_after_exit_is_a_no_op() {
         let h = sh("exit 0");
         drain(h);
-        assert_eq!(pty_write(h, b"anyone?\n".to_vec()), Value::Unit);
+        assert_eq!(pty_write(h, b"anyone?\n".to_vec().into()), Value::Unit);
         pty_close(h);
     }
 

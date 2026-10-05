@@ -2304,6 +2304,8 @@ fn emit_node(
                         }
                         arg_exprs.push(match native_types.and_then(|t| t.get(i)) {
                             Some(NativeArgType::Value) => ref_take(arg, at, moves),   // a Value arg: moved when it can be
+                            Some(NativeArgType::Bytes) if moves.contains(&(ref_key(arg), at)) =>
+                                format!("{}.into_bytes()", ref_expr(arg)),           // its last use: owned, no copy
                             Some(t) => format!("{}.{}()", ref_expr(arg), t.accessor()),
                             None => ref_take(arg, at, moves),
                         });

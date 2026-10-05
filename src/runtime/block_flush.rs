@@ -181,7 +181,7 @@ fn advance_watermark(generation: i64, to: i64) -> Option<i64> {
 
 fn as_bytes(field: &'static str, v: Value) -> Vec<u8> {
     match v {
-        Value::Bytes(b) => b,
+        Value::Bytes(b) => b.into_vec(),
         other => panic!("block_flush_write: {} expected Bytes, got {:?}", field, other),
     }
 }
@@ -281,7 +281,7 @@ fn advance_anchor(committed_block: &[u8]) {
     let prev_hex = anchor_raw.split('\n').next().unwrap_or("");
     let mut combined = prev_hex.as_bytes().to_vec();
     combined.extend_from_slice(committed_block);
-    let hashed = super::bytes_io::bytes_hash(combined);
+    let hashed = super::bytes_io::bytes_hash(combined.into());
     let hex_with_prefix = match hashed {
         Value::Str(h) => get_str(&h),
         other => panic!("block_flush_write: bytes_hash returned non-Text: {:?}", other),
@@ -329,7 +329,7 @@ fn commit_job(job: Job) {
             }
         }
         Job::Obj { block, index } => {
-            pg_store::pg_obj_block_put(block.clone(), intern_str(&index));
+            pg_store::pg_obj_block_put(block.clone().into(), intern_str(&index));
             advance_anchor(&block);
         }
         Job::Checkpoint { generation, ptr, to } => {
@@ -344,7 +344,7 @@ fn commit_job(job: Job) {
                 Value::Bytes(b) => b,
                 other => panic!("block_flush_write: mem_read_raw returned non-Bytes: {:?}", other),
             };
-            let text = String::from_utf8(delta.clone()).unwrap_or_else(|e| {
+            let text = String::from_utf8(delta.clone().into_vec()).unwrap_or_else(|e| {
                 panic!("block_flush_write: checkpoint delta is not valid UTF-8: {}", e)
             });
             pg_store::pg_log_append(intern_str(&text));
@@ -389,13 +389,13 @@ mod tests {
                 Value::Str(intern_str("")),
                 Value::Int(0),
                 Value::Int(0),
-                Value::Bytes(bytes.to_vec()),
+                Value::Bytes(bytes.to_vec().into()),
             ],
         }
     }
 
     fn tuple_obj_job(block: &[u8], index: &str) -> Value {
-        Value::Tuple(vec![Value::Bytes(block.to_vec()), Value::Str(intern_str(index))])
+        Value::Tuple(vec![Value::Bytes(block.to_vec().into()), Value::Str(intern_str(index))])
     }
 
     #[test]
@@ -460,7 +460,7 @@ mod tests {
                 Value::Str(intern_str(&shard)),
                 Value::Int(0),
                 Value::Int(0),
-                Value::Bytes(marker.into_bytes()),
+                Value::Bytes(marker.into_bytes().into()),
             ],
         };
         let out = block_flush_write(Value::List(vec![job].into()));
@@ -533,7 +533,7 @@ mod tests {
                 Value::Str(intern_str(shard)),
                 Value::Int(generation),
                 Value::Int(0),
-                Value::Bytes(bytes.to_vec()),
+                Value::Bytes(bytes.to_vec().into()),
             ],
         }
     }
@@ -558,7 +558,7 @@ mod tests {
             },
             other => panic!("expected Tuple, got {:?}", other),
         };
-        rawmem::mem_write_raw(ptr, 0, full.to_vec());
+        rawmem::mem_write_raw(ptr, 0, full.to_vec().into());
 
         let generation = 900_000_000 + std::process::id() as i64;
         let split = full.len() as i64 / 2;

@@ -149,7 +149,7 @@ pub fn mem_reserve_raw(capacity: i64) -> Value {
 /// (argument-shape validation: a negative offset cast to `usize` would wrap
 /// to a huge value and turn into out-of-bounds pointer arithmetic).
 #[track_caller]
-pub fn mem_write_raw(ptr: i64, offset: i64, data: Vec<u8>) -> Value {
+pub fn mem_write_raw(ptr: i64, offset: i64, data: super::value::BytesBuf) -> Value {
     if offset < 0 {
         panic!("mem_write_raw: offset must be >= 0, got {}", offset);
     }
@@ -178,7 +178,7 @@ pub fn mem_read_raw(ptr: i64, offset: i64, length: i64) -> Value {
         let src = (ptr as *const u8).add(offset as usize);
         std::slice::from_raw_parts(src, length as usize).to_vec()
     };
-    Value::Bytes(bytes)
+    Value::Bytes(bytes.into())
 }
 
 /// `mem_free_raw(ptr: Int, capacity: Int) -> Unit`
@@ -328,7 +328,7 @@ mod tests {
             _ => unreachable!(),
         };
 
-        let payload = Value::Bytes(vec![1, 2, 3, 4, 5]);
+        let payload = Value::Bytes(vec![1, 2, 3, 4, 5].into());
         assert_eq!(
             mem_write_raw(ptr_n, 0, payload.as_bytes()),
             Value::Unit
@@ -350,7 +350,7 @@ mod tests {
             },
             _ => unreachable!(),
         };
-        let payload = Value::Bytes(vec![9, 9, 9]);
+        let payload = Value::Bytes(vec![9, 9, 9].into());
         mem_write_raw(ptr_n, 10, payload.as_bytes());
         assert_eq!(mem_read_raw(ptr_n, 10, 3), payload);
         mem_free_raw(ptr_n, 32);
@@ -379,7 +379,7 @@ mod tests {
             },
             _ => unreachable!(),
         };
-        mem_write_raw(ptr_n, -1, vec![1]);
+        mem_write_raw(ptr_n, -1, vec![1].into());
     }
 
     #[test]
