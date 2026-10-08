@@ -288,3 +288,21 @@ pub fn fbank_get_list(b: i64, ids: Value) -> Value {
         other => panic!("fbank_get_list: expected TextList, got {}", format!("{other:?}")),
     }
 }
+
+/// `fbank_pack(b: Int, from: Int, to: Int) -> Text` — entries from .. to-1 as one text_list_pack (in id order), built
+/// in one pass: a whole bank handed on, or hashed, without rebuilding a text per entry.
+#[track_caller]
+pub fn fbank_pack(b: i64, from: i64, to: i64) -> Value {
+    let bk = bank(b);
+    let n = bk.published() as i64;
+    if from < 0 || to < from || to > n { panic!("fbank_pack: range {from}..{to} is not within 0..{n}"); }
+    let mut lens = String::new();
+    let mut body = String::new();
+    for id in from..to {
+        let s = unsafe { std::str::from_utf8_unchecked(bk.data(id as usize)) };
+        if id > from { lens.push(','); }
+        lens.push_str(&s.chars().count().to_string());
+        body.push_str(s);
+    }
+    Value::Str(intern_str(&format!("{}|{}|{}", to - from, lens, body)))
+}

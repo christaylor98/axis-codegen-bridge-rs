@@ -162,3 +162,14 @@ fn concurrent_intern_agrees() {
     let distinct: std::collections::HashSet<_> = idof.values().collect();
     assert_eq!(distinct.len(), 500, "distinct texts, distinct ids");
 }
+
+#[test]
+fn pack_a_range() {
+    init_runtime();
+    let b = int(fbank_new(8, 64));
+    for (o, s) in ["ab", "", "é,|", "x"].iter().enumerate() { assert!(int(fbank_put(b, o as i64, intern_str(s))) >= 0); }
+    assert_eq!(text(fbank_pack(b, 0, 4)), "4|2,0,3,1|abé,|x");
+    assert_eq!(text(fbank_pack(b, 1, 3)), "2|0,3|é,|");
+    assert_eq!(text(fbank_pack(b, 2, 2)), "0||");
+    assert!(std::panic::catch_unwind(|| fbank_pack(b, 0, 5)).is_err());
+}
