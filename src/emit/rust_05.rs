@@ -714,6 +714,8 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("int_list_map_bool",                 "axis_codegen_bridge::runtime::iter::map");
     m.insert("text_list_map_int",                 "axis_codegen_bridge::runtime::iter::map");
     m.insert("text_list_map_text",                "axis_codegen_bridge::runtime::iter::map");
+    m.insert("text_list_map2_text",               "axis_codegen_bridge::runtime::iter::map2");
+    m.insert("text_list_map3_text",               "axis_codegen_bridge::runtime::iter::map3");
     m.insert("text_list_map_bool",                "axis_codegen_bridge::runtime::iter::map");
     m.insert("bool_list_map_int",                 "axis_codegen_bridge::runtime::iter::map");
     m.insert("bool_list_map_text",                "axis_codegen_bridge::runtime::iter::map");
@@ -1097,6 +1099,8 @@ fn fn_arg_kinds() -> HashMap<&'static str, Vec<ArgKind>> {
     m.insert("int_list_map_bool",       vec![Data, FnRef]);
     m.insert("text_list_map_int",       vec![Data, FnRef]);
     m.insert("text_list_map_text",      vec![Data, FnRef]);
+    m.insert("text_list_map2_text",     vec![Data, Data, FnRef]);
+    m.insert("text_list_map3_text",     vec![Data, Data, Data, FnRef]);
     m.insert("text_list_map_bool",      vec![Data, FnRef]);
     m.insert("bool_list_map_int",       vec![Data, FnRef]);
     m.insert("bool_list_map_text",      vec![Data, FnRef]);

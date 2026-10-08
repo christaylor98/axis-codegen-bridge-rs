@@ -202,6 +202,46 @@ pub fn map(list: Value, callee: fn(Value) -> Value) -> Value {
     }
 }
 
+/// `text_list_map2_text(xs, ys, f) -> TextList` — `f(x_i, y_i)` for each position, in order (a zip then map). Panics
+/// when the lengths differ. Structural only: the meaning is the callee's.
+#[track_caller]
+pub fn map2(a: Value, b: Value, callee: fn(Value) -> Value) -> Value {
+    match (a, b) {
+        (Value::List(xs), Value::List(ys)) => {
+            if xs.len() != ys.len() { panic!("map2: lists of {} and {} elements", xs.len(), ys.len()); }
+            let mut out: Vec<Value> = Vec::with_capacity(xs.len());
+            for (x, y) in xs.into_iter().zip(ys) {
+                let r = callee(Value::Tuple(vec![x, y]));
+                if stuck(&r) { return r; }
+                out.push(r);
+            }
+            Value::List(super::value::ListBuf::from(out))
+        }
+        (a, b) => panic!("map2: expected two Lists, got {:?} and {:?}", a, b),
+    }
+}
+
+/// `text_list_map3_text(xs, ys, zs, f) -> TextList` — `f(x_i, y_i, z_i)` for each position, in order. Panics when
+/// the lengths differ.
+#[track_caller]
+pub fn map3(a: Value, b: Value, c: Value, callee: fn(Value) -> Value) -> Value {
+    match (a, b, c) {
+        (Value::List(xs), Value::List(ys), Value::List(zs)) => {
+            if xs.len() != ys.len() || xs.len() != zs.len() {
+                panic!("map3: lists of {}, {} and {} elements", xs.len(), ys.len(), zs.len());
+            }
+            let mut out: Vec<Value> = Vec::with_capacity(xs.len());
+            for ((x, y), z) in xs.into_iter().zip(ys).zip(zs) {
+                let r = callee(Value::Tuple(vec![x, y, z]));
+                if stuck(&r) { return r; }
+                out.push(r);
+            }
+            Value::List(super::value::ListBuf::from(out))
+        }
+        (a, b, c) => panic!("map3: expected three Lists, got {:?}, {:?} and {:?}", a, b, c),
+    }
+}
+
 /// `any(xs, pred) -> Bool` — true if any element makes `pred` return truthy.
 #[track_caller]
 pub fn any(list: Value, pred: fn(Value) -> Value) -> Value {
