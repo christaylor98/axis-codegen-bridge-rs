@@ -1,4 +1,4 @@
-use super::value::{Value, get_str};
+use super::value::{Value, get_str, intern_str};
 
 // ── M1_VALUELIST_NARROWING_V1 ─────────────────────────────────────────────
 //
@@ -93,6 +93,70 @@ pub fn value_to_text(v: Value) -> Value {
 #[track_caller]
 pub fn value_to_bytes(v: Value) -> Value {
     narrow_value("value_to_bytes", "Bytes", v, |v| matches!(v, Value::Bytes(_)))
+}
+
+/// `value_to_text_list(v)`: v when it holds a list of Text (each element checked, like value_list_to_text_list).
+/// How a TextList travels through loop state: value_make stores it, ctor_field hands back a Value.
+#[track_caller]
+pub fn value_to_text_list(v: Value) -> Value {
+    narrow_value_list("value_to_text_list", "Text", v, |v| matches!(v, Value::Str(_)))
+}
+
+/// `value_to_int_list(v)`: v when it holds a list of Int (each element checked), the IntList sibling of value_to_text_list.
+#[track_caller]
+pub fn value_to_int_list(v: Value) -> Value {
+    narrow_value_list("value_to_int_list", "Int", v, |v| matches!(v, Value::Int(_)))
+}
+
+/// `text_list_pack(l)`: l as one Text, "<n>|<len1>,<len2>,...|<item1><item2>..." with lengths in code points
+/// ("0||" for the empty list). Any item text is safe: nothing is escaped, the lengths say where items end, so two
+/// lists pack to the same Text only when they are equal. Inverse of text_list_unpack.
+#[track_caller]
+pub fn text_list_pack(list: Value) -> Value {
+    match list {
+        Value::List(items) => {
+            let mut lens = String::new();
+            let mut body = String::new();
+            for (idx, item) in items.iter().enumerate() {
+                match item {
+                    Value::Str(s) => {
+                        if idx > 0 { lens.push(','); }
+                        lens.push_str(&s.chars().count().to_string());
+                        body.push_str(s);
+                    }
+                    other => panic!("text_list_pack: element {idx} is {actual}, expected Text", actual = value_tag_name(other)),
+                }
+            }
+            Value::Str(intern_str(&format!("{}|{}|{}", items.len(), lens, body)))
+        }
+        other => panic!("text_list_pack: expected TextList, got {actual}", actual = value_tag_name(&other)),
+    }
+}
+
+/// `text_list_unpack(t)`: the TextList that text_list_pack packed into t. Panics naming the cause when t is not a
+/// packing (count, lengths or items do not agree).
+#[track_caller]
+pub fn text_list_unpack(t: std::sync::Arc<str>) -> Value {
+    let bad = |why: &str| -> ! { panic!("text_list_unpack: not a packed list ({why})") };
+    let (n, rest) = t.split_once('|').unwrap_or_else(|| bad("no count"));
+    let n: usize = n.parse().unwrap_or_else(|_| bad("count is not a number"));
+    let (lens, mut body) = rest.split_once('|').unwrap_or_else(|| bad("no lengths"));
+    let mut out = Vec::with_capacity(n);
+    if n > 0 {
+        for l in lens.split(',') {
+            let l: usize = l.parse().unwrap_or_else(|_| bad("a length is not a number"));
+            let cut = body.char_indices().nth(l).map(|(i, _)| i).unwrap_or_else(|| {
+                if body.chars().count() == l { body.len() } else { bad("items shorter than the lengths") }
+            });
+            out.push(Value::Str(intern_str(&body[..cut])));
+            body = &body[cut..];
+        }
+    } else if !lens.is_empty() {
+        bad("count 0 with lengths");
+    }
+    if out.len() != n { bad("count and lengths differ"); }
+    if !body.is_empty() { bad("items longer than the lengths"); }
+    Value::List(super::value::ListBuf::from(out))
 }
 
 #[track_caller]

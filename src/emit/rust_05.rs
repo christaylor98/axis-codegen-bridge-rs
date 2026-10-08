@@ -722,6 +722,10 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("value_to_int",                      "axis_codegen_bridge::runtime::list::value_to_int");
     m.insert("value_to_text",                     "axis_codegen_bridge::runtime::list::value_to_text");
     m.insert("value_to_bytes",           "axis_codegen_bridge::runtime::list::value_to_bytes");
+    m.insert("value_to_text_list",       "axis_codegen_bridge::runtime::list::value_to_text_list");
+    m.insert("value_to_int_list",        "axis_codegen_bridge::runtime::list::value_to_int_list");
+    m.insert("text_list_pack",           "axis_codegen_bridge::runtime::list::text_list_pack");
+    m.insert("text_list_unpack",         "axis_codegen_bridge::runtime::list::text_list_unpack");
     m.insert("value_to_bool",                     "axis_codegen_bridge::runtime::list::value_to_bool");
 
     m
@@ -1206,6 +1210,7 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("str_char_code",     vec![Text, Int]);
     m.insert("str_slice",         vec![Text, Int, Int]);
     m.insert("str_split",         vec![Text, Text]);
+    m.insert("text_list_unpack",  vec![Text]);
     m.insert("str_starts_with",   vec![Text, Text]);
     m.insert("str_ends_with",     vec![Text, Text]);
     m.insert("str_trim",          vec![Text]);
