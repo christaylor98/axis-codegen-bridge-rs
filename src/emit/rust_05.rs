@@ -665,6 +665,8 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("fbank_len",            "axis_codegen_bridge::runtime::fbank::fbank_len");
     m.insert("fbank_used",           "axis_codegen_bridge::runtime::fbank::fbank_used");
     m.insert("fbank_find",           "axis_codegen_bridge::runtime::fbank::fbank_find");
+    m.insert("fbank_intern_list",    "axis_codegen_bridge::runtime::fbank::fbank_intern_list");
+    m.insert("fbank_get_list",       "axis_codegen_bridge::runtime::fbank::fbank_get_list");
     m.insert("cell_new_raw",         "axis_codegen_bridge::runtime::rawmem::cell_new_raw");
     m.insert("cell_load_raw",        "axis_codegen_bridge::runtime::rawmem::cell_load_raw");
     m.insert("cell_cas_raw",         "axis_codegen_bridge::runtime::rawmem::cell_cas_raw");
@@ -1201,6 +1203,8 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("fbank_len",         vec![Int]);
     m.insert("fbank_used",        vec![Int]);
     m.insert("fbank_find",        vec![Int, Text]);
+    m.insert("fbank_intern_list", vec![Int, Value]);
+    m.insert("fbank_get_list",    vec![Int, Value]);
     m.insert("cell_new_raw",      vec![Int]);
     m.insert("cell_cas_raw",      vec![Int, Int, Int]);
     m.insert("mem_reserve_raw",   vec![Int]);

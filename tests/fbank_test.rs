@@ -117,3 +117,48 @@ fn find_is_read_only() {
     assert_eq!(int(fbank_find(b, intern_str("x"))), early, "find answers the current holder");
     assert_eq!(int(fbank_find(b, intern_str("y"))), -1);
 }
+
+fn tlist(items: &[&str]) -> Value {
+    Value::List(axis_codegen_bridge::runtime::value::ListBuf::from(items.iter().map(|s| Value::Str(intern_str(s))).collect::<Vec<_>>()))
+}
+fn texts(v: Value) -> Vec<String> {
+    match v { Value::List(l) => l.iter().map(|x| match x { Value::Str(s) => s.to_string(), o => panic!("{o:?}") }).collect(), o => panic!("{o:?}") }
+}
+
+#[test]
+fn intern_and_get_lists() {
+    init_runtime();
+    let b = int(fbank_new(16, 256));
+    let ids = texts(fbank_intern_list(b, tlist(&["a", "bb", "a", "", "bb"])));
+    assert_eq!(ids[0], ids[2]);
+    assert_eq!(ids[1], ids[4]);
+    assert!(ids[0] != ids[1] && ids[0] != ids[3] && ids[1] != ids[3]);
+    assert_eq!(int(fbank_len(b)), 3, "each text stored once");
+    let back = texts(fbank_get_list(b, tlist(&ids.iter().map(|s| s.as_str()).collect::<Vec<_>>())));
+    assert_eq!(back, vec!["a", "bb", "a", "", "bb"]);
+    let small = int(fbank_new(1, 16));
+    assert_eq!(texts(fbank_intern_list(small, tlist(&["x", "y"]))), vec!["0", "-2"], "full -> -2 in place");
+}
+
+/// 32 threads intern 2,000 texts each, all drawn from the same 500: every text gets ONE id in every thread.
+#[test]
+fn concurrent_intern_agrees() {
+    init_runtime();
+    let b = int(fbank_new(4000, 64000));
+    let got: Vec<Vec<(String, String)>> = std::thread::scope(|s| {
+        (0..32).map(|t| s.spawn(move || {
+            let xs: Vec<String> = (0..2000).map(|i| format!("v{}", (i * 7 + t * 13) % 500)).collect();
+            let ids = texts(fbank_intern_list(b, tlist(&xs.iter().map(|s| s.as_str()).collect::<Vec<_>>())));
+            xs.into_iter().zip(ids).collect::<Vec<_>>()
+        })).collect::<Vec<_>>().into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    let mut idof: HashMap<String, String> = HashMap::new();
+    for (x, id) in got.into_iter().flatten() {
+        let e = idof.entry(x.clone()).or_insert(id.clone());
+        assert_eq!(*e, id, "{x} got two ids");
+        assert_eq!(text(fbank_get(b, id.parse().unwrap())), x);
+    }
+    assert_eq!(idof.len(), 500);
+    let distinct: std::collections::HashSet<_> = idof.values().collect();
+    assert_eq!(distinct.len(), 500, "distinct texts, distinct ids");
+}

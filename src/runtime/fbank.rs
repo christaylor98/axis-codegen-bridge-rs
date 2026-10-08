@@ -221,3 +221,70 @@ pub fn fbank_find(b: i64, text: std::sync::Arc<str>) -> Value {
         i = (i + 1) & bk.mask;
     }
 }
+
+/// Intern one text: the id of the entry holding it, adding it when absent (-2 when full). Ordinals play no part (an
+/// interning bank is a set of values; every entry is put with ordinal 0, so the first holder stays).
+fn intern(bk: &Bank, data: &[u8]) -> i64 {
+    let h = hash_of(data);
+    let mut i = (h as usize) & bk.mask;
+    loop {
+        let cur = bk.table[i].load(Ordering::Acquire);
+        if cur == 0 { break; }
+        let c = (cur - 1) as usize;
+        if bk.hash[c].load(Ordering::Relaxed) == h && bk.data(c) == data { return c as i64; }
+        i = (i + 1) & bk.mask;
+    }
+    let id = bk.count.fetch_add(1, Ordering::AcqRel);
+    if id >= bk.max_entries { return -2; }
+    let off = bk.cursor.fetch_add(data.len(), Ordering::AcqRel);
+    if off + data.len() > bk.max_bytes { return -2; }
+    unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), bk.bytes.add(off), data.len()); }
+    bk.off[id].store(off as u64, Ordering::Relaxed);
+    bk.len[id].store(data.len() as u64, Ordering::Relaxed);
+    bk.hash[id].store(h, Ordering::Relaxed);
+    let mine = id as u64 + 1;
+    loop {
+        let cur = bk.table[i].load(Ordering::Acquire);
+        if cur == 0 {
+            match bk.table[i].compare_exchange(0, mine, Ordering::AcqRel, Ordering::Acquire) {
+                Ok(_) => return id as i64,
+                Err(_) => continue,
+            }
+        }
+        let c = (cur - 1) as usize;
+        if bk.hash[c].load(Ordering::Relaxed) == h && bk.data(c) == data { return c as i64; } // lost a race: theirs
+        i = (i + 1) & bk.mask;
+    }
+}
+
+/// `fbank_intern_list(b: Int, xs: TextList) -> TextList` — for each text, the decimal id of the entry holding it
+/// (added when absent), in order; "-2" in place of an id the full bank could not take. Equal texts get equal ids,
+/// in any thread, so a list of ids stands for its texts exactly (a value vector held as references).
+#[track_caller]
+pub fn fbank_intern_list(b: i64, xs: Value) -> Value {
+    let bk = bank(b);
+    match xs {
+        Value::List(items) => Value::List(super::value::ListBuf::from(items.iter().map(|x| match x {
+            Value::Str(s) => Value::Str(intern_str(&intern(bk, s.as_bytes()).to_string())),
+            other => panic!("fbank_intern_list: expected Text, got {}", format!("{other:?}")),
+        }).collect::<Vec<_>>())),
+        other => panic!("fbank_intern_list: expected TextList, got {}", format!("{other:?}")),
+    }
+}
+
+/// `fbank_get_list(b: Int, ids: TextList) -> TextList` — the texts of the given decimal ids, in order (private copies).
+#[track_caller]
+pub fn fbank_get_list(b: i64, ids: Value) -> Value {
+    let bk = bank(b);
+    match ids {
+        Value::List(items) => Value::List(super::value::ListBuf::from(items.iter().map(|x| match x {
+            Value::Str(s) => {
+                let id: i64 = s.parse().unwrap_or_else(|_| panic!("fbank_get_list: {s:?} is not an id"));
+                let e = bk.check("fbank_get_list", id);
+                Value::Str(intern_str(unsafe { std::str::from_utf8_unchecked(bk.data(e)) }))
+            }
+            other => panic!("fbank_get_list: expected Text, got {}", format!("{other:?}")),
+        }).collect::<Vec<_>>())),
+        other => panic!("fbank_get_list: expected TextList, got {}", format!("{other:?}")),
+    }
+}
