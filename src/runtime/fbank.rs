@@ -205,3 +205,19 @@ pub fn fbank_used(b: i64) -> Value {
     let bk = bank(b);
     Value::Int(bk.cursor.load(Ordering::Acquire).min(bk.max_bytes) as i64)
 }
+
+/// `fbank_find(b: Int, text: Text) -> Int` — the id holding `text`, or -1 (read-only: nothing is put).
+#[track_caller]
+pub fn fbank_find(b: i64, text: std::sync::Arc<str>) -> Value {
+    let bk = bank(b);
+    let data = text.as_bytes();
+    let h = hash_of(data);
+    let mut i = (h as usize) & bk.mask;
+    loop {
+        let cur = bk.table[i].load(Ordering::Acquire);
+        if cur == 0 { return Value::Int(-1); }
+        let c = (cur - 1) as usize;
+        if bk.hash[c].load(Ordering::Relaxed) == h && bk.data(c) == data { return Value::Int(c as i64); }
+        i = (i + 1) & bk.mask;
+    }
+}

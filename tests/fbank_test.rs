@@ -104,3 +104,16 @@ fn handle_list_make_one_handle() {
     match handle_list_make(two) { Value::List(l) => assert_eq!(l.len(), 2), o => panic!("{o:?}") }
     match handle_list_make(Value::Unit) { Value::List(l) => assert!(l.is_empty()), o => panic!("{o:?}") }
 }
+
+#[test]
+fn find_is_read_only() {
+    init_runtime();
+    let b = int(fbank_new(8, 64));
+    assert_eq!(int(fbank_find(b, intern_str("x"))), -1);
+    assert_eq!(int(fbank_len(b)), 0, "find puts nothing");
+    let late = int(fbank_put(b, 9, intern_str("x")));
+    assert_eq!(int(fbank_find(b, intern_str("x"))), late);
+    let early = int(fbank_put(b, 2, intern_str("x")));
+    assert_eq!(int(fbank_find(b, intern_str("x"))), early, "find answers the current holder");
+    assert_eq!(int(fbank_find(b, intern_str("y"))), -1);
+}
