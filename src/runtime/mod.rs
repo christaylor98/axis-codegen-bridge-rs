@@ -77,5 +77,6 @@ pub mod pg_store;
 pub mod objseg;
 pub mod u32v;
 pub mod tasks;
+pub mod world;
 
 pub use value::{BytesBuf, ListBuf, Value};
