@@ -36,12 +36,49 @@ pub fn str_char_code(s: std::sync::Arc<str>, idx: i64) -> Value {
 
 #[track_caller]
 pub fn str_slice(s: std::sync::Arc<str>, start: i64, end: i64) -> Value {
-    let start = start as usize;
-    let text = get_str(&s);
-    let chars: Vec<char> = text.chars().collect();
-    let end = (end as usize).min(chars.len());
-    let slice: String = chars[start..end].iter().collect();
-    Value::Str(intern_str(&slice))
+    // Same contract as before (code points; end clamps to the length; start past the clamped end panics), but one
+    // walk to `end` over the borrowed text: no copy of the whole string, no Vec<char>.
+    let text: &str = &s;
+    let (start, end) = (start as usize, end as usize);
+    let (sb, eb) = char_bytes(text, start, end);
+    match sb {
+        Some(sb) if sb <= eb => Value::Str(intern_str(&text[sb..eb])),
+        _ => panic!("str_slice: range start index {} out of range for slice of length {}", start, text.chars().count()),
+    }
+}
+
+/// Byte offsets of code point `start` (None past the end) and of code point `end` clamped to the length, in one walk.
+fn char_bytes(text: &str, start: usize, end: usize) -> (Option<usize>, usize) {
+    let (mut sb, mut n) = (None, 0usize);
+    for (b, _) in text.char_indices() {
+        if n == start { sb = Some(b); }
+        if n == end { return (sb, b); }
+        n += 1;
+    }
+    if n == start { sb = Some(text.len()); }
+    (sb, text.len())
+}
+
+/// `str_find_from(hay, needle, from) -> Int` — the code-point index of the first occurrence of `needle` that starts
+/// at or after code point `from` (Python's `hay.find(needle, from)` for from >= 0); -1 when there is none, when `from`
+/// is past the end, or when `from` is negative. Overlapping occurrences count. Borrows the text: no copy.
+#[track_caller]
+pub fn str_find_from(hay: std::sync::Arc<str>, needle: std::sync::Arc<str>, from: i64) -> Value {
+    if from < 0 { return Value::Int(-1); }
+    let text: &str = &hay;
+    let (fb, _) = char_bytes(text, from as usize, from as usize);
+    let idx = fb.and_then(|fb| text[fb..].find(&*needle).map(|p| from + text[fb..fb + p].chars().count() as i64));
+    Value::Int(idx.unwrap_or(-1))
+}
+
+/// `str_starts_with_at(hay, needle, pos) -> Bool` — `needle` occurs in `hay` at code point `pos` (Python's
+/// `hay.startswith(needle, pos)` for pos >= 0); false when `pos` is negative or past the end. Borrows the text.
+#[track_caller]
+pub fn str_starts_with_at(hay: std::sync::Arc<str>, needle: std::sync::Arc<str>, pos: i64) -> Value {
+    if pos < 0 { return Value::Bool(false); }
+    let text: &str = &hay;
+    let (pb, _) = char_bytes(text, pos as usize, pos as usize);
+    Value::Bool(pb.map(|pb| text[pb..].starts_with(&*needle)).unwrap_or(false))
 }
 
 #[track_caller]

@@ -129,6 +129,8 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("str_trim",        "axis_codegen_bridge::runtime::str_ops::str_trim");
     m.insert("str_contains",    "axis_codegen_bridge::runtime::str_ops::str_contains");
     m.insert("str_index_of",    "axis_codegen_bridge::runtime::str_ops::str_index_of");
+    m.insert("str_find_from",   "axis_codegen_bridge::runtime::str_ops::str_find_from");
+    m.insert("str_starts_with_at", "axis_codegen_bridge::runtime::str_ops::str_starts_with_at");
     m.insert("str_eq",          "axis_codegen_bridge::runtime::str_ops::str_eq");
     m.insert("text_eq",         "axis_codegen_bridge::runtime::str_ops::text_eq");
     m.insert("text_lt",         "axis_codegen_bridge::runtime::str_ops::text_lt");
@@ -1255,6 +1257,8 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("str_gt",            vec![Text, Text]);
     m.insert("str_gte",           vec![Text, Text]);
     m.insert("str_index_of",      vec![Text, Text]);
+    m.insert("str_find_from",     vec![Text, Text, Int]);
+    m.insert("str_starts_with_at", vec![Text, Text, Int]);
     m.insert("str_before",        vec![Text, Text]);
     m.insert("str_after",         vec![Text, Text]);
     m.insert("str_between",       vec![Text, Text, Text]);
