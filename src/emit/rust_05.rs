@@ -288,6 +288,8 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("proc_run",   "axis_codegen_bridge::runtime::process::proc_run");
     m.insert("sleep",      "axis_codegen_bridge::runtime::process::sleep");
     m.insert("now_unix_nanos", "axis_codegen_bridge::runtime::process::now_unix_nanos");
+    m.insert("sys_mem_available", "axis_codegen_bridge::runtime::process::sys_mem_available");
+    m.insert("proc_rss", "axis_codegen_bridge::runtime::process::proc_rss");
     m.insert("argv",       "axis_codegen_bridge::runtime::process::argv");
     m.insert("argv_get",   "axis_codegen_bridge::runtime::process::argv_get");
     m.insert("argv_int",   "axis_codegen_bridge::runtime::process::argv_int");

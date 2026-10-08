@@ -50,6 +50,29 @@ pub fn now_unix_nanos(_: Value) -> Value {
     Value::Int(nanos.min(i64::MAX as u128) as i64)
 }
 
+/// A "<Key>:   <n> kB" line of a /proc file, in bytes; 0 when absent or unreadable.
+fn proc_kb(path: &str, key: &str) -> i64 {
+    std::fs::read_to_string(path).ok()
+        .and_then(|t| t.lines().find(|l| l.starts_with(key)).map(|l| l.to_string()))
+        .and_then(|l| l[key.len()..].trim().trim_end_matches("kB").trim().parse::<i64>().ok())
+        .map(|kb| kb.saturating_mul(1024))
+        .unwrap_or(0)
+}
+
+/// `sys_mem_available(Unit) -> Int` — the machine's available memory in bytes (MemAvailable, /proc/meminfo); 0 when
+/// unknown. A RAM guard: how much a run may still ask for without the machine swapping or killing it.
+#[track_caller]
+pub fn sys_mem_available(_: Value) -> Value {
+    Value::Int(proc_kb("/proc/meminfo", "MemAvailable:"))
+}
+
+/// `proc_rss(Unit) -> Int` — this process's resident memory in bytes (VmRSS, /proc/self/status); 0 when unknown.
+/// A RAM guard: what a run is really using, against its memory budget.
+#[track_caller]
+pub fn proc_rss(_: Value) -> Value {
+    Value::Int(proc_kb("/proc/self/status", "VmRSS:"))
+}
+
 #[track_caller]
 pub fn argv(idx: Value) -> Value {
     let i = match idx { Value::Int(n) => n as usize, _ => 0 };
