@@ -326,3 +326,18 @@ mod tests {
         let _ = join(list(vec![h]));
     }
 }
+
+/// `handle_list_make(h, ...)` — a HandleList of the given handles. Its own fn, not `list_make`: a Handle is itself a
+/// `Tuple(id, result)`, the same shape as the variadic argument wrapper, so with ONE handle `list_make` unpacked the
+/// handle's own fields and `join` then saw a bare `Int`. A wrapper whose first field is an `Int` is that one handle
+/// (a wrapper of several handles holds handles, never an Int).
+#[track_caller]
+pub fn handle_list_make(args: Value) -> Value {
+    let items = match args {
+        Value::Unit => vec![],
+        Value::Tuple(es) if matches!(es.first(), Some(Value::Int(_))) => vec![Value::Tuple(es)],
+        Value::Tuple(es) => es,
+        other => vec![other],
+    };
+    Value::List(super::value::ListBuf::from(items))
+}

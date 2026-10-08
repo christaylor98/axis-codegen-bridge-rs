@@ -51,6 +51,7 @@ pub mod hotmem;
 pub mod oneshot;
 pub mod reclog;
 pub mod rawmem;
+pub mod fbank;
 pub mod indexer;
 pub mod hotblk;
 pub mod hotwrite_batch;

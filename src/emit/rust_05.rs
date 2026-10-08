@@ -196,7 +196,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     // rather than `ValueList`: those two hash differently (structural type
     // identity), so list_make cannot produce a value `join` will accept. Same
     // declaration-not-implementation pattern as int_to_singleton vs list_of_1.
-    m.insert("handle_list_make", "axis_codegen_bridge::runtime::list::list_make");
+    m.insert("handle_list_make", "axis_codegen_bridge::runtime::tasks::handle_list_make");
 
     // M1 iteration / list-builder primitives (BRIDGE_FOREIGN_FN_FNREF_M1).
     // `foreach` and `loop_count` use the native multi-arg Rust calling
@@ -654,6 +654,14 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
 
     // ── Raw memory / atomic-cell primitives (rawmem.rs — AXVERITY_MEM_FOREIGN_FNS_V1)
     //    Unchecked, self-describing-handle. See registry/axis-mem-raw.axreg. ───
+    // ── Frozen bank (fbank.rs — FBANK_V1): append-only, deduplicating, shared by every thread, no lock
+    m.insert("fbank_new",            "axis_codegen_bridge::runtime::fbank::fbank_new");
+    m.insert("fbank_put",            "axis_codegen_bridge::runtime::fbank::fbank_put");
+    m.insert("fbank_holds",          "axis_codegen_bridge::runtime::fbank::fbank_holds");
+    m.insert("fbank_get",            "axis_codegen_bridge::runtime::fbank::fbank_get");
+    m.insert("fbank_ordinal",        "axis_codegen_bridge::runtime::fbank::fbank_ordinal");
+    m.insert("fbank_len",            "axis_codegen_bridge::runtime::fbank::fbank_len");
+    m.insert("fbank_used",           "axis_codegen_bridge::runtime::fbank::fbank_used");
     m.insert("cell_new_raw",         "axis_codegen_bridge::runtime::rawmem::cell_new_raw");
     m.insert("cell_load_raw",        "axis_codegen_bridge::runtime::rawmem::cell_load_raw");
     m.insert("cell_cas_raw",         "axis_codegen_bridge::runtime::rawmem::cell_cas_raw");
@@ -1178,6 +1186,13 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("int_bit_xor",       vec![Int, Int]);
     m.insert("int_bit_not",       vec![Int]);
     m.insert("int_lt",            vec![Int, Int]);
+    m.insert("fbank_new",         vec![Int, Int]);
+    m.insert("fbank_put",         vec![Int, Int, Text]);
+    m.insert("fbank_holds",       vec![Int, Int]);
+    m.insert("fbank_get",         vec![Int, Int]);
+    m.insert("fbank_ordinal",     vec![Int, Int]);
+    m.insert("fbank_len",         vec![Int]);
+    m.insert("fbank_used",        vec![Int]);
     m.insert("cell_new_raw",      vec![Int]);
     m.insert("cell_cas_raw",      vec![Int, Int, Int]);
     m.insert("mem_reserve_raw",   vec![Int]);
