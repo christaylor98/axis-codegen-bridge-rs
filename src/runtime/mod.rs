@@ -79,5 +79,7 @@ pub mod u32v;
 pub mod tasks;
 pub mod world;
 pub mod lines;
+pub mod num;
+pub mod prog;
 
 pub use value::{BytesBuf, ListBuf, Value};

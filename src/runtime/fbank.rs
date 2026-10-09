@@ -193,6 +193,27 @@ pub fn fbank_ordinal(b: i64, id: i64) -> Value {
     Value::Int(bk.ord[e].load(Ordering::Relaxed))
 }
 
+/// A leaked slice handed back (the same layout `zeroed` used).
+unsafe fn unzero<T>(s: &'static [T]) {
+    let n = s.len().max(1);
+    std::alloc::dealloc(s.as_ptr() as *mut u8, Layout::array::<T>(n).unwrap());
+}
+
+/// `fbank_free(b: Int) -> Unit` — the bank's memory returned to the allocator (codegen layer, axMachina 2026-10-09).
+/// The caller guarantees nothing reads or writes the bank any more (every put joined, no id kept); the address is
+/// dead afterwards and any use of it is undefined. Lets a long-running process do many searches without keeping
+/// every search's touched pages resident.
+#[track_caller]
+pub fn fbank_free(b: i64) -> Value {
+    if b == 0 { panic!("fbank_free: 0 is not a bank"); }
+    unsafe {
+        let bk = Box::from_raw(b as *mut Bank);
+        std::alloc::dealloc(bk.bytes, Layout::array::<u8>(bk.max_bytes.max(1)).unwrap());
+        unzero(bk.off); unzero(bk.len); unzero(bk.hash); unzero(bk.ord); unzero(bk.table);
+    }
+    Value::Unit
+}
+
 /// `fbank_len(b: Int) -> Int` — entries put so far (holders, refused and displaced alike); ids are 0 .. len-1.
 #[track_caller]
 pub fn fbank_len(b: i64) -> Value {
