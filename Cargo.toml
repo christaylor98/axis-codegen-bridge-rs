@@ -32,6 +32,7 @@ libc = "0.2"
 # graphcore store layer (pg_store.rs). Synchronous client; postgres's WAL +
 # group commit own durability, so the M1 store layer stops issuing fsyncs.
 postgres = "0.19"
+cudarc = { version = "0.19", default-features = false, features = ["driver", "dynamic-loading", "std", "cuda-12040", "nvrtc"] }
 
 [build-dependencies]
 capnpc = "0.19"

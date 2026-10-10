@@ -1,0 +1,18 @@
+# The P5 search engine's GPU kernels (axMachina P6, 2026-10-10), in Rust: built for nvptx64-nvidia-cuda by the
+# bridge's build.rs (nightly toolchain) and loaded as PTX by src/runtime/gpu_p5.rs. They gather value ids and look
+# them up in the memo table; they never apply an op (op semantics stay in AI3).
+[package]
+name = "axis-gpu-kernels"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[profile.release]
+opt-level = 3
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
