@@ -1344,3 +1344,78 @@ fn test_pure_node_shared_by_two_guards_is_not_hoisted() {
     );
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "0");
 }
+
+// ── BRIDGE_BUILD_PARALLEL_CACHE_V1: the rustc cache must never hand back stale code ──
+
+fn cached_build(cache: &std::path::Path, args: &[&str]) -> String {
+    let output = Command::new(bridge())
+        .env("AX_BUILD_CACHE", cache)
+        .args(args)
+        .output()
+        .expect("bridge failed to run");
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "build failed:\n{}", stderr);
+    stderr
+}
+
+fn run_stdout(exe: &std::path::Path) -> String {
+    let run = Command::new(exe).output().expect("failed to run exe");
+    String::from_utf8_lossy(&run.stdout).trim().to_string()
+}
+
+/// Same input twice hits; a changed .coreir at the SAME path and --out misses.
+#[test]
+fn test_build_cache_hits_then_misses_on_changed_bundle() {
+    let dir = TempDir::new().unwrap();
+    let cache = dir.path().join("cache");
+    let exe = dir.path().join("int_fn");
+    let input = write_05_bundle(&dir, "int_fn.coreir", &make_int_bundle(7));
+    let args = ["build", input.to_str().unwrap(), "--out", exe.to_str().unwrap(), "--exe"];
+
+    let first = cached_build(&cache, &args);
+    assert!(first.contains("rustc: 1 compiled, 0 cached"), "{}", first);
+    assert_eq!(run_stdout(&exe), "7");
+
+    let second = cached_build(&cache, &args);
+    assert!(second.contains("rustc: 0 compiled, 1 cached"), "{}", second);
+    assert_eq!(run_stdout(&exe), "7");
+
+    write_05_bundle(&dir, "int_fn.coreir", &make_int_bundle(8));
+    let third = cached_build(&cache, &args);
+    assert!(third.contains("rustc: 1 compiled, 0 cached"), "{}", third);
+    assert_eq!(run_stdout(&exe), "8", "cache handed back the stale bundle");
+}
+
+/// A provider crate's `mod` sub-file is not on the command line — only rustc's
+/// dep-info knows it. Editing it alone must recompile the provider crate AND
+/// the glue that links it (its --extern is keyed by the rlib's content).
+#[test]
+fn test_build_cache_tracks_provider_crate_submodule() {
+    let dir = TempDir::new().unwrap();
+    let cache = dir.path().join("cache");
+    let prov = dir.path().join("prov");
+    std::fs::create_dir_all(&prov).unwrap();
+    std::fs::write(prov.join("lib.rs"),
+        "use axis_codegen_bridge::runtime::value::Value;\nmod factor;\n\
+         pub fn prov_double(v: Value) -> Value {\n\
+             match v { Value::Int(n) => Value::Int(n * factor::F), o => panic!(\"{:?}\", o) }\n}\n").unwrap();
+    std::fs::write(prov.join("factor.rs"), "pub const F: i64 = 2;\n").unwrap();
+    let input = write_05_bundle(&dir, "prov_call.coreir", &make_prov_double_bundle());
+    let exe = dir.path().join("prov_call_exe");
+    let dispatch = fixture_path("provider_min/dispatch.toml");
+    let provider = format!("provider_min={}", prov.join("lib.rs").display());
+    let args = ["build", input.to_str().unwrap(), "--out", exe.to_str().unwrap(), "--exe",
+                "--dispatch", dispatch.to_str().unwrap(), "--provider-crate", &provider];
+
+    cached_build(&cache, &args);
+    assert_eq!(run_stdout(&exe), "42");
+
+    let warm = cached_build(&cache, &args);
+    assert_eq!(warm.matches("compiled, 0 cached").count(), 0, "{}", warm);
+    assert_eq!(run_stdout(&exe), "42");
+
+    std::fs::write(prov.join("factor.rs"), "pub const F: i64 = 3;\n").unwrap();
+    let edited = cached_build(&cache, &args);
+    assert_eq!(edited.matches("rustc: 1 compiled, 0 cached").count(), 2, "{}", edited);
+    assert_eq!(run_stdout(&exe), "63", "cache missed the edited provider sub-module");
+}

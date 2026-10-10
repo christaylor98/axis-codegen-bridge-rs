@@ -469,3 +469,38 @@ without its own `rust_decimal` dependency.
 `tests/fixtures/provider_min/` is a minimal fixture provider crate (one fn,
 `prov_double(Value) -> Value`, plus a `dispatch.toml`) exercised end-to-end
 by `tests/cli_build_05_test.rs`'s `test_provider_crate_dispatch_runs`.
+
+## `build` runs rustc in parallel behind a content-addressed cache
+
+Landed by `BRIDGE_BUILD_PARALLEL_CACHE_V1` (2026-10-10) in
+`src/rustc_jobs.rs` and `cmd_build` in `src/main.rs`.
+
+`build` used to run every rustc serially and never reuse an output. On the
+axVerity write path (root + 46 §5b providers) that was 47 sequential rustc
+runs: **19.4 s wall, ~1 of 32 cores**. Now each stage is one parallel batch:
+provider crates, then every `_xb` provider **together with** the root bundle
+(no glue rlib `--extern`s another — §5b calls are `extern "C-unwind"` symbol
+decls resolved at final link), then the shim link. Measured on that build:
+**cold 3.2 s, warm 0.58 s**, and the cached exe is byte-identical to an
+uncached one.
+
+### The cache replaces "always recompile" — keep the key complete
+
+"Never cache" existed because a stale `_xb.a` silently linked old code. The
+cache rules that out by keying on every input that can change the output:
+`rustc -vV`, cwd, the source path **as passed** (panic locations embed it — so
+the same glue in another `--out` dir is a deliberate miss), the source's
+content, every arg with each `--extern` replaced by that rlib's **content**
+hash (a rebuilt bridge rlib misses everything), plus every file and env var
+rustc's own dep-info reports, re-verified on lookup (provider crates' `mod`
+sub-files, `include_str!`, `env!`). If you add an input to a glue/provider
+compile that is not an argument or a dep-info entry, it must go into the key.
+`tests/cli_build_05_test.rs` `test_build_cache_*` hold the staleness cases.
+
+`AX_BUILD_CACHE=<dir>` relocates it, `off`/`0` disables it; default
+`~/.cache/axis-codegen-bridge/rustc`. Deleting it is always safe. There is
+no eviction yet (~11 MB for one cold write-path build).
+
+Compiler output is captured per job and replayed in job order, so warnings
+no longer interleave; a cache hit replays nothing. Each `rustc` stage prints
+`rustc: N compiled, M cached`.

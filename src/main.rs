@@ -2,6 +2,7 @@ use std::collections::{HashSet, HashMap};
 use std::time::Instant;
 use axis_codegen_bridge::core_ir_05::{self, CoreBundle, Node, Hash256, sha256_bytes, hash256_to_hex};
 use axis_codegen_bridge::emit::rust_05;
+mod rustc_jobs;
 
 fn usage() -> ! {
     eprintln!("Usage:");
@@ -271,27 +272,35 @@ fn cmd_build(args: &[String]) {
     // the generated glue so rustc treats it as a real crate dependency
     // (not just a resolvable path) — see the `extern_crate_lines` comment
     // near the exe shim below for why that distinction matters at link time.
+    //
+    // Every rustc below goes through `rustc_jobs`: one batch per stage, run in
+    // parallel, behind a content-addressed cache (BRIDGE_BUILD_PARALLEL_CACHE_V1).
+    let runner = rustc_jobs::Runner::new();
+    let bridge_rlib = find_bridge_rlib(&exe_dir);
+    let base_args = |crate_name: &str| -> Vec<String> {
+        vec![
+            "--crate-type=rlib".into(), format!("--crate-name={}", crate_name), "--edition=2021".into(),
+            "-C".into(), "embed-bitcode=no".into(), "-C".into(), "opt-level=3".into(),
+            "--extern".into(), format!("axis_codegen_bridge={}", bridge_rlib.display()),
+            "-L".into(), format!("dependency={}/deps", exe_dir.display()),
+        ]
+    };
     let provider_crate_names: Vec<String> = provider_crates.iter().map(|(n, _)| n.clone()).collect();
-    let mut provider_crate_rlibs: Vec<(String, std::path::PathBuf)> = Vec::new();
-    for (crate_name, src_path) in &provider_crates {
-        let out_rlib = out_dir.join(format!("lib{}.rlib", crate_name));
-        let mut pcmd = std::process::Command::new("rustc");
-        pcmd.arg(src_path)
-            .arg("--crate-type=rlib")
-            .arg(format!("--crate-name={}", crate_name))
-            .arg("--edition=2021")
-            .arg("-o").arg(&out_rlib)
-            .arg("-C").arg("embed-bitcode=no")
-            .arg("-C").arg("opt-level=3")
-            .arg("--extern").arg(format!("axis_codegen_bridge={}", find_bridge_rlib(&exe_dir).display()))
-            .arg("-L").arg(format!("dependency={}/deps", exe_dir.display()));
-        match pcmd.status() {
-            Ok(s) if s.success() => {}
-            Ok(s) => { eprintln!("error: rustc (provider-crate '{}') exited {:?}", crate_name, s.code()); std::process::exit(1); }
-            Err(e) => { eprintln!("error: failed to invoke rustc for provider-crate '{}': {}", crate_name, e); std::process::exit(1); }
-        }
-        provider_crate_rlibs.push((crate_name.clone(), out_rlib));
-    }
+    let provider_crate_rlibs: Vec<(String, std::path::PathBuf)> = provider_crates.iter()
+        .map(|(crate_name, _)| (crate_name.clone(), out_dir.join(format!("lib{}.rlib", crate_name))))
+        .collect();
+    runner.run(&provider_crates.iter().zip(&provider_crate_rlibs)
+        .map(|((crate_name, src_path), (_, out_rlib))| rustc_jobs::Job {
+            what: format!("rustc (provider-crate '{}')", crate_name),
+            src: src_path.into(),
+            args: base_args(crate_name),
+            out: out_rlib.clone(),
+        })
+        .collect::<Vec<_>>());
+    // Glue links each provider crate by content: `--extern name=<its rlib>`.
+    let provider_crate_externs: Vec<String> = provider_crate_rlibs.iter()
+        .flat_map(|(name, prlib)| ["--extern".to_string(), format!("{}={}", name, prlib.display())])
+        .collect();
 
     // ── §5b provider resolution (--lib / --lib-dir) ────────────────────
     // Expand --lib-dir into lib_paths (same logic as the 0.4 path).
@@ -405,14 +414,22 @@ fn cmd_build(args: &[String]) {
     // link at exe time (below), this is what makes multi-bundle --exe
     // dedup structurally instead of colliding.
     // (BRIDGE_XBUNDLE_LINK_DEDUP: SINGLE_DEFINITION_OF_DROP_GLUE.)
+    //
+    // The provider compiles and the root bundle compile are one parallel batch:
+    // none of them names another as an `--extern` (§5b calls go through
+    // `extern "C-unwind"` symbol decls, resolved at final link).
     let mut provider_rlibs: Vec<(String, std::path::PathBuf)> = Vec::new();
+    let mut glue_jobs: Vec<rustc_jobs::Job> = Vec::new();
+    // (.a archive, canonical .rlib mirror) per provider, copied after the batch.
+    let mut mirrors: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new();
     for pid in &all_providers {
         let (pfn, pbundle) = provider_map.get(pid).expect("provider in closure");
         let safe_pfn = rust_05::sanitise(pfn);
         let provider_lib = out_dir.join(format!("lib{}_xb.a", safe_pfn));
         let provider_crate_name = format!("ax_xb_{}", safe_pfn);
-        // Always recompile — never cache. Stale _xb.a silently links old
-        // code when the source .coreir changes (build-always-recompiles).
+        // Always re-emitted and re-keyed. A stale _xb.a used to silently link
+        // old code when the source .coreir changed; the rustc_jobs cache key
+        // covers the generated source's content, so that cannot recur.
         let pcode = match rust_05::emit_rust_lib_from_bundle_with_dispatch(
             pbundle, pfn, &registry_map, &xbundle_providers, &async_facts.channels, &pure_det_ids,
             &dispatch_overlay, &provider_crate_names,
@@ -424,39 +441,21 @@ fn cmd_build(args: &[String]) {
         if let Err(e) = std::fs::write(&prs, &pcode) {
             eprintln!("error: cannot write provider rs {}: {}", prs.display(), e); std::process::exit(1);
         }
-        let mut pcmd = std::process::Command::new("rustc");
-        pcmd.arg(&prs)
-            .arg("--crate-type=rlib")
-            .arg(format!("--crate-name={}", provider_crate_name))
-            .arg("--edition=2021")
-            .arg("-o").arg(&provider_lib)
-            .arg("-C").arg("embed-bitcode=no")
-            .arg("-C").arg("opt-level=3")
-            .arg("-C").arg("strip=debuginfo")
-            .arg("--extern").arg(format!("axis_codegen_bridge={}", find_bridge_rlib(&exe_dir).display()))
-            .arg("-L").arg(format!("dependency={}/deps", exe_dir.display()));
-        for (name, prlib) in &provider_crate_rlibs {
-            pcmd.arg("--extern").arg(format!("{}={}", name, prlib.display()));
-        }
-        match pcmd.status() {
-            Ok(s) if s.success() => {}
-            Ok(s) => { eprintln!("error: rustc (provider '{}') exited {:?}", pfn, s.code()); std::process::exit(1); }
-            Err(e) => { eprintln!("error: failed to invoke rustc for provider '{}': {}", pfn, e); std::process::exit(1); }
-        }
+        let mut args = base_args(&provider_crate_name);
+        args.extend(["-C".to_string(), "strip=debuginfo".to_string()]);
+        args.extend(provider_crate_externs.iter().cloned());
+        glue_jobs.push(rustc_jobs::Job {
+            what: format!("rustc (provider '{}')", pfn),
+            src: prs,
+            args,
+            out: provider_lib.clone(),
+        });
         // rustc's --extern path requires `lib<crate_name>.rlib` / `.so`
         // filenames. Mirror the .a archive under the canonical .rlib name
         // so `--extern <provider_crate_name>=<.rlib>` resolves. The .a
         // stays in place for the existing single-bundle test contract.
         let provider_extern = out_dir.join(format!("lib{}.rlib", provider_crate_name));
-        if let Err(e) = std::fs::copy(&provider_lib, &provider_extern) {
-            eprintln!(
-                "error: failed to mirror provider rlib {} -> {}: {}",
-                provider_lib.display(),
-                provider_extern.display(),
-                e
-            );
-            std::process::exit(1);
-        }
+        mirrors.push((provider_lib, provider_extern.clone()));
         provider_rlibs.push((provider_crate_name, provider_extern));
     }
     // ── end §5b provider resolution ─────────────────────────────────────
@@ -477,34 +476,36 @@ fn cmd_build(args: &[String]) {
     // `--extern <bundle_crate_name>=<rlib>` below.
     let safe_name = rust_05::sanitise(&fn_name);
     let bundle_crate_name = format!("ax_bundle_{}", safe_name);
-    let mut cmd = std::process::Command::new("rustc");
-    cmd.arg(&generated_rs)
-       .arg("--crate-type=rlib")
-       .arg(format!("--crate-name={}", bundle_crate_name))
-       .arg("--edition=2021")
-       .arg("-o").arg(&lib_path)
-       .arg("-C").arg("embed-bitcode=no")
-       .arg("-C").arg("opt-level=3")
-       .arg("-C").arg("strip=debuginfo")
-       .arg("--extern").arg(format!("axis_codegen_bridge={}", find_bridge_rlib(&exe_dir).display()))
-       .arg("-L").arg(format!("dependency={}/deps", exe_dir.display()));
-    for (name, prlib) in &provider_crate_rlibs {
-        cmd.arg("--extern").arg(format!("{}={}", name, prlib.display()));
-    }
-    for path in &link_search { cmd.arg("-L").arg(path); }
-    match cmd.status() {
-        Ok(s) if s.success() => {
-            eprintln!("built {} in {}ms", lib_path.display(), t0.elapsed().as_millis());
+    let mut args = base_args(&bundle_crate_name);
+    args.extend(["-C".to_string(), "strip=debuginfo".to_string()]);
+    args.extend(provider_crate_externs.iter().cloned());
+    for path in &link_search { args.extend(["-L".to_string(), path.clone()]); }
+    glue_jobs.push(rustc_jobs::Job {
+        what: "rustc".to_string(),
+        src: generated_rs.clone(),
+        args,
+        out: lib_path.clone(),
+    });
+    runner.run(&glue_jobs);
+    for (provider_lib, provider_extern) in &mirrors {
+        if let Err(e) = std::fs::copy(provider_lib, provider_extern) {
+            eprintln!(
+                "error: failed to mirror provider rlib {} -> {}: {}",
+                provider_lib.display(),
+                provider_extern.display(),
+                e
+            );
+            std::process::exit(1);
         }
-        Ok(s) => { eprintln!("error: rustc exited {:?}", s.code()); std::process::exit(1); }
-        Err(e) => { eprintln!("error: failed to invoke rustc: {}", e); std::process::exit(1); }
     }
+    eprintln!("built {} in {}ms", lib_path.display(), t0.elapsed().as_millis());
     if !exe_flag { return; }
     // Mirror the bundle .a archive under the canonical lib<crate>.rlib
     // filename rustc's --extern path requires.
-    // Always copy — never reuse a stale rlib. A cached .rlib compiled
+    // Always copy — never reuse a stale rlib. A stale .rlib compiled
     // against an old bridge version causes E0460 at link time with no
-    // clear diagnostic (build-always-recompiles, same as provider path).
+    // clear diagnostic. (The rustc_jobs cache keys on the bridge rlib's
+    // content, so the archive it hands back is never that stale rlib.)
     let bundle_extern = out_dir.join(format!("lib{}.rlib", bundle_crate_name));
     if let Err(e) = std::fs::copy(&lib_path, &bundle_extern) {
         eprintln!(
