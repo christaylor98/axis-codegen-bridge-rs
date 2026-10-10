@@ -68,6 +68,24 @@ pub fn value_list_to_bool_list(list: Value) -> Value {
     narrow_value_list("value_list_to_bool_list", "Bool", list, |v| matches!(v, Value::Bool(_)))
 }
 
+/// Widening, the converse of the `value_list_to_*_list` narrowing: a typed list is already a `Value::List` underneath, so the TextList / IntList / BoolList
+/// is the ValueList unchanged. These exist so a typed list can be handed to a fn that takes a ValueList (the generic higher-order fns: count, any, all,
+/// find_index, flat_map, foreach, fold, filter, map, zip, enumerate) without the caller building a copy. Nothing is checked: every element already has the right tag.
+#[track_caller]
+pub fn text_list_to_value_list(list: Value) -> Value {
+    list
+}
+
+#[track_caller]
+pub fn int_list_to_value_list(list: Value) -> Value {
+    list
+}
+
+#[track_caller]
+pub fn bool_list_to_value_list(list: Value) -> Value {
+    list
+}
+
 /// Scalar sibling of `narrow_value_list`: checks a single `Value`'s tag
 /// instead of walking a list's elements.
 #[track_caller]
@@ -418,5 +436,24 @@ pub fn list_get_println_if_some(list: Value, idx: i64) -> Value {
             None    => Value::Unit,
         },
         _ => panic!("list_get_println_if_some: expected List"),
+    }
+}
+
+#[cfg(test)]
+mod widening_tests {
+    use super::*;
+    fn texts(xs: &[&str]) -> Value { Value::List(xs.iter().map(|x| Value::Str((*x).into())).collect()) }
+    fn ints(xs: &[i64]) -> Value { Value::List(xs.iter().map(|x| Value::Int(*x)).collect()) }
+
+    #[test]
+    fn widening_is_the_identity_and_narrowing_brings_it_back() {
+        let t = texts(&["ax", "b", ""]);
+        assert_eq!(text_list_to_value_list(t.clone()), t);
+        assert_eq!(value_list_to_text_list(text_list_to_value_list(t.clone())), t);
+        let i = ints(&[1, 5, 9]);
+        assert_eq!(value_list_to_int_list(int_list_to_value_list(i.clone())), i);
+        let b = Value::List([true, false].iter().map(|x| Value::Bool(*x)).collect());
+        assert_eq!(value_list_to_bool_list(bool_list_to_value_list(b.clone())), b);
+        assert_eq!(value_list_to_text_list(text_list_to_value_list(texts(&[]))), texts(&[]));   // the empty list round-trips too
     }
 }

@@ -731,6 +731,9 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("value_list_to_int_list",            "axis_codegen_bridge::runtime::list::value_list_to_int_list");
     m.insert("value_list_to_text_list",           "axis_codegen_bridge::runtime::list::value_list_to_text_list");
     m.insert("value_list_to_bool_list",           "axis_codegen_bridge::runtime::list::value_list_to_bool_list");
+    m.insert("text_list_to_value_list",           "axis_codegen_bridge::runtime::list::text_list_to_value_list");
+    m.insert("int_list_to_value_list",            "axis_codegen_bridge::runtime::list::int_list_to_value_list");
+    m.insert("bool_list_to_value_list",           "axis_codegen_bridge::runtime::list::bool_list_to_value_list");
     // ─── END GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / symbol_map ───
 
     // Scalar sibling of the ValueList narrowing family (M1_VALUE_SCALAR_NARROWING_V1):
