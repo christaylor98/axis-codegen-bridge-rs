@@ -504,3 +504,26 @@ no eviction yet (~11 MB for one cold write-path build).
 Compiler output is captured per job and replayed in job order, so warnings
 no longer interleave; a cache hit replays nothing. Each `rustc` stage prints
 `rustc: N compiled, M cached`.
+
+### Do not replace rustc with a custom backend — decided 2026-10-10
+
+Considered and rejected after the parallel/cache work above. Recorded so it
+is not re-proposed without new evidence:
+
+- **Little build time left to win.** Cold 3.2 s is bounded by the slowest
+  single crate (~1 s at opt-level 3) plus the final link; warm 0.58 s is
+  mostly the link, which any backend still needs against the Rust runtime.
+- **rustc is where glue performance comes from.** The glue is almost all
+  calls into the runtime (`Value` clone/drop, `guard_pre`, builtins); LLVM
+  inlines them at opt-level 3 (~76% of the readtier time gain). A
+  Cranelift-from-Core-IR backend cannot inline across into Rust, so every
+  one becomes a real call on top of the ~65 ns CCall cost.
+- **It forces a C boundary through the runtime.** `Value` has no stable
+  layout, and the runtime relies on Rust panics, `catch_unwind` and the fault
+  guard; every builtin would need a C-ABI wrapper over opaque handles.
+
+Revisit only for a sub-100 ms edit loop, a REPL, or hot reload — and then
+the tool is a dev-only **interpreter over Core IR**, with rustc still
+producing real binaries. Cheaper remaining build wins first: a faster linker
+(mold/lld) for the ~0.5 s link, an opt-level-0 dev mode (cold ~2 s),
+`--remap-path-prefix` so the cache hits across `--out` dirs, and eviction.
