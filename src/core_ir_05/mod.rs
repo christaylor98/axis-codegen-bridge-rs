@@ -426,12 +426,12 @@ pub fn decode_bytes_payload(payload: &[u8]) -> Result<Vec<u8>, String> {
     Ok(payload[pos..pos + len].to_vec())
 }
 
-// ── Native wire format (.axbi): the canonical binary, no third-party code ──
+// ── Native wire format (.coreir): the canonical binary, no third-party code ──
 //
 // The decoder half of serialize_canonical, and the 6-byte file header ('A','X','C','I', ir_major 0, ir_minor 5) of the spec
 // (core_ir_spec/axis-core-ir-0.5.md, "Axial Binary File Format"). Strict like the spec says: a non-minimal varint, a forward node
 // reference, a pool reference past the pool, a bad kind tag, bad UTF-8 or trailing bytes is a hard error. Bundle identity is
-// SHA-256 of the canonical bytes (bytes[6..] of a file), so a bundle read from .axbi and written back has the identity it came with.
+// SHA-256 of the canonical bytes (bytes[6..] of a file), so a bundle read from .coreir and written back has the identity it came with.
 
 pub const AXBI_MAGIC: [u8; 4] = *b"AXCI";
 
@@ -542,7 +542,7 @@ pub fn deserialize_canonical(bytes: &[u8]) -> Result<CoreBundle, String> {
     Ok(CoreBundle { version: "0.5".to_string(), constant_pool, nodes, result })
 }
 
-/// A whole .axbi file: the 6-byte header (not part of the identity) and the canonical payload.
+/// A whole .coreir file: the 6-byte header (not part of the identity) and the canonical payload.
 pub fn serialize_axbi(bundle: &CoreBundle) -> Vec<u8> {
     let mut out = AXBI_MAGIC.to_vec();
     out.push(0);

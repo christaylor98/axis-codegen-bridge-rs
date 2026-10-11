@@ -268,7 +268,7 @@ transport/interop conveniences.
 
 | Format | Extension | Use |
 |---|---|---|
-| Canonical binary | `.axbi` | On-disk storage, cross-language embedding, identity hashing |
+| Canonical binary | `.coreir` | On-disk storage, cross-language embedding, identity hashing |
 | JSON | `.axbi.json` | Debugging, tooling, web consumers, human authoring |
 | Cap'n Proto | — | **Removed.** No reader or writer exists in any axis tool. |
 
@@ -329,9 +329,9 @@ against the fully-decoded table: `node(i)` requires `i < node_count`;
 
 ---
 
-### Axial Binary File Format (.axbi)
+### Axial Binary File Format (.coreir)
 
-The `.axbi` file wraps the canonical payload with a 6-byte header for
+The `.coreir` file wraps the canonical payload with a 6-byte header for
 format identification. The header is NOT included in the identity hash.
 
 ```
@@ -353,7 +353,7 @@ The canonical payload starting at offset 6 is byte-identical to the output of
 
 ### JSON Format (.axbi.json)
 
-JSON is the human-readable, debug-friendly equivalent of `.axbi`. Semantics
+JSON is the human-readable, debug-friendly equivalent of `.coreir`. Semantics
 are identical; only the encoding differs.
 
 **Top-level object:**

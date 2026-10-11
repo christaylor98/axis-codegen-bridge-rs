@@ -3,7 +3,7 @@
 //! ONE public bridge function: `axbi_parse`.
 //!
 //! Takes a `ValueList` of raw bytes (each element `Value::Int` 0–255),
-//! validates the .axbi header, and returns a fully-structured `Value` tree
+//! validates the .coreir header, and returns a fully-structured `Value` tree
 //! that M1 can navigate with standard list/tuple bridge functions.
 //!
 //! Bridge spec: core_ir_spec/axbi-m1-bridge-spec.md
@@ -176,7 +176,7 @@ fn parse_canonical(data: &[u8]) -> Value {
 
 /// `axbi_parse(data: ValueList) → Value`
 ///
-/// Parse a `.axbi` byte stream into a structured Value tree.
+/// Parse a `.coreir` byte stream into a structured Value tree.
 ///
 /// Input:  `Value::List` where each element is `Value::Int(0..=255)`.
 /// Output: `Value::Tuple([pool_list, node_list])` — see §Canonical binary → Value
@@ -187,7 +187,7 @@ fn parse_canonical(data: &[u8]) -> Value {
 #[track_caller]
 pub fn axbi_parse(v: Value) -> Value {
     let bytes = input_to_bytes(v);
-    if bytes.len() < 6 { hard_fail("input too short to be .axbi (need ≥ 6 bytes)"); }
+    if bytes.len() < 6 { hard_fail("input too short to be .coreir (need ≥ 6 bytes)"); }
     if &bytes[0..4] != MAGIC.as_slice() {
         hard_fail(&format!("bad magic {:?}: expected b\"AXCI\"", &bytes[0..4]));
     }

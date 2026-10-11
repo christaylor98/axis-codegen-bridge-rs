@@ -12,7 +12,7 @@ axis-lang; this bridge is the thin Rust layer below it.
 
 - The only Rust in the axis-lang code generation stack
 - Foreign function implementations for things axis-lang cannot do itself
-- Core IR loader and inspector (native canonical binary, `.axbi`)
+- Core IR loader and inspector (native canonical binary, `.coreir`)
 - Rust code emitter (Core IR → Rust source for rustc compilation)
 
 ## What this is not

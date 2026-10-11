@@ -14,7 +14,7 @@ fn usage() -> ! {
     eprintln!("    --entry <name>                repeatable alias for --entries");
     eprintln!("    --entry-stack-size <bytes>    per-entry stack (default 1 MiB)");
     eprintln!("    --lib <path.coreir>           link a library bundle (repeatable)");
-    eprintln!("    --lib-dir <directory>         link all .coreir and .axbi (native binary) in directory (repeatable)");
+    eprintln!("    --lib-dir <directory>         link all .coreir in directory (repeatable)");
     eprintln!("    --reg <path.axreg>            registry file for CCall validation (repeatable)");
     eprintln!("    --dispatch <path.toml>        extra CCall dispatch table, merged with the");
     eprintln!("                                  bridge's built-in tables (repeatable)");
@@ -24,7 +24,7 @@ fn usage() -> ! {
     eprintln!("    --link-search <path>          pass -L <path> to rustc");
     eprintln!("  axis-codegen-bridge bundle --out <output.a> <input1.a> [<input2.a> ...]");
     eprintln!("    Merges multiple .a archives into a single output.a via ar.");
-    eprintln!("  axis-codegen-bridge inspect <input.axbi>");
+    eprintln!("  axis-codegen-bridge inspect <input.coreir>");
     std::process::exit(1);
 }
 
@@ -312,7 +312,7 @@ fn cmd_build(args: &[String]) {
         };
         let mut paths: Vec<String> = entries
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "coreir" || ext == "axbi"))
+            .filter(|e| e.path().extension().map_or(false, |ext| ext == "coreir"))
             .map(|e| e.path().to_string_lossy().to_string())
             .collect();
         paths.sort();
