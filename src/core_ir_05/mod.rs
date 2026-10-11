@@ -425,3 +425,211 @@ pub fn decode_bytes_payload(payload: &[u8]) -> Result<Vec<u8>, String> {
     }
     Ok(payload[pos..pos + len].to_vec())
 }
+
+// ── Native wire format (.axbi): the canonical binary, no third-party code ──
+//
+// The decoder half of serialize_canonical, and the 6-byte file header ('A','X','C','I', ir_major 0, ir_minor 5) of the spec
+// (core_ir_spec/axis-core-ir-0.5.md, "Axial Binary File Format"). Strict like the spec says: a non-minimal varint, a forward node
+// reference, a pool reference past the pool, a bad kind tag, bad UTF-8 or trailing bytes is a hard error. Bundle identity is
+// SHA-256 of the canonical bytes (bytes[6..] of a file), so a bundle read from .axbi and written back has the identity it came with.
+
+pub const AXBI_MAGIC: [u8; 4] = *b"AXCI";
+
+struct CanonReader<'a> {
+    b: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> CanonReader<'a> {
+    fn take(&mut self, n: usize) -> Result<&'a [u8], String> {
+        if self.b.len() - self.pos < n {
+            return Err(format!("axbi: truncated at byte {} (need {} more)", self.pos, n));
+        }
+        let s = &self.b[self.pos..self.pos + n];
+        self.pos += n;
+        Ok(s)
+    }
+
+    /// Unsigned LEB128 in minimal form: a redundant continuation byte is a hard error.
+    fn varint(&mut self) -> Result<u64, String> {
+        let start = self.pos;
+        let mut v: u64 = 0;
+        let mut shift = 0u32;
+        loop {
+            let byte = self.take(1)?[0];
+            if shift >= 64 || (shift == 63 && (byte & 0x7f) > 1) {
+                return Err(format!("axbi: varint overflows u64 at byte {}", start));
+            }
+            v |= ((byte & 0x7f) as u64) << shift;
+            if byte & 0x80 == 0 {
+                if byte == 0 && self.pos - start > 1 {
+                    return Err(format!("axbi: non-minimal varint at byte {}", start));
+                }
+                return Ok(v);
+            }
+            shift += 7;
+        }
+    }
+
+    fn len(&mut self) -> Result<usize, String> {
+        let n = self.varint()?;
+        usize::try_from(n).map_err(|_| "axbi: length does not fit usize".to_string())
+    }
+
+    fn hash(&mut self) -> Result<Hash256, String> {
+        let mut h = [0u8; 32];
+        h.copy_from_slice(self.take(32)?);
+        Ok(h)
+    }
+
+    fn noderef(&mut self, nodes_so_far: u64, pool_count: u64) -> Result<NodeRef, String> {
+        let v = self.varint()?;
+        let idx = v >> 1;
+        if v & 1 == 1 {
+            if idx >= pool_count {
+                return Err(format!("axbi: pool({}) out of range (pool has {})", idx, pool_count));
+            }
+            Ok(NodeRef::Pool(idx as u32))
+        } else {
+            if idx >= nodes_so_far {
+                return Err(format!("axbi: node({}) breaks the topological order (only {} before it)", idx, nodes_so_far));
+            }
+            Ok(NodeRef::Node(idx as u32))
+        }
+    }
+}
+
+/// The inverse of `serialize_canonical`. The version is not in the canonical bytes; the result is a 0.5 bundle.
+pub fn deserialize_canonical(bytes: &[u8]) -> Result<CoreBundle, String> {
+    let mut r = CanonReader { b: bytes, pos: 0 };
+    let pool_count = r.varint()?;
+    let mut constant_pool = Vec::new();
+    for _ in 0..pool_count {
+        let def_hash = r.hash()?;
+        let n = r.len()?;
+        constant_pool.push(ConstantPoolEntry { def_hash, payload: r.take(n)?.to_vec() });
+    }
+    let node_count = r.varint()?;
+    let mut nodes = Vec::new();
+    for i in 0..node_count {
+        match r.varint()? {
+            0 => {
+                let n = r.len()?;
+                let target_name = String::from_utf8(r.take(n)?.to_vec())
+                    .map_err(|e| format!("axbi: target name is not UTF-8: {}", e))?;
+                let target_identity = r.hash()?;
+                let argc = r.varint()?;
+                let mut args = Vec::new();
+                for _ in 0..argc {
+                    args.push(r.noderef(i, pool_count)?);
+                }
+                nodes.push(Node::CCall { target_identity, args, target_name });
+            }
+            1 => {
+                let cond = r.noderef(i, pool_count)?;
+                let then_ = r.noderef(i, pool_count)?;
+                let else_ = r.noderef(i, pool_count)?;
+                nodes.push(Node::CIf { cond, then_, else_ });
+            }
+            2 => nodes.push(Node::CDeterminate),
+            k => return Err(format!("axbi: unknown node kind tag {}", k)),
+        }
+    }
+    let result = r.noderef(node_count, pool_count)?;
+    if r.pos != bytes.len() {
+        return Err(format!("axbi: {} trailing byte(s) after the result", bytes.len() - r.pos));
+    }
+    Ok(CoreBundle { version: "0.5".to_string(), constant_pool, nodes, result })
+}
+
+/// A whole .axbi file: the 6-byte header (not part of the identity) and the canonical payload.
+pub fn serialize_axbi(bundle: &CoreBundle) -> Vec<u8> {
+    let mut out = AXBI_MAGIC.to_vec();
+    out.push(0);
+    out.push(5);
+    out.extend_from_slice(&serialize_canonical(bundle));
+    out
+}
+
+pub fn is_axbi(bytes: &[u8]) -> bool {
+    bytes.len() >= 4 && bytes[0..4] == AXBI_MAGIC
+}
+
+pub fn parse_axbi(bytes: &[u8]) -> Result<CoreBundle, String> {
+    if !is_axbi(bytes) {
+        return Err("axbi: bad magic (not AXCI)".to_string());
+    }
+    if bytes.len() < 6 || bytes[4] != 0 || bytes[5] != 5 {
+        return Err(format!("axbi: unsupported IR version (this reader requires 0.5)"));
+    }
+    deserialize_canonical(&bytes[6..])
+}
+
+#[cfg(test)]
+mod axbi_tests {
+    use super::*;
+
+    fn sample() -> CoreBundle {
+        CoreBundle {
+            version: "0.5".to_string(),
+            constant_pool: vec![
+                ConstantPoolEntry { def_hash: param_type_hash(), payload: vec![0] },
+                ConstantPoolEntry { def_hash: text_type_hash(), payload: encode_text_payload("none") },
+                ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(-300) },
+            ],
+            nodes: vec![
+                Node::CCall { target_identity: [7u8; 32], args: vec![NodeRef::Pool(0), NodeRef::Pool(2)], target_name: "int_eq".to_string() },
+                Node::CIf { cond: NodeRef::Node(0), then_: NodeRef::Pool(1), else_: NodeRef::Pool(1) },
+                Node::CDeterminate,
+            ],
+            result: NodeRef::Node(1),
+        }
+    }
+
+    #[test]
+    fn a_bundle_survives_the_native_roundtrip_with_its_identity() {
+        let b = sample();
+        let bytes = serialize_axbi(&b);
+        assert!(is_axbi(&bytes));
+        let back = parse_axbi(&bytes).expect("decodes");
+        assert_eq!(back, b);
+        assert_eq!(bundle_identity(&back), bundle_identity(&b));
+    }
+
+    #[test]
+    fn the_decoder_is_strict() {
+        let good = serialize_axbi(&sample());
+        // a bad magic
+        let mut bad = good.clone();
+        bad[0] = b'B';
+        assert!(parse_axbi(&bad).is_err());
+        // a wrong version
+        let mut bad = good.clone();
+        bad[5] = 4;
+        assert!(parse_axbi(&bad).is_err());
+        // trailing bytes
+        let mut bad = good.clone();
+        bad.push(0);
+        assert!(parse_axbi(&bad).is_err());
+        // a truncated payload
+        assert!(parse_axbi(&good[..good.len() - 1]).is_err());
+        // a non-minimal varint for the pool count (0x80 0x00 is a padded zero)
+        assert!(deserialize_canonical(&[0x80, 0x00]).is_err());
+        // a forward node reference: one CIf whose cond is node(0) while it is node 0 itself
+        let mut buf = Vec::new();
+        write_varint(&mut buf, 0); // empty pool
+        write_varint(&mut buf, 1); // one node
+        write_varint(&mut buf, 1); // CIf
+        write_noderef(&mut buf, &NodeRef::Node(0));
+        write_noderef(&mut buf, &NodeRef::Node(0));
+        write_noderef(&mut buf, &NodeRef::Node(0));
+        write_noderef(&mut buf, &NodeRef::Node(0));
+        assert!(deserialize_canonical(&buf).is_err());
+        // an unknown node kind
+        let mut buf = Vec::new();
+        write_varint(&mut buf, 0);
+        write_varint(&mut buf, 1);
+        write_varint(&mut buf, 9);
+        assert!(deserialize_canonical(&buf).is_err());
+    }
+}

@@ -12,7 +12,7 @@ axis-lang; this bridge is the thin Rust layer below it.
 
 - The only Rust in the axis-lang code generation stack
 - Foreign function implementations for things axis-lang cannot do itself
-- Core IR loader and inspector (Cap'n Proto binary format)
+- Core IR loader and inspector (native canonical binary, `.axbi`)
 - Rust code emitter (Core IR → Rust source for rustc compilation)
 
 ## What this is not
@@ -27,15 +27,7 @@ axis-lang; this bridge is the thin Rust layer below it.
 cargo build --release
 ```
 
-Requires: Rust stable, Cap'n Proto compiler (`capnp`)
-
-```sh
-# Ubuntu / Debian
-apt install capnproto
-
-# macOS
-brew install capnp
-```
+Requires: Rust stable.
 
 ## Use
 

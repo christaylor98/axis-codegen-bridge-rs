@@ -270,7 +270,7 @@ transport/interop conveniences.
 |---|---|---|
 | Canonical binary | `.axbi` | On-disk storage, cross-language embedding, identity hashing |
 | JSON | `.axbi.json` | Debugging, tooling, web consumers, human authoring |
-| Cap'n Proto | — | **Deprecated.** Kept for backward compatibility only. Do not use in new consumers. |
+| Cap'n Proto | — | **Removed.** No reader or writer exists in any axis tool. |
 
 ---
 
@@ -430,22 +430,11 @@ are identical; only the encoding differs.
 
 ---
 
-### Cap'n Proto (Deprecated)
+### Cap'n Proto (Removed)
 
-Cap'n Proto framing (`encode_capnp` / `decode_capnp`) was the original
-transport format and remains supported for backward compatibility. It is
-**not** used for identity hashing — identity is always computed from the
-canonical binary form, never from capnp bytes.
-
-`result` was added here too (`CoreBundle.result @3 :NodeRef`) for schema
-completeness, even though this format is deprecated — a capnp-encoded bundle
-predating this field decodes with a schema-default (incorrect) `result` and
-will silently mis-hash; regenerate any such bundle rather than relying on it.
-
-New consumers MUST NOT adopt capnp as their interchange format. Use `.axbi`
-(canonical binary) for performance-sensitive or embedded targets, or `.axbi.json`
-for interop and tooling. Capnp support will be removed in a future version
-once all existing consumers have migrated.
+Cap'n Proto was the original transport framing. It is gone: no axis tool reads or writes it, and no third-party serialisation
+library is a dependency. Identity was never computed from capnp bytes (always `SHA-256(serialize_canonical(bundle))`), so
+removing it changes no identity. A bundle stored in the old form is regenerated from source.
 
 ---
 

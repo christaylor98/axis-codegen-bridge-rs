@@ -25,6 +25,3 @@ pub use rust_decimal;
 #[global_allocator]
 static AXV_ALLOC_PROBE: runtime::allocprobe::CountingAlloc = runtime::allocprobe::CountingAlloc;
 
-pub mod axis_core_ir_0_5_capnp {
-    include!(concat!(env!("OUT_DIR"), "/core_ir_spec/axis_core_ir_0_5_capnp.rs"));
-}
