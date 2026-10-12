@@ -29,3 +29,4 @@ perf.data.old
 
 # mothership worker scratch (task.md/result.md per dispatched task)
 .mothership/
+/target-gfx

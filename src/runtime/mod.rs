@@ -79,6 +79,9 @@ pub mod objseg;
 pub mod u32v;
 pub mod tasks;
 pub mod world;
+pub mod gfx;
+#[cfg(feature = "gfx-wgpu")]
+pub mod gfx_wgpu;
 pub mod lines;
 pub mod num;
 pub mod prog;
