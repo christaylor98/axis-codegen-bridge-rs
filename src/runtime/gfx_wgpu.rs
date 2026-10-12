@@ -185,7 +185,9 @@ pub fn open(w: u32, h: u32, title: &str) -> Result<Box<dyn Sink>, String> {
             match event {
                 Event::UserEvent(Wake::Close) => elwt.exit(),
                 Event::UserEvent(Wake::Frame) => {
-                    if let Some(f) = slot2.lock().unwrap().take() { gpu.render(&f); pres.presented(); last = Some(f); }
+                    // take the frame first: the slot lock must not be held while rendering (presented() reports an event, which takes the state lock gfx_submit holds while it fills the slot)
+                    let next = slot2.lock().unwrap().take();
+                    if let Some(f) = next { gpu.render(&f); pres.presented(); last = Some(f); }
                 }
                 Event::WindowEvent { event, .. } => match event {
                     WindowEvent::CloseRequested => push_event("close".to_string()),
