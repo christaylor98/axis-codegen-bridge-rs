@@ -86,6 +86,54 @@ pub fn bool_list_to_value_list(list: Value) -> Value {
     list
 }
 
+// ── FloatList (hand-written 2026-10-12, Chris approved): a monomorphic list of Float, the IntList pattern ──
+// The typed list is a `Value::List` of `Value::Float` underneath; most fns are the element-agnostic ones. These are the ones that inspect elements.
+
+#[track_caller]
+pub fn value_list_to_float_list(list: Value) -> Value {
+    narrow_value_list("value_list_to_float_list", "Float", list, |v| matches!(v, Value::Float(_)))
+}
+
+#[track_caller]
+pub fn value_to_float_list(v: Value) -> Value {
+    narrow_value_list("value_to_float_list", "Float", v, |v| matches!(v, Value::Float(_)))
+}
+
+#[track_caller]
+pub fn float_list_to_value_list(list: Value) -> Value {
+    list
+}
+
+/// `float_list_nth(l, k)`: the item at index k. Out of range is a panic naming the index and the length, like `list_get`: a caller guards with the length.
+#[track_caller]
+pub fn float_list_nth(list: Value, idx: i64) -> Value {
+    match list {
+        Value::List(elems) => match usize::try_from(idx).ok().and_then(|i| elems.get(i)) {
+            Some(v) => v.clone(),
+            None => panic!("float_list_nth: index {idx} out of range for a list of {}", elems.len()),
+        },
+        _ => panic!("float_list_nth: expected List"),
+    }
+}
+
+/// `float_list_sum(l)`: the items added left to right in f64 ("0.0" for the empty list). The order is fixed so the result is reproducible on every bridge (F17).
+#[track_caller]
+pub fn float_list_sum(list: Value) -> Value {
+    match list {
+        Value::List(elems) => {
+            let mut acc = 0.0_f64;
+            for v in elems.iter() {
+                match v {
+                    Value::Float(x) => acc += *x,
+                    other => panic!("float_list_sum: element is {}, expected Float", value_tag_name(other)),
+                }
+            }
+            Value::Float(acc)
+        }
+        _ => panic!("float_list_sum: expected List"),
+    }
+}
+
 /// Scalar sibling of `narrow_value_list`: checks a single `Value`'s tag
 /// instead of walking a list's elements.
 #[track_caller]
@@ -456,4 +504,27 @@ mod widening_tests {
         assert_eq!(value_list_to_bool_list(bool_list_to_value_list(b.clone())), b);
         assert_eq!(value_list_to_text_list(text_list_to_value_list(texts(&[]))), texts(&[]));   // the empty list round-trips too
     }
+}
+
+#[cfg(test)]
+mod float_list_tests {
+    use super::*;
+    fn floats(xs: &[f64]) -> Value { Value::List(xs.iter().map(|x| Value::Float(*x)).collect()) }
+
+    #[test]
+    fn narrowing_nth_and_sum() {
+        let f = floats(&[1.5, 2.5, 3.5]);
+        assert_eq!(value_list_to_float_list(float_list_to_value_list(f.clone())), f);
+        assert_eq!(float_list_nth(f.clone(), 2), Value::Float(3.5));
+        assert_eq!(float_list_sum(f), Value::Float(7.5));
+        assert_eq!(float_list_sum(floats(&[])), Value::Float(0.0));
+    }
+
+    #[test]
+    #[should_panic(expected = "out of range")]
+    fn nth_out_of_range_panics_naming_the_index() { float_list_nth(floats(&[1.0]), 3); }
+
+    #[test]
+    #[should_panic(expected = "element 1 is Int, expected Float")]
+    fn narrowing_rejects_a_non_float_item() { value_list_to_float_list(Value::List(vec![Value::Float(1.0), Value::Int(2)].into_iter().collect())); }
 }

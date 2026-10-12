@@ -735,6 +735,28 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("int_list_to_value_list",            "axis_codegen_bridge::runtime::list::int_list_to_value_list");
     m.insert("bool_list_to_value_list",           "axis_codegen_bridge::runtime::list::bool_list_to_value_list");
     // ─── END GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / symbol_map ───
+    // FloatList (hand-written 2026-10-12, Chris approved): the IntList rows for Float; sum, nth and the narrowing fns have their own Rust.
+    m.insert("float_list_nil", "axis_codegen_bridge::runtime::list::list_nil");
+    m.insert("float_list_cons", "axis_codegen_bridge::runtime::list::list_cons");
+    m.insert("float_list_head", "axis_codegen_bridge::runtime::list::list_head");
+    m.insert("float_list_tail", "axis_codegen_bridge::runtime::list::list_tail");
+    m.insert("float_list_len", "axis_codegen_bridge::runtime::list::list_len");
+    m.insert("float_list_is_empty", "axis_codegen_bridge::runtime::list::list_is_empty");
+    m.insert("float_list_nth", "axis_codegen_bridge::runtime::list::float_list_nth");
+    m.insert("float_list_sum", "axis_codegen_bridge::runtime::list::float_list_sum");
+    m.insert("float_list_filter", "axis_codegen_bridge::runtime::iter::filter");
+    m.insert("float_list_fold_float", "axis_codegen_bridge::runtime::iter::fold");
+    m.insert("float_list_fold_int", "axis_codegen_bridge::runtime::iter::fold");
+    m.insert("float_list_fold_text", "axis_codegen_bridge::runtime::iter::fold");
+    m.insert("float_list_fold_bool", "axis_codegen_bridge::runtime::iter::fold");
+    m.insert("float_list_map_float", "axis_codegen_bridge::runtime::iter::map");
+    m.insert("float_list_map_int", "axis_codegen_bridge::runtime::iter::map");
+    m.insert("float_list_map_text", "axis_codegen_bridge::runtime::iter::map");
+    m.insert("float_list_map_bool", "axis_codegen_bridge::runtime::iter::map");
+    m.insert("value_list_to_float_list", "axis_codegen_bridge::runtime::list::value_list_to_float_list");
+    m.insert("float_list_to_value_list", "axis_codegen_bridge::runtime::list::float_list_to_value_list");
+    m.insert("value_to_float_list", "axis_codegen_bridge::runtime::list::value_to_float_list");
+    m.insert("text_list_map_float", "axis_codegen_bridge::runtime::iter::map");
 
     // Scalar sibling of the ValueList narrowing family (M1_VALUE_SCALAR_NARROWING_V1):
     // checked narrowing from a single Value down to a concrete primitive, for a
@@ -1117,6 +1139,17 @@ fn fn_arg_kinds() -> HashMap<&'static str, Vec<ArgKind>> {
     m.insert("bool_list_map_text",      vec![Data, FnRef]);
     m.insert("bool_list_map_bool",      vec![Data, FnRef]);
     // ─── END GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / fn_arg_kinds ───
+    // FloatList (hand-written 2026-10-12): argument kinds of the loop forms and nth, as the IntList rows.
+    m.insert("float_list_filter", vec![Data, FnRef]);
+    m.insert("float_list_map_float", vec![Data, FnRef]);
+    m.insert("float_list_map_int", vec![Data, FnRef]);
+    m.insert("float_list_map_text", vec![Data, FnRef]);
+    m.insert("float_list_map_bool", vec![Data, FnRef]);
+    m.insert("float_list_fold_float", vec![Data, Data, FnRef]);
+    m.insert("float_list_fold_int", vec![Data, Data, FnRef]);
+    m.insert("float_list_fold_text", vec![Data, Data, FnRef]);
+    m.insert("float_list_fold_bool", vec![Data, Data, FnRef]);
+    m.insert("text_list_map_float", vec![Data, FnRef]);
     m
 }
 
@@ -1220,6 +1253,7 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("bchan_take",        vec![Text]);
     m.insert("tuple_field",       vec![Value, Int]);
     m.insert("list_get",          vec![Value, Int]);
+    m.insert("float_list_nth",    vec![Value, Int]);
     m.insert("list_append",       vec![Value, Value]);
     m.insert("value_list_push",   vec![Value, Value]);
     m.insert("list_set",          vec![Value, Int, Value]);
@@ -1504,6 +1538,7 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("text_list_cons",          vec![Value, Value]);
     m.insert("bool_list_cons",          vec![Value, Value]);
     // ─── END GENERATED: M1_MONOMORPHIC_LIST_VOCABULARY_V1 / native_call_fn_arg_types ───
+    m.insert("float_list_cons",         vec![Value, Value]);
     m
 }
 
