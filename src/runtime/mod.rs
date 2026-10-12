@@ -80,6 +80,7 @@ pub mod u32v;
 pub mod tasks;
 pub mod world;
 pub mod gfx;
+pub mod gfx_stream;
 #[cfg(feature = "gfx-wgpu")]
 pub mod gfx_wgpu;
 pub mod lines;

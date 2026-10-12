@@ -11,6 +11,12 @@ path = "src/lib.rs"
 name = "axis-codegen-bridge"
 path = "src/main.rs"
 
+# F24 slice 3 — the stream renderer process (reads frames from a socket and draws them natively; needs the window renderer)
+[[bin]]
+name = "axgfx_render"
+path = "src/bin/axgfx_render.rs"
+required-features = ["gfx-wgpu"]
+
 [features]
 default = []
 # AXVERITY_HOTPATH_UNBLOCK_V1 — per-allocation counting (runtime::allocprobe).

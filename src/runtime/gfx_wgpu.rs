@@ -26,7 +26,8 @@ struct Win {
 }
 
 impl Sink for Win {
-    fn draw(&mut self, frame: &Frame) -> Option<String> {
+    fn accept(&mut self, frame: &Frame, _raw: &[u8]) -> Option<String> {
+        if frame.cmds.is_empty() { return None; }
         *self.slot.lock().unwrap() = Some(frame.clone());
         let _ = self.proxy.send_event(Wake::Frame);
         None
@@ -62,6 +63,31 @@ fn vertices(f: &Frame, w: f32, h: f32) -> ([f32; 4], Vec<f32>) {
         }
     }
     (clear, v)
+}
+
+/// Present-to-present intervals (F22 acceptance 3: the frame interval AS PRESENTED, not the CPU time to build a frame). Once a second a line goes out as an event:
+/// "presented<TAB>frames N<TAB>interval p50 X ms<TAB>p99 Y ms<TAB>missed M" (missed = an interval over 25 ms).
+struct Presented {
+    last: Option<std::time::Instant>,
+    since: std::time::Instant,
+    ms: Vec<f64>,
+}
+
+impl Presented {
+    fn new() -> Self { Presented { last: None, since: std::time::Instant::now(), ms: Vec::new() } }
+    fn presented(&mut self) {
+        let now = std::time::Instant::now();
+        if let Some(l) = self.last { self.ms.push(now.duration_since(l).as_secs_f64() * 1000.0); }
+        self.last = Some(now);
+        if now.duration_since(self.since).as_secs() >= 1 && !self.ms.is_empty() {
+            let mut v = std::mem::take(&mut self.ms);
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let q = |p: f64| v[(((v.len() as f64) * p).ceil() as usize).clamp(1, v.len()) - 1];
+            let missed = v.iter().filter(|x| **x > 25.0).count();
+            push_event(format!("presented\tframes {}\tinterval p50 {:.1} ms\tp99 {:.1} ms\tmissed {}", v.len() + 1, q(0.5), q(0.99), missed));
+            self.since = now;
+        }
+    }
 }
 
 struct Gpu {
@@ -153,12 +179,13 @@ pub fn open(w: u32, h: u32, title: &str) -> Result<Box<dyn Sink>, String> {
         let _ = tx.send(Ok(ev.create_proxy()));
         let mut gpu = gpu;
         let mut last: Option<Frame> = None;
+        let mut pres = Presented::new();
         let _ = ev.run(move |event, elwt| {
             elwt.set_control_flow(ControlFlow::Wait);
             match event {
                 Event::UserEvent(Wake::Close) => elwt.exit(),
                 Event::UserEvent(Wake::Frame) => {
-                    if let Some(f) = slot2.lock().unwrap().take() { gpu.render(&f); last = Some(f); }
+                    if let Some(f) = slot2.lock().unwrap().take() { gpu.render(&f); pres.presented(); last = Some(f); }
                 }
                 Event::WindowEvent { event, .. } => match event {
                     WindowEvent::CloseRequested => push_event("close".to_string()),

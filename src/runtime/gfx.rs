@@ -18,6 +18,7 @@
 //! AXGFX_NULL=1 makes gfx_open succeed without a window (a null renderer: the rules run, nothing is drawn; for tests and recording);
 //! AXGFX_DRAWLOG=<file> makes the null renderer log every frame it is asked to draw.
 //! AXGFX_NULL_ESCAPE_AFTER=<n> makes the null renderer report an Escape key press after its n-th frame.
+//! AXGFX_STREAM=<host:port> sends the frames to a stream renderer process (bin axgfx_render, runtime::gfx_stream) instead of drawing in this process; events come back through gfx_poll.
 
 use super::value::{BytesBuf, Value};
 use std::collections::VecDeque;
@@ -82,16 +83,20 @@ pub fn parse_frame(b: &[u8]) -> Result<Frame, String> {
 
 /// What draws the frames. The null renderer draws nothing; the wgpu window (feature gfx-wgpu) draws the commands.
 pub trait Sink: Send {
-    fn draw(&mut self, frame: &Frame) -> Option<String>;   // an event to report (the null renderer's Escape test), pushed by the caller: this runs under the state lock
+    /// Called for every ACCEPTED frame (an empty one too: it draws nothing, but a stream carries it); `raw` is the frame's bytes. Returns an event to report
+    /// (the null renderer's Escape test, a dead connection), pushed by the caller: this runs under the state lock.
+    fn accept(&mut self, frame: &Frame, raw: &[u8]) -> Option<String>;
     fn size(&self) -> (u32, u32);
     fn close(&mut self);
 }
 
-struct Null(u32, u32, u32);
+/// The null renderer: draws nothing (see AXGFX_DRAWLOG, AXGFX_NULL_ESCAPE_AFTER).
+pub struct Null(pub u32, pub u32, pub u32);
 
 impl Sink for Null {
     // AXGFX_DRAWLOG=<file>: one line per frame the null renderer was asked to draw ("draw<TAB>seq<TAB>commands"), so a test sees what was drawn
-    fn draw(&mut self, frame: &Frame) -> Option<String> {
+    fn accept(&mut self, frame: &Frame, _raw: &[u8]) -> Option<String> {
+        if frame.cmds.is_empty() { return None; }
         // AXGFX_NULL_ESCAPE_AFTER=<n>: after the n-th frame the null renderer reports an Escape key press (the test of "Escape ends the run cleanly")
         self.2 += 1;
         let esc = std::env::var("AXGFX_NULL_ESCAPE_AFTER").ok().and_then(|v| v.parse::<u32>().ok()) == Some(self.2);
@@ -120,12 +125,27 @@ pub fn push_event(line: String) {
     state().lock().unwrap().events.push_back(line);
 }
 
+/// The events not yet polled (the stream renderer process forwards them to the sim).
+pub fn drain_events() -> Vec<String> {
+    state().lock().unwrap().events.drain(..).collect()
+}
+
+pub fn dump_frame(raw: &[u8]) {
+    if let Some(p) = dump_path() {
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) { let _ = f.write_all(raw); }
+    }
+}
+
+pub fn dump_reset() {
+    if let Some(p) = dump_path() { let _ = std::fs::write(p, b""); }
+}
+
 fn dump_path() -> Option<String> {
     std::env::var("AXGFX_DUMP").ok().filter(|p| !p.is_empty())
 }
 
 #[cfg(feature = "gfx-wgpu")]
-fn open_window(w: u32, h: u32, title: &str) -> Option<Box<dyn Sink>> {
+pub fn open_window(w: u32, h: u32, title: &str) -> Option<Box<dyn Sink>> {
     match super::gfx_wgpu::open(w, h, title) {
         Ok(s) => Some(s),
         Err(why) => { push_event(format!("refused\topen: {}", why)); None }
@@ -133,7 +153,7 @@ fn open_window(w: u32, h: u32, title: &str) -> Option<Box<dyn Sink>> {
 }
 
 #[cfg(not(feature = "gfx-wgpu"))]
-fn open_window(_w: u32, _h: u32, _title: &str) -> Option<Box<dyn Sink>> {
+pub fn open_window(_w: u32, _h: u32, _title: &str) -> Option<Box<dyn Sink>> {
     push_event("refused\topen: no renderer compiled in (build the bridge with --features gfx-wgpu)".to_string());
     None
 }
@@ -141,8 +161,11 @@ fn open_window(_w: u32, _h: u32, _title: &str) -> Option<Box<dyn Sink>> {
 /// `gfx_open(width: Int, height: Int, title: Text) -> Bool`
 pub fn gfx_open(width: i64, height: i64, title: std::sync::Arc<str>) -> Value {
     let (w, h) = (width.clamp(1, 16384) as u32, height.clamp(1, 16384) as u32);
-    if let Some(p) = dump_path() { let _ = std::fs::write(p, b""); }
-    let sink: Option<Box<dyn Sink>> = if std::env::var("AXGFX_NULL").map_or(false, |v| v == "1") { Some(Box::new(Null(w, h, 0))) } else { open_window(w, h, &title) };
+    dump_reset();
+    let sink: Option<Box<dyn Sink>> = if std::env::var("AXGFX_NULL").map_or(false, |v| v == "1") { Some(Box::new(Null(w, h, 0))) }
+        else if let Some(addr) = std::env::var("AXGFX_STREAM").ok().filter(|a| !a.is_empty()) {
+            match super::gfx_stream::connect(&addr, w, h, &title) { Ok(k) => Some(k), Err(why) => { push_event(format!("refused\topen: {}", why)); None } }
+        } else { open_window(w, h, &title) };
     let mut s = state().lock().unwrap();
     s.last_seq = None;
     let ok = sink.is_some();
@@ -152,9 +175,7 @@ pub fn gfx_open(width: i64, height: i64, title: std::sync::Arc<str>) -> Value {
 
 /// `gfx_submit(frame: Bytes) -> Bool`
 pub fn gfx_submit(frame: BytesBuf) -> Value {
-    if let Some(p) = dump_path() {
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) { let _ = f.write_all(&frame); }
-    }
+    dump_frame(&frame);
     let mut s = state().lock().unwrap();
     if s.sink.is_none() { s.events.push_back("refused\tnot open".to_string()); return Value::Bool(false); }
     match parse_frame(&frame) {
@@ -166,10 +187,8 @@ pub fn gfx_submit(frame: BytesBuf) -> Value {
                 return Value::Bool(false);
             }
             s.last_seq = Some(f.seq);
-            if !f.cmds.is_empty() {
-                let ev = s.sink.as_mut().and_then(|k| k.draw(&f));
-                if let Some(e) = ev { s.events.push_back(e); }
-            }
+            let ev = s.sink.as_mut().and_then(|k| k.accept(&f, &frame));
+            if let Some(e) = ev { s.events.push_back(e); }
             Value::Bool(true)
         }
     }
