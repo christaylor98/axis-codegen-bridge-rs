@@ -26,9 +26,10 @@ struct Win {
 }
 
 impl Sink for Win {
-    fn draw(&mut self, frame: &Frame) {
+    fn draw(&mut self, frame: &Frame) -> Option<String> {
         *self.slot.lock().unwrap() = Some(frame.clone());
         let _ = self.proxy.send_event(Wake::Frame);
+        None
     }
     fn size(&self) -> (u32, u32) { *self.size.lock().unwrap() }
     fn close(&mut self) { let _ = self.proxy.send_event(Wake::Close); }

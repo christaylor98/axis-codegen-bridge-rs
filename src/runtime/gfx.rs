@@ -17,6 +17,7 @@
 //! Environment: AXGFX_DUMP=<file> appends every submitted frame to the file (the frame-dump option; the file is truncated at gfx_open);
 //! AXGFX_NULL=1 makes gfx_open succeed without a window (a null renderer: the rules run, nothing is drawn; for tests and recording);
 //! AXGFX_DRAWLOG=<file> makes the null renderer log every frame it is asked to draw.
+//! AXGFX_NULL_ESCAPE_AFTER=<n> makes the null renderer report an Escape key press after its n-th frame.
 
 use super::value::{BytesBuf, Value};
 use std::collections::VecDeque;
@@ -81,19 +82,23 @@ pub fn parse_frame(b: &[u8]) -> Result<Frame, String> {
 
 /// What draws the frames. The null renderer draws nothing; the wgpu window (feature gfx-wgpu) draws the commands.
 pub trait Sink: Send {
-    fn draw(&mut self, frame: &Frame);
+    fn draw(&mut self, frame: &Frame) -> Option<String>;   // an event to report (the null renderer's Escape test), pushed by the caller: this runs under the state lock
     fn size(&self) -> (u32, u32);
     fn close(&mut self);
 }
 
-struct Null(u32, u32);
+struct Null(u32, u32, u32);
 
 impl Sink for Null {
     // AXGFX_DRAWLOG=<file>: one line per frame the null renderer was asked to draw ("draw<TAB>seq<TAB>commands"), so a test sees what was drawn
-    fn draw(&mut self, frame: &Frame) {
+    fn draw(&mut self, frame: &Frame) -> Option<String> {
+        // AXGFX_NULL_ESCAPE_AFTER=<n>: after the n-th frame the null renderer reports an Escape key press (the test of "Escape ends the run cleanly")
+        self.2 += 1;
+        let esc = std::env::var("AXGFX_NULL_ESCAPE_AFTER").ok().and_then(|v| v.parse::<u32>().ok()) == Some(self.2);
         if let Some(p) = std::env::var("AXGFX_DRAWLOG").ok().filter(|p| !p.is_empty()) {
             if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) { let _ = writeln!(f, "draw\t{}\t{}", frame.seq, frame.cmds.len()); }
         }
+        if esc { Some("key\tEscape".to_string()) } else { None }
     }
     fn size(&self) -> (u32, u32) { (self.0, self.1) }
     fn close(&mut self) {}
@@ -137,7 +142,7 @@ fn open_window(_w: u32, _h: u32, _title: &str) -> Option<Box<dyn Sink>> {
 pub fn gfx_open(width: i64, height: i64, title: std::sync::Arc<str>) -> Value {
     let (w, h) = (width.clamp(1, 16384) as u32, height.clamp(1, 16384) as u32);
     if let Some(p) = dump_path() { let _ = std::fs::write(p, b""); }
-    let sink: Option<Box<dyn Sink>> = if std::env::var("AXGFX_NULL").map_or(false, |v| v == "1") { Some(Box::new(Null(w, h))) } else { open_window(w, h, &title) };
+    let sink: Option<Box<dyn Sink>> = if std::env::var("AXGFX_NULL").map_or(false, |v| v == "1") { Some(Box::new(Null(w, h, 0))) } else { open_window(w, h, &title) };
     let mut s = state().lock().unwrap();
     s.last_seq = None;
     let ok = sink.is_some();
@@ -161,7 +166,10 @@ pub fn gfx_submit(frame: BytesBuf) -> Value {
                 return Value::Bool(false);
             }
             s.last_seq = Some(f.seq);
-            if !f.cmds.is_empty() { if let Some(k) = s.sink.as_mut() { k.draw(&f); } }
+            if !f.cmds.is_empty() {
+                let ev = s.sink.as_mut().and_then(|k| k.draw(&f));
+                if let Some(e) = ev { s.events.push_back(e); }
+            }
             Value::Bool(true)
         }
     }
