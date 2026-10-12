@@ -65,27 +65,39 @@ fn vertices(f: &Frame, w: f32, h: f32) -> ([f32; 4], Vec<f32>) {
     (clear, v)
 }
 
+/// The refresh period of the display the window is on (ms), 0.0 when the platform does not say (the monitor is only known once the window is mapped).
+fn monitor_refresh_ms(w: &winit::window::Window) -> f64 {
+    let m = w.current_monitor().or_else(|| w.primary_monitor()).or_else(|| w.available_monitors().next());
+    m.and_then(|m| m.refresh_rate_millihertz()).map(|mhz| 1_000_000.0 / mhz as f64).unwrap_or(0.0)
+}
+
 /// Present-to-present intervals (F22 acceptance 3: the frame interval AS PRESENTED, not the CPU time to build a frame). Once a second a line goes out as an event:
-/// "presented<TAB>frames N<TAB>interval p50 X ms<TAB>p99 Y ms<TAB>missed M" (missed = an interval over 25 ms).
+/// "presented<TAB>frames N<TAB>interval p50 X ms<TAB>p99 Y ms<TAB>missed M<TAB>refresh R ms<TAB>visible V" (missed = an interval over 1.5 refresh periods; visible 1 = the window was visible
+/// for the whole second: not occluded, and either reported visible by the platform or holding the keyboard focus, which a hidden window cannot).
 struct Presented {
     last: Option<std::time::Instant>,
     since: std::time::Instant,
     ms: Vec<f64>,
+    refresh_ms: f64,
+    vis_all: bool,
 }
 
 impl Presented {
-    fn new() -> Self { Presented { last: None, since: std::time::Instant::now(), ms: Vec::new() } }
-    fn presented(&mut self) {
+    fn new(refresh_ms: f64) -> Self { Presented { last: None, since: std::time::Instant::now(), ms: Vec::new(), refresh_ms, vis_all: true } }
+    fn presented(&mut self, visible: bool, refresh_now: f64) {
+        if self.refresh_ms <= 0.0 && refresh_now > 0.0 { self.refresh_ms = refresh_now; push_event(format!("refresh\t{:.2} ms", refresh_now)); }
         let now = std::time::Instant::now();
+        self.vis_all = self.vis_all && visible;
         if let Some(l) = self.last { self.ms.push(now.duration_since(l).as_secs_f64() * 1000.0); }
         self.last = Some(now);
         if now.duration_since(self.since).as_secs() >= 1 && !self.ms.is_empty() {
             let mut v = std::mem::take(&mut self.ms);
             v.sort_by(|a, b| a.partial_cmp(b).unwrap());
             let q = |p: f64| v[(((v.len() as f64) * p).ceil() as usize).clamp(1, v.len()) - 1];
-            let missed = v.iter().filter(|x| **x > 25.0).count();
-            push_event(format!("presented\tframes {}\tinterval p50 {:.1} ms\tp99 {:.1} ms\tmissed {}", v.len() + 1, q(0.5), q(0.99), missed));
+            let missed = v.iter().filter(|x| **x > 1.5 * self.refresh_ms).count();
+            push_event(format!("presented\tframes {}\tinterval p50 {:.1} ms\tp99 {:.1} ms\tmissed {}\trefresh {:.1} ms\tvisible {}", v.len() + 1, q(0.5), q(0.99), missed, self.refresh_ms, self.vis_all as u8));
             self.since = now;
+            self.vis_all = visible;
         }
     }
 }
@@ -171,7 +183,9 @@ pub fn open(w: u32, h: u32, title: &str) -> Result<Box<dyn Sink>, String> {
         winit::platform::x11::EventLoopBuilderExtX11::with_any_thread(&mut b, true);
         winit::platform::wayland::EventLoopBuilderExtWayland::with_any_thread(&mut b, true);
         let ev = match b.build() { Ok(e) => e, Err(e) => { let _ = tx.send(Err(format!("no display: {}", e))); return; } };
-        let window = match WindowBuilder::new().with_title(title2).with_inner_size(PhysicalSize::new(w, h)).build(&ev) {
+        // AXGFX_HIDDEN=1 (TEST ONLY, F22 acceptance 5): the window is created but never shown; unset changes nothing.
+        let hidden = std::env::var("AXGFX_HIDDEN").map(|v| v == "1").unwrap_or(false);
+        let window = match WindowBuilder::new().with_title(title2).with_inner_size(PhysicalSize::new(w, h)).with_visible(!hidden).build(&ev) {
             Ok(win) => Arc::new(win),
             Err(e) => { let _ = tx.send(Err(format!("window: {}", e))); return; }
         };
@@ -179,7 +193,12 @@ pub fn open(w: u32, h: u32, title: &str) -> Result<Box<dyn Sink>, String> {
         let _ = tx.send(Ok(ev.create_proxy()));
         let mut gpu = gpu;
         let mut last: Option<Frame> = None;
-        let mut pres = Presented::new();
+        let mut pres = Presented::new(0.0);
+        let mut occluded = false;
+        let mut minimized = false;
+        let mut focused = window.has_focus();
+        let mut vis_last = true;
+        let visible_now = |occ: bool, foc: bool, w: &winit::window::Window| !occ && (w.is_visible() == Some(true) || foc);
         let _ = ev.run(move |event, elwt| {
             elwt.set_control_flow(ControlFlow::Wait);
             match event {
@@ -187,10 +206,12 @@ pub fn open(w: u32, h: u32, title: &str) -> Result<Box<dyn Sink>, String> {
                 Event::UserEvent(Wake::Frame) => {
                     // take the frame first: the slot lock must not be held while rendering (presented() reports an event, which takes the state lock gfx_submit holds while it fills the slot)
                     let next = slot2.lock().unwrap().take();
-                    if let Some(f) = next { gpu.render(&f); pres.presented(); last = Some(f); }
+                    if let Some(f) = next { gpu.render(&f); pres.presented(visible_now(occluded, focused, &window), monitor_refresh_ms(&window)); last = Some(f); if hidden && !minimized { window.set_minimized(true); minimized = true; } }
                 }
                 Event::WindowEvent { event, .. } => match event {
                     WindowEvent::CloseRequested => push_event("close".to_string()),
+                    WindowEvent::Occluded(o) => { occluded = o; }
+                    WindowEvent::Focused(f) => { focused = f; }
                     WindowEvent::Resized(s) if s.width > 0 && s.height > 0 => {
                         gpu.config.width = s.width;
                         gpu.config.height = s.height;
@@ -207,6 +228,8 @@ pub fn open(w: u32, h: u32, title: &str) -> Result<Box<dyn Sink>, String> {
                 },
                 _ => {}
             }
+            let vis = visible_now(occluded, focused, &window);
+            if vis != vis_last { vis_last = vis; push_event(format!("visible\t{}", vis as u8)); }
         });
     });
     match rx.recv_timeout(std::time::Duration::from_secs(20)) {
