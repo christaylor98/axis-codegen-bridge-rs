@@ -324,67 +324,36 @@ It is kept for consistency. **Do not test this flag by looking for a
 rustc diagnostic** — it is a size-and-time flag and is silent when
 absent.
 
-## ORPHAN_IS_TOP_LEVEL_V1 — orphan scope is an edge, never a position
+## Core IR 0.6 — where a node runs is in the IR (axm-req-r179)
 
-Landed 2026-09-13 in `src/emit/rust_05.rs`, `src/core_ir_05/mod.rs`, and
-(doc only) `axis-lang-lab-working/src/lowering/nf_lowering.rs`. **Both
-axVerity trees link this crate**, so the rule is stated here too.
+Landed 2026-10-13 in `src/core_ir_05/mod.rs` and `src/emit/rust_05.rs`, with
+axis-lang-lab (spec: `core_ir_spec/axis-core-ir-0.6.md`). **Both axVerity
+trees and every axMachina repo link this crate**, so the rule is stated here.
 
-### The rule
+- **Blocks.** `CBlock` (tag 3, no fields) opens a block; `CEnd { value }`
+  (tag 4, value mandatory: pool Unit when nothing) closes the innermost one
+  and yields its value. `CIf` is unchanged from 0.5; its `then`/`else` are the
+  `CEnd`s of the two blocks directly before it (a one-armed if has
+  `else` = pool Unit). An arm block runs only when its `CIf` selects it; any
+  other block always runs.
+- **A node runs exactly where it was written**: when every block enclosing it
+  runs, in index order. Nothing moves a node, pure or not. A pure call written
+  above an `if` runs above it — the 0.5 bridges sank it into the arm that used
+  it; 0.6 does not, so a partial call that must be guarded is written inside
+  the branch.
+- **The bridge infers nothing.** Emission is one pass in index order
+  (`emit_blocks`). Deleted: the use-driven scope inference
+  (`compute_branch_paths`, BRANCH_SCOPING_V1, GUARDED_SHARED_PURE_V1,
+  ORPHAN_IS_TOP_LEVEL_V1's reading), EFFECT_ORDER_V1 and the r178 node-order
+  workaround. Do not reintroduce any of them: the IR now says where.
+- **The loader verifies** (`verify_blocks`, rules 1–5 of the spec: blocks
+  balance, arms sit directly before their `CIf`, an arm's `CEnd` belongs to one
+  `CIf` only, nothing reaches into an arm or a closed block) and **refuses Core
+  IR 0.5** with "recompile from source". There is no upgrade path.
 
-A node with **no consumer edge** — not `result`, not a `CCall` arg, not a
-`CIf`'s cond/then_/else_ — is **unconditional and top-level**: evaluated
-once, on every call, in node-index order. A node's index position
-relative to a `CIf` says nothing about branch membership.
-
-This is a **producer contract**. A producer that wants a discarded effect
-gated by a branch MUST give it a consumer edge inside that arm, by
-threading it through the arm's result with `seq(eff, result) -> result`.
-M1/AI3 does this in `nf_lowering.rs` `seq_scope_arm_effects`, called on
-both arms at `:495`/`:498`; `branch_scoping_tests` (5 tests, nested `if`
-included) is what holds branch effect scoping up. There is no emitter-side
-fallback and there cannot be one — see below.
-
-### The removed tripwire, and why it must not come back
-
-`compute_branch_paths` used to refuse to build when an orphan sat in the
-index window `(cond_anchor+1)..k` of a `CIf` whose `then_` was a bare pool
-ref. Its doc comment claimed the shape was "not reachable from M1 today".
-**It was reachable from ordinary AI3**, by writing a top-level discarded
-effect after the condition's binding:
-
-```
-let c = str_eq(Text("p"), Text("p"))
-let a = fs_write_text(Text("/tmp/x"), Text("1"))   // top-level, not in an arm
-let v = if c { Text("y") } else { Text("n") }
-```
-
-Two independent defects, both measured before removal:
-
-- **False positives.** Moving the `let a` above the `let c`, or making the
-  then-arm a call instead of a literal, compiled the identical program.
-  It was testing positional adjacency, not branch membership.
-- **False negatives.** Only `then_` was tested for being a bare pool ref.
-  `then_` pool + `else_` node was rejected; `then_` node + `else_` pool was
-  accepted — same ambiguity, opposite verdicts.
-
-It can't be repaired by narrowing. An arm-local orphan and a top-level
-orphan lower to **byte-identical** node sequences (cond, orphan, `CIf`),
-so no positional or structural signal separates them. Reachability is
-exactly the information an orphan lacks. Do not reintroduce a positional
-form of this check — the guarantee belongs in the producer, where the arm
-structure still exists.
-
-The check only ever *rejected*; it never altered codegen. Removing it is
-strictly build-permitting: every bundle that built before builds
-identically after, and only the reject set shrinks.
-
-`tests/cli_build_05_test.rs` carries the replacement —
-`test_orphan_before_unanchored_cif_runs_unconditionally_{then,else}_branch`
-build the once-refused shape end to end and assert the orphan effect fires
-exactly once with either arm taken. The real branch-scoping tests
-(`test_cif_then_taken_does_not_run_else_side_effect` and siblings) are
-unchanged and still pass.
+`tests/cli_build_05_test.rs` carries the effect-order tests, the spec's eight
+worked examples (`tests/fixtures/core_ir_06/`, compiled by the lab) and its
+mutants.
 
 ## Provider crates and dispatch files
 

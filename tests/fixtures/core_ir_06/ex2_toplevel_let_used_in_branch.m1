@@ -1,0 +1,10 @@
+// Core IR 0.6 worked example 2: `w` is a top-level let used only in a branch. It is in no block, so it runs
+// every call, before `_o`, although the branch that uses it is not taken: prints 5.
+fn main() -> Unit {
+  let p = tuple_field(mem_reserve_raw(Int(64)), Int(0))
+  let z = mem_read_int_raw(p, Int(0))
+  let w = mem_write_int_raw(p, Int(16), Int(5))
+  let _o = io_print(Text(""))
+  let _v = if int_lt(z, Int(0)) { w } else { io_print(Text("")) }
+  io_println(int_to_str(mem_read_int_raw(p, Int(16))))
+}

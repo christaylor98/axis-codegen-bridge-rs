@@ -236,7 +236,7 @@ fn cmd_build(args: &[String]) {
     }
 
     let bundle = match core_ir_05::load_core_bundle(input) {
-        Err(e) => { eprintln!("error: input is not a valid Core IR 0.5 bundle: {}", e); std::process::exit(1); }
+        Err(e) => { eprintln!("error: input is not a valid Core IR 0.6 bundle: {}", e); std::process::exit(1); }
         Ok(b) => b,
     };
     let fn_name = std::path::Path::new(input)

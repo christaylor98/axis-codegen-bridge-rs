@@ -1,4 +1,4 @@
-// EFFECT_ORDER_V1 (WORKAROUND r178): the two shapes the bridge tells apart by node order, in one file.
+// The two shapes the r178 workaround told apart by node order (EFFECT_ORDER_V1, now deleted), in one file.
 // Compiled by axis-lang-lab to two_shapes.coreir; see tests/cli_build_05_test.rs.
 fn main() -> Unit {
   let p = tuple_field(mem_reserve_raw(Int(64)), Int(0))

@@ -42,29 +42,20 @@ pub enum Node {
     /// operands that produces a Unit discharge token; used as a domination
     /// gate for irreversibility checking. No lowering emits this yet.
     CDeterminate,
+    /// Opens a block (Core IR 0.6). No fields.
+    CBlock,
+    /// Closes the innermost open block and yields its value (Core IR 0.6); the value is mandatory.
+    CEnd { value: NodeRef },
 }
 
-/// ORPHAN_IS_TOP_LEVEL_V1 — scope is carried by data-dependency edges and by
-/// nothing else.
+/// Core IR 0.6 (axis-lang-lab core_ir_spec/axis-core-ir-0.6.md): WHERE A NODE RUNS IS IN THE IR.
 ///
-/// A node with NO consumer edge (not `result`, not an argument of any `CCall`,
-/// not the cond/then_/else_ of any `CIf`) is **unconditional and top-level**:
-/// it is evaluated once, on every call, in node-index order relative to the
-/// other top-level nodes. A node's index position relative to a `CIf` says
-/// nothing about branch membership.
-///
-/// This is a PRODUCER CONTRACT, not merely emitter behaviour. A producer that
-/// wants a discarded side effect to be gated by a branch — `if c { let _ =
-/// eff(); v }` — MUST give it a consumer edge inside that arm, conventionally
-/// by threading it through the arm's result with `seq(eff, result) -> result`.
-/// An un-threaded orphan and a top-level orphan are byte-identical in this IR,
-/// so a consumer cannot recover the distinction and will correctly treat the
-/// effect as unconditional.
-///
-/// The M1/AI3 front end discharges this in `nf_lowering.rs`
-/// `seq_scope_arm_effects`. The emitter side is `compute_branch_paths` in
-/// `emit/rust_05.rs`, whose doc comment records why a positional guess at arm
-/// membership was tried here and removed.
+/// Nodes are in source order. `CBlock` ... `CEnd { value }` is a block. A block whose `CEnd` is a `CIf`'s
+/// `then`/`else` is an arm, written directly before its `CIf`, and runs only when that `CIf` selects it;
+/// every other block is plain grouping and always runs. A node runs exactly when every block enclosing it
+/// runs, in index order. Nothing moves a node: a backend reads the blocks and infers nothing (the 0.5 scope
+/// inference, EFFECT_ORDER_V1 and the r178 workaround are gone). `verify_blocks` holds a bundle to the
+/// rules at load.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CoreBundle {
     pub version: String,
@@ -163,6 +154,11 @@ pub fn serialize_canonical(bundle: &CoreBundle) -> Vec<u8> {
                 write_noderef(&mut buf, else_);
             }
             Node::CDeterminate => write_varint(&mut buf, 2),
+            Node::CBlock => write_varint(&mut buf, 3),
+            Node::CEnd { value } => {
+                write_varint(&mut buf, 4);
+                write_noderef(&mut buf, value);
+            }
         }
     }
     write_noderef(&mut buf, &bundle.result);
@@ -435,6 +431,170 @@ pub fn decode_bytes_payload(payload: &[u8]) -> Result<Vec<u8>, String> {
 
 pub const AXBI_MAGIC: [u8; 4] = *b"AXCI";
 
+/// The refusal of a Core IR 0.5 bundle (axis-core-ir-0.6.md, "0.5 bundles").
+pub const REFUSE_05: &str =
+    "Core IR 0.5 bundle: it does not record where its nodes run; recompile from source";
+
+// ── Core IR 0.6 block verifier ───────────────────────────────────────────────
+//
+// The same scope stack as axis-lang-lab `core_ir_05::verify_blocks` (rules 1-5 of the spec), so a bundle the
+// bridge emits has well-formed blocks whoever wrote it. Each refusal names the node.
+
+/// Which arm of a `CIf`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Arm {
+    Then,
+    Else,
+}
+
+/// The block structure of a bundle that passed the rules.
+#[derive(Debug, Clone)]
+pub struct Blocks {
+    /// The `CBlock` of the block each node sits in (`None`: top level). A block's own `CBlock` and `CEnd`
+    /// sit in the enclosing block.
+    pub home: Vec<Option<u32>>,
+    /// For a `CBlock`, its `CEnd`; for a `CEnd`, its `CBlock`.
+    pub partner: Vec<Option<u32>>,
+    /// For an arm's `CEnd`: the `CIf` that selects it, and which arm.
+    pub arm: Vec<Option<(u32, Arm)>>,
+}
+
+impl Blocks {
+    /// The arm a `CBlock` opens, if it is one.
+    pub fn arm_of_block(&self, block: u32) -> Option<(u32, Arm)> {
+        self.partner[block as usize].and_then(|end| self.arm[end as usize])
+    }
+}
+
+fn arm_name(a: Arm) -> &'static str {
+    match a {
+        Arm::Then => "then",
+        Arm::Else => "else",
+    }
+}
+
+/// The Core IR 0.6 block rules 1-5. `Err` is the refusal, naming the node.
+pub fn verify_blocks(bundle: &CoreBundle) -> Result<Blocks, String> {
+    let n = bundle.nodes.len();
+    let mut home: Vec<Option<u32>> = vec![None; n];
+    let mut partner: Vec<Option<u32>> = vec![None; n];
+    let mut arm: Vec<Option<(u32, Arm)>> = vec![None; n];
+    let mut stack: Vec<u32> = Vec::new();
+    let is_end = |j: u32| matches!(bundle.nodes.get(j as usize), Some(Node::CEnd { .. }));
+    for (i, node) in bundle.nodes.iter().enumerate() {
+        let k = i as u32;
+        home[i] = stack.last().copied();
+        match node {
+            Node::CBlock => stack.push(k),
+            Node::CEnd { .. } => {
+                let b = stack.pop().ok_or_else(|| format!("block rule 1: node {} is a CEnd with no open block", k))?;
+                partner[b as usize] = Some(k);
+                partner[i] = Some(b);
+                home[i] = stack.last().copied();
+            }
+            Node::CIf { then_, else_, .. } => {
+                for (r, which) in [(then_, Arm::Then), (else_, Arm::Else)] {
+                    if let NodeRef::Node(j) = *r {
+                        if is_end(j) {
+                            if let Some((k0, _)) = arm[j as usize] {
+                                return Err(format!(
+                                    "block rule 3: node {} closes an arm of if node {}, and if node {} references it too",
+                                    j, k0, k
+                                ));
+                            }
+                            arm[j as usize] = Some((k, which));
+                        }
+                    }
+                }
+                let unit_else = matches!(else_, NodeRef::Pool(p)
+                    if bundle.constant_pool.get(*p as usize).map_or(false, |e| e.def_hash == unit_type_hash()));
+                let ok = match (then_, else_) {
+                    (NodeRef::Node(t), NodeRef::Node(e)) if k >= 1 && *e == k - 1 && is_end(*e) => {
+                        let b = partner[*e as usize].expect("a closed block");
+                        b >= 1 && *t == b - 1 && is_end(*t)
+                    }
+                    (NodeRef::Node(t), _) if k >= 1 && *t == k - 1 && is_end(*t) => unit_else,
+                    _ => false,
+                };
+                if !ok {
+                    return Err(format!(
+                        "block rule 2: if node {}: its arms must be the blocks directly before it (else = the CEnd at \
+                         node {}, then = the CEnd just before that block; or one-armed: then = the CEnd at node {}, \
+                         else = pool Unit)",
+                        k, k.wrapping_sub(1), k.wrapping_sub(1)
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(&b) = stack.first() {
+        return Err(format!("block rule 1: the block opened at node {} is never closed", b));
+    }
+    let blocks = Blocks { home, partner, arm };
+    let mut open = vec![false; n];
+    let check = |open: &[bool], who: &str, used: &NodeRef| -> Result<(), String> {
+        let NodeRef::Node(j) = *used else { return Ok(()) };
+        match &bundle.nodes[j as usize] {
+            Node::CBlock => return Err(format!("block rule 5: {} references node {}, a CBlock", who, j)),
+            Node::CEnd { .. } => {
+                if let Some((k, _)) = blocks.arm[j as usize] {
+                    return Err(format!(
+                        "block rule 3: node {} closes an arm of if node {}, and {} references it too",
+                        j, k, who
+                    ));
+                }
+            }
+            _ => {}
+        }
+        let mut at = blocks.home[j as usize];
+        if at.map_or(true, |b| open[b as usize]) {
+            return Ok(());
+        }
+        let mut outermost = at.expect("not top level");
+        let mut in_arm: Option<(u32, Arm)> = None;
+        while let Some(b) = at {
+            if open[b as usize] {
+                break;
+            }
+            outermost = b;
+            if let Some(a) = blocks.arm_of_block(b) {
+                in_arm = Some(a);
+            }
+            at = blocks.home[b as usize];
+        }
+        Err(match in_arm {
+            Some((k, a)) => format!(
+                "block rule 4: {} uses node {}, which is inside the {} arm of if node {}",
+                who, j, arm_name(a), k
+            ),
+            None => format!(
+                "block rule 5: {} uses node {}, which is inside the closed block opened at node {}",
+                who, j, outermost
+            ),
+        })
+    };
+    for (u, node) in bundle.nodes.iter().enumerate() {
+        let who = format!("node {}", u);
+        match node {
+            Node::CBlock => open[u] = true,
+            Node::CEnd { value } => {
+                check(&open, &who, value)?;
+                open[blocks.partner[u].expect("a matched CEnd") as usize] = false;
+            }
+            Node::CCall { args, .. } => {
+                for a in args {
+                    check(&open, &who, a)?;
+                }
+            }
+            Node::CIf { cond, .. } => check(&open, &who, cond)?,
+            Node::CDeterminate => {}
+        }
+    }
+    check(&open, "the result", &bundle.result)?;
+    Ok(blocks)
+}
+
 struct CanonReader<'a> {
     b: &'a [u8],
     pos: usize,
@@ -499,7 +659,8 @@ impl<'a> CanonReader<'a> {
     }
 }
 
-/// The inverse of `serialize_canonical`. The version is not in the canonical bytes; the result is a 0.5 bundle.
+/// The inverse of `serialize_canonical`, then the 0.6 block rules (`verify_blocks`). The version is not in the
+/// canonical bytes; the result is a 0.6 bundle.
 pub fn deserialize_canonical(bytes: &[u8]) -> Result<CoreBundle, String> {
     let mut r = CanonReader { b: bytes, pos: 0 };
     let pool_count = r.varint()?;
@@ -532,6 +693,8 @@ pub fn deserialize_canonical(bytes: &[u8]) -> Result<CoreBundle, String> {
                 nodes.push(Node::CIf { cond, then_, else_ });
             }
             2 => nodes.push(Node::CDeterminate),
+            3 => nodes.push(Node::CBlock),
+            4 => nodes.push(Node::CEnd { value: r.noderef(i, pool_count)? }),
             k => return Err(format!("axbi: unknown node kind tag {}", k)),
         }
     }
@@ -539,14 +702,16 @@ pub fn deserialize_canonical(bytes: &[u8]) -> Result<CoreBundle, String> {
     if r.pos != bytes.len() {
         return Err(format!("axbi: {} trailing byte(s) after the result", bytes.len() - r.pos));
     }
-    Ok(CoreBundle { version: "0.5".to_string(), constant_pool, nodes, result })
+    let bundle = CoreBundle { version: "0.6".to_string(), constant_pool, nodes, result };
+    verify_blocks(&bundle).map_err(|e| format!("axbi: {}", e))?;
+    Ok(bundle)
 }
 
 /// A whole .coreir file: the 6-byte header (not part of the identity) and the canonical payload.
 pub fn serialize_axbi(bundle: &CoreBundle) -> Vec<u8> {
     let mut out = AXBI_MAGIC.to_vec();
     out.push(0);
-    out.push(5);
+    out.push(6);
     out.extend_from_slice(&serialize_canonical(bundle));
     out
 }
@@ -559,8 +724,11 @@ pub fn parse_axbi(bytes: &[u8]) -> Result<CoreBundle, String> {
     if !is_axbi(bytes) {
         return Err("axbi: bad magic (not AXCI)".to_string());
     }
-    if bytes.len() < 6 || bytes[4] != 0 || bytes[5] != 5 {
-        return Err(format!("axbi: unsupported IR version (this reader requires 0.5)"));
+    if bytes.len() >= 6 && bytes[4] == 0 && bytes[5] == 5 {
+        return Err(format!("axbi: {}", REFUSE_05));
+    }
+    if bytes.len() < 6 || bytes[4] != 0 || bytes[5] != 6 {
+        return Err(format!("axbi: unsupported IR version (this reader requires 0.6)"));
     }
     deserialize_canonical(&bytes[6..])
 }
@@ -571,7 +739,7 @@ mod axbi_tests {
 
     fn sample() -> CoreBundle {
         CoreBundle {
-            version: "0.5".to_string(),
+            version: "0.6".to_string(),
             constant_pool: vec![
                 ConstantPoolEntry { def_hash: param_type_hash(), payload: vec![0] },
                 ConstantPoolEntry { def_hash: text_type_hash(), payload: encode_text_payload("none") },
@@ -579,10 +747,14 @@ mod axbi_tests {
             ],
             nodes: vec![
                 Node::CCall { target_identity: [7u8; 32], args: vec![NodeRef::Pool(0), NodeRef::Pool(2)], target_name: "int_eq".to_string() },
-                Node::CIf { cond: NodeRef::Node(0), then_: NodeRef::Pool(1), else_: NodeRef::Pool(1) },
+                Node::CBlock,
+                Node::CEnd { value: NodeRef::Pool(1) },
+                Node::CBlock,
+                Node::CEnd { value: NodeRef::Pool(1) },
+                Node::CIf { cond: NodeRef::Node(0), then_: NodeRef::Node(2), else_: NodeRef::Node(4) },
                 Node::CDeterminate,
             ],
-            result: NodeRef::Node(1),
+            result: NodeRef::Node(5),
         }
     }
 
@@ -607,6 +779,14 @@ mod axbi_tests {
         let mut bad = good.clone();
         bad[5] = 4;
         assert!(parse_axbi(&bad).is_err());
+        // a 0.5 bundle: refused, recompile from source
+        let mut bad = good.clone();
+        bad[5] = 5;
+        assert!(parse_axbi(&bad).unwrap_err().ends_with("recompile from source"));
+        // a block rule broken: the result is inside an arm
+        let mut b = sample();
+        b.result = NodeRef::Node(2);
+        assert!(parse_axbi(&serialize_axbi(&b)).unwrap_err().contains("block rule 3"), "{:?}", parse_axbi(&serialize_axbi(&b)));
         // trailing bytes
         let mut bad = good.clone();
         bad.push(0);

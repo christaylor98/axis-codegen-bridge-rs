@@ -1,0 +1,12 @@
+// Core IR 0.6 worked example 5 (av_admit's shape): `body` is written at top level as an if whose then-arm
+// holds a call that can fail (int_div by n = 0). The call runs only when `got`; `body` itself runs where
+// written, and is used only in a later chain of ifs. Prints "empty" then "done", with no Defect.
+fn main() -> Unit {
+  let p = tuple_field(mem_reserve_raw(Int(64)), Int(0))
+  let n = mem_read_int_raw(p, Int(0))
+  let got = int_lt(Int(0), n)
+  let body = if got { int_to_str(int_div(Int(100), n)) } else { Text("") }
+  let empty = str_eq(body, Text(""))
+  let _r = if empty { io_println(Text("empty")) } else { io_println(body) }
+  io_println(Text("done"))
+}

@@ -161,7 +161,7 @@ fn test_05_build_ccall_int_add() {
 fn test_05_build_cif_node() {
     let dir = TempDir::new().unwrap();
     // pool[0]=Bool(true), pool[1]=Int(1), pool[2]=Int(0)
-    // node[0] = CIf(cond=pool[0], then=pool[1], else=pool[2])
+    // [ CEnd pool[1] ] [ CEnd pool[2] ] node[4] = CIf(cond=pool[0], then=node[1], else=node[3])
     let bundle = CoreBundle {
         version: "0.5".to_string(),
         constant_pool: vec![
@@ -169,12 +169,14 @@ fn test_05_build_cif_node() {
             ConstantPoolEntry { def_hash: int_type_hash(),  payload: encode_int_payload(1) },
             ConstantPoolEntry { def_hash: int_type_hash(),  payload: encode_int_payload(0) },
         ],
-        nodes: vec![Node::CIf {
-            cond:  NodeRef::Pool(0),
-            then_: NodeRef::Pool(1),
-            else_: NodeRef::Pool(2),
-        }],
-        result: NodeRef::Node(0),
+        nodes: vec![
+            Node::CBlock,
+            Node::CEnd { value: NodeRef::Pool(1) },
+            Node::CBlock,
+            Node::CEnd { value: NodeRef::Pool(2) },
+            Node::CIf { cond: NodeRef::Pool(0), then_: NodeRef::Node(1), else_: NodeRef::Node(3) },
+        ],
+        result: NodeRef::Node(4),
     };
     let fixture = write_05_bundle(&dir, "cif_fn.coreir", &bundle);
     let out = dir.path().join("cif_fn");
@@ -711,7 +713,7 @@ fn test_05_inspect() {
 
     assert!(output.status.success(), "inspect exited with error");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("0.5"), "version 0.5 not in inspect output:\n{}", stdout);
+    assert!(stdout.contains("0.6"), "version 0.6 not in inspect output:\n{}", stdout);
     assert!(stdout.contains("constant_pool"), "pool info not in output:\n{}", stdout);
 }
 
@@ -836,20 +838,21 @@ fn make_iftest_bundle(cond: bool) -> CoreBundle {
             ConstantPoolEntry { def_hash: bool_type_hash(), payload: encode_bool_payload(true) },
         ],
         nodes: vec![
-            // node[0]: side_effect() — §5b call into the linked bundle above.
+            // then-arm: [ CEnd pool[1] (true) ]
+            Node::CBlock,
+            Node::CEnd { value: NodeRef::Pool(1) },
+            // else-arm: [ node[3] = side_effect() — §5b call into the linked bundle above; CEnd node[3] ]
+            Node::CBlock,
             Node::CCall {
                 target_identity: sha256_bytes(b"side_effect"),
                 target_name: "side_effect".to_string(),
                 args: vec![],
             },
-            // node[1]: if pool[0] { pool[1] (true) } else { node[0] }
-            Node::CIf {
-                cond:  NodeRef::Pool(0),
-                then_: NodeRef::Pool(1),
-                else_: NodeRef::Node(0),
-            },
+            Node::CEnd { value: NodeRef::Node(3) },
+            // node[5]: if pool[0] then node[1] else node[4]
+            Node::CIf { cond: NodeRef::Pool(0), then_: NodeRef::Node(1), else_: NodeRef::Node(4) },
         ],
-        result: NodeRef::Node(1),
+        result: NodeRef::Node(5),
     }
 }
 
@@ -876,27 +879,17 @@ fn build_iftest_exe(dir: &TempDir, cond: bool, stem: &str) -> std::path::PathBuf
     out
 }
 
-// ── ORPHAN_IS_TOP_LEVEL_V1 ───────────────────────────────────────────────────
+// ── An orphan in no block (Core IR 0.6) ──────────────────────────────────────
 //
-// A node with no data-dependency consumer is unconditional and top-level:
-// evaluated once, on every call, in node-index order. Its position relative to
-// a `CIf` means nothing — scope is carried by consumer edges and by nothing
-// else (see `CoreBundle`'s docs and `compute_branch_paths` in emit/rust_05.rs).
-//
-// This is the shape a positional tripwire used to refuse: an orphan sitting
-// between the `CIf`'s cond anchor and the `CIf`, whose `then_` is a bare pool
-// ref. Ordinary AI3 emits it for a top-level discarded effect written after
-// the condition's binding — `let c = ...; let a = eff(); let v = if c {...}`.
-// The check was unsound in both directions (a statement reorder made the same
-// program pass, and the mirror `then_`-node/`else_`-pool shape was never
-// tested at all), so it was removed. These tests pin what must hold instead:
-// the orphan effect fires EXACTLY ONCE, in BOTH branches, and in program order
-// ahead of the `CIf`'s own effects.
+// A node with no consumer, written outside any block, runs once on every call in
+// node-index order (Core IR 0.6: a node runs when every block around it runs, and
+// this one is in none). Ordinary AI3 emits it for a top-level discarded effect
+// written after the condition's binding — `let c = ...; let a = eff(); let v = if
+// c {...}`. These tests pin it: the orphan effect fires EXACTLY ONCE, in BOTH
+// branches, and in program order ahead of the `CIf`.
 
-/// `fn(cond) -> Bool { let _ = fs_append_text(log, "orphan\n"); if !cond { true } else { false } }`
-/// laid out so the orphan lands in the window the old tripwire scanned:
-/// node[0] is the `CIf`'s cond anchor, node[1] is the orphan, node[2] is the
-/// `CIf` — whose `then_`/`else_` are both bare pool refs.
+/// `fn(cond) -> Bool { let _ = fs_append_text(log, "orphan\n"); if !cond { true } else { false } }`:
+/// node[0] is the `CIf`'s cond, node[1] is the orphan, then the two arm blocks and the `CIf`.
 fn make_orphan_before_cif_bundle(log_path: &str, cond: bool) -> CoreBundle {
     CoreBundle {
         version: "0.5".to_string(),
@@ -920,15 +913,14 @@ fn make_orphan_before_cif_bundle(log_path: &str, cond: bool) -> CoreBundle {
                 target_name: "fs_append_text".to_string(),
                 args: vec![NodeRef::Pool(1), NodeRef::Pool(2)],
             },
-            // node[2]: if node[0] { pool[3] } else { pool[4] } — both arms bare
-            // pool refs, so there is no anchor pinning a then/else boundary.
-            Node::CIf {
-                cond:  NodeRef::Node(0),
-                then_: NodeRef::Pool(3),
-                else_: NodeRef::Pool(4),
-            },
+            // [ CEnd pool[3] ] [ CEnd pool[4] ] node[6]: if node[0] then node[3] else node[5]
+            Node::CBlock,
+            Node::CEnd { value: NodeRef::Pool(3) },
+            Node::CBlock,
+            Node::CEnd { value: NodeRef::Pool(4) },
+            Node::CIf { cond: NodeRef::Node(0), then_: NodeRef::Node(3), else_: NodeRef::Node(5) },
         ],
-        result: NodeRef::Node(2),
+        result: NodeRef::Node(6),
     }
 }
 
@@ -1277,17 +1269,16 @@ fn test_no_flag_build_glue_unchanged() {
     );
 }
 
-// ── GUARDED_SHARED_PURE_V1: a pure node shared by two guards runs only under a guard ──────────────────────
+// ── A pure node written in two arms runs only in them ─────────────────────────────────────────────────────
 //
-// Node interning makes the same pure expression one node wherever it appears. Used inside two different
-// `if`s, its scopes share no arm, and the old common-prefix rule hoisted it to the unconditional top level:
-// a partial operation (here `str_char_code` past the end of the string) then crashed on exactly the path
-// both guards ruled out. Each guarded scope now gets its own copy, so it only runs where a guard allows.
+// Once GUARDED_SHARED_PURE_V1: node interning made the same pure expression one node wherever it appeared,
+// so a partial operation (here `str_char_code` past the end of the string) used inside two `if`s was one
+// node the bridge had to guard by inference. In Core IR 0.6 the compiler never shares a node across blocks,
+// so each arm writes its own, in its own block, and it runs only there.
 //
-//   node0 = str_char_code("ab", 5)             -- a Defect if it ever runs
-//   node1 = if false { node0 } else { 0 }
-//   node2 = if true  { 0 } else { node0 }
-//   node3 = int_add(node1, node2)              -- 0, and node0 never runs
+//   [ node1 = str_char_code("ab", 5); CEnd ] [ CEnd 0 ] node5 = if false ..   -- a Defect if it ever runs
+//   [ CEnd 0 ] [ node9 = str_char_code("ab", 5); CEnd ] node11 = if true ..
+//   node12 = int_add(node5, node11)             -- 0, and neither str_char_code runs
 #[test]
 fn test_pure_node_shared_by_two_guards_is_not_hoisted() {
     let dir = TempDir::new().unwrap();
@@ -1303,25 +1294,30 @@ fn test_pure_node_shared_by_two_guards_is_not_hoisted() {
             ConstantPoolEntry { def_hash: bool_type_hash(), payload: encode_bool_payload(true) },
             ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(0) },
         ],
-        nodes: vec![
-            Node::CCall {
+        nodes: {
+            let scc = || Node::CCall {
                 target_identity: sha256_bytes(b"str_char_code"),
                 target_name: "str_char_code".to_string(),
                 args: vec![NodeRef::Pool(0), NodeRef::Pool(1)],
-            },
-            Node::CIf { cond: NodeRef::Pool(2), then_: NodeRef::Node(0), else_: NodeRef::Pool(4) },
-            Node::CIf { cond: NodeRef::Pool(3), then_: NodeRef::Pool(4), else_: NodeRef::Node(0) },
-            Node::CCall {
-                target_identity: sha256_bytes(b"int_add"),
-                target_name: "int_add".to_string(),
-                args: vec![NodeRef::Node(1), NodeRef::Node(2)],
-            },
-        ],
-        result: NodeRef::Node(3),
+            };
+            vec![
+                Node::CBlock, scc(), Node::CEnd { value: NodeRef::Node(1) },
+                Node::CBlock, Node::CEnd { value: NodeRef::Pool(4) },
+                Node::CIf { cond: NodeRef::Pool(2), then_: NodeRef::Node(2), else_: NodeRef::Node(4) },
+                Node::CBlock, Node::CEnd { value: NodeRef::Pool(4) },
+                Node::CBlock, scc(), Node::CEnd { value: NodeRef::Node(9) },
+                Node::CIf { cond: NodeRef::Pool(3), then_: NodeRef::Node(7), else_: NodeRef::Node(10) },
+                Node::CCall {
+                    target_identity: sha256_bytes(b"int_add"),
+                    target_name: "int_add".to_string(),
+                    args: vec![NodeRef::Node(5), NodeRef::Node(11)],
+                },
+            ]
+        },
+        result: NodeRef::Node(12),
     };
     let fixture = write_05_bundle(&dir, "shared_guard.coreir", &bundle);
-    // Only a node the registry declares pure + deterministic may be copied into several scopes; without
-    // a --reg it counts as effectful and keeps the single common-prefix scope (EFFECT_ORDER_V1).
+    // The registry declares str_char_code pure: a panic in it would be a Defect (exit 4), not an Unknown.
     let reg = dir.path().join("pure.axreg");
     let ident: String = sha256_bytes(b"str_char_code").iter().map(|b| format!("{:02x}", b)).collect();
     std::fs::write(&reg, format!(
@@ -1334,12 +1330,12 @@ fn test_pure_node_shared_by_two_guards_is_not_hoisted() {
                "--reg", reg.to_str().unwrap()])
         .status()
         .expect("bridge failed to run");
-    assert!(status.success(), "a pure node shared by two CIf arms is a legal bundle and must build");
+    assert!(status.success(), "a pure node written in two CIf arms is a legal bundle and must build");
     let run = Command::new(&out).output().expect("failed to run exe");
     assert_eq!(
         run.status.code(),
         Some(0),
-        "GUARDED_SHARED_PURE regression: the guarded str_char_code ran unguarded; stderr: {}",
+        "the str_char_code written in an arm ran although its arm was not taken; stderr: {}",
         String::from_utf8_lossy(&run.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "0");
@@ -1420,13 +1416,12 @@ fn test_build_cache_tracks_provider_crate_submodule() {
     assert_eq!(run_stdout(&exe), "63", "cache missed the edited provider sub-module");
 }
 
-// ── EFFECT_ORDER_V1: an effect moved out of its `if` keeps its condition ─────
+// ── Core IR 0.6: every node runs where it was written ───────────────────────────────────────────────────
 //
-// WORKAROUND (r178, replaced by r179). An effect consumed only inside an arm, with a later effect at an outer
-// scope between it and its `if`, has to run before that later effect. It used to be moved out of the arm with
-// no condition at all, so an arm's write ran whichever way the `if` went. Now, by node order (= source order):
-// an effect after its `if`'s condition was written in that branch and keeps the condition; an effect before
-// it ran before the `if` was decided (a top-level `let` only a branch uses) and stays unconditional.
+// Where a node runs is in the IR (axis-lang-lab core_ir_spec/axis-core-ir-0.6.md): an `if`'s arms are blocks,
+// `CBlock` .. `CEnd { value }`, written directly before the `CIf`, and a node runs exactly when every block around
+// it runs. The bridge emits the blocks as they are and infers nothing. These are the effect-order tests of
+// EFFECT_ORDER_V1 and the r178 workaround (both deleted), the spec's eight worked examples, and its mutants.
 
 fn eo_int(v: i64) -> ConstantPoolEntry {
     ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(v) }
@@ -1443,12 +1438,43 @@ fn eo_text(s: &str) -> ConstantPoolEntry {
     }
 }
 
-fn eo_call(name: &str, args: Vec<NodeRef>) -> Node {
-    Node::CCall { target_identity: sha256_bytes(name.as_bytes()), target_name: name.to_string(), args }
+/// A bundle written in source order, the way the lab lowers it.
+struct Eo {
+    pool: Vec<ConstantPoolEntry>,
+    nodes: Vec<Node>,
 }
 
-fn eo_if(cond: NodeRef, then_: NodeRef, else_: NodeRef) -> Node {
-    Node::CIf { cond, then_, else_ }
+impl Eo {
+    fn new(pool: Vec<ConstantPoolEntry>) -> Eo {
+        Eo { pool, nodes: Vec::new() }
+    }
+
+    fn push(&mut self, n: Node) -> NodeRef {
+        self.nodes.push(n);
+        NodeRef::Node(self.nodes.len() as u32 - 1)
+    }
+
+    fn call(&mut self, name: &str, args: Vec<NodeRef>) -> NodeRef {
+        self.push(Node::CCall { target_identity: sha256_bytes(name.as_bytes()), target_name: name.to_string(), args })
+    }
+
+    /// One block: CBlock, whatever `body` writes, CEnd { the value it returns }.
+    fn block(&mut self, body: impl FnOnce(&mut Eo) -> NodeRef) -> NodeRef {
+        self.push(Node::CBlock);
+        let v = body(self);
+        self.push(Node::CEnd { value: v })
+    }
+
+    /// `if cond { then } else { else }`: two arm blocks, then the CIf.
+    fn if_(&mut self, cond: NodeRef, then_: impl FnOnce(&mut Eo) -> NodeRef, else_: impl FnOnce(&mut Eo) -> NodeRef) -> NodeRef {
+        let t = self.block(then_);
+        let e = self.block(else_);
+        self.push(Node::CIf { cond, then_: t, else_: e })
+    }
+
+    fn bundle(self, result: NodeRef) -> CoreBundle {
+        CoreBundle { version: "0.6".to_string(), constant_pool: self.pool, nodes: self.nodes, result }
+    }
 }
 
 const EO_PURE: &[&str] = &["tuple_field", "int_eq", "int_lt", "int_div", "int_to_str", "str_eq", "str_concat"];
@@ -1492,15 +1518,23 @@ fn eo_fixture(name: &str) -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/effect_order").join(name)
 }
 
+fn ex_fixture(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/core_ir_06").join(name)
+}
+
+/// The generated Rust carries none of the inference's machinery.
+fn assert_no_inference(generated: &str) {
+    assert!(!generated.contains("_g: Option<Value>") && !generated.contains("EFFECT_ORDER"), "{generated}");
+}
+
 #[test]
 fn test_effect_order_two_shapes_from_one_source_file() {
     // tests/fixtures/effect_order/two_shapes.m1, compiled by the lab. Shape 1 (written in a branch whose
-    // condition is false) must not write slot 8; shape 2 (a top-level let only a branch uses, condition false)
-    // must write slot 16 -- both are moved ahead of a later outer effect.
+    // condition is false) does not write slot 8; shape 2 (a top-level let only a branch uses, condition false)
+    // writes slot 16 -- each where it was written.
     let (out, generated) = eo_run_file(&eo_fixture("two_shapes.coreir"), &[], EO_PURE).unwrap();
-    assert_eq!(out, "0\n5", "slot 8 (guarded write), slot 16 (unconditional write)");
-    assert!(generated.contains("let node_6_g: Option<Value>"), "shape 1's write must be guarded:\n{generated}");
-    assert!(!generated.contains("node_16_g"), "shape 2's write must stay unconditional:\n{generated}");
+    assert_eq!(out, "0\n5", "slot 8 (written in a branch not taken), slot 16 (a top-level let)");
+    assert_no_inference(&generated);
 }
 
 #[test]
@@ -1512,168 +1546,136 @@ fn test_effect_order_gr_cf_run_cursor_get_before_close() {
     }
 }
 
-/// The lab's lowering of
+/// nested_if_effect_hoist (worked example 1), as the lab lowers it:
 ///   let p = tuple_field(mem_reserve_raw(64), 0); let z = mem_read_int_raw(p, 0)
 ///   let f = int_eq(z, 0); let g = int_eq(z, 1); let h = int_lt(z, 5)
 ///   let _x = if <c1> { mem_write_int_raw(p, 8, 1) } else { if <c2> { io_print("") } else { io_print("") } }
 ///   let _y = if <c2> { io_print("") } else { io_print("") }
 ///   io_println(int_to_str(mem_read_int_raw(p, 8)))
-/// with `c1 = bool_and(f, g)`, `c2 = bool_and(f, h)` (each an `if`; c2 is one node shared by `_x` and `_y`),
-/// or -- the control -- `c1 = g`, `c2 = h`. z is 0, so g is false and the write must not run: prints 0.
+/// with `c1 = bool_and(f, g)`, `c2 = bool_and(f, h)` (each an `if`; _y's c2 is its own node -- the one in _x's
+/// else-arm is in a closed block), or -- the control -- `c1 = g`, `c2 = h`. z is 0, so g is false: prints 0.
 fn eo_repro(bool_and: bool) -> CoreBundle {
-    let n = NodeRef::Node;
     let p = NodeRef::Pool;
-    let mut nodes = vec![
-        eo_call("mem_reserve_raw", vec![p(0)]),
-        eo_call("tuple_field", vec![n(0), p(1)]),
-        eo_call("mem_read_int_raw", vec![n(1), p(1)]),
-        eo_call("int_eq", vec![n(2), p(1)]), // 3: f
-        eo_call("int_eq", vec![n(2), p(2)]), // 4: g
-        eo_call("int_lt", vec![n(2), p(3)]), // 5: h
-    ];
-    let (c1, c2) = if bool_and {
-        nodes.push(eo_if(n(3), n(4), p(4))); // 6: bool_and(f, g)
-        (6, 8)
-    } else {
-        (4, 5)
+    let mut e = Eo::new(vec![eo_int(64), eo_int(0), eo_int(1), eo_int(5), eo_bool(false), eo_int(8), eo_text("")]);
+    let r = e.call("mem_reserve_raw", vec![p(0)]);
+    let ptr = e.call("tuple_field", vec![r, p(1)]);
+    let z = e.call("mem_read_int_raw", vec![ptr.clone(), p(1)]);
+    let f = e.call("int_eq", vec![z.clone(), p(1)]);
+    let g = e.call("int_eq", vec![z.clone(), p(2)]);
+    let h = e.call("int_lt", vec![z, p(3)]);
+    let and = |e: &mut Eo, a: NodeRef, b: NodeRef| -> NodeRef {
+        if bool_and { e.if_(a, |_| b, |_| p(4)) } else { b }
     };
-    let w = nodes.len() as u32;
-    nodes.push(eo_call("mem_write_int_raw", vec![n(1), p(5), p(2)]));
-    if bool_and {
-        nodes.push(eo_if(n(3), n(5), p(4))); // 8: bool_and(f, h)
-    }
-    let k = nodes.len() as u32;
-    nodes.push(eo_call("io_print", vec![p(6)]));
-    nodes.push(eo_call("io_print", vec![p(6)]));
-    nodes.push(eo_if(n(c2), n(k), n(k + 1)));
-    nodes.push(eo_if(n(c1), n(w), n(k + 2)));
-    let k = nodes.len() as u32;
-    nodes.push(eo_call("io_print", vec![p(6)]));
-    nodes.push(eo_call("io_print", vec![p(6)]));
-    nodes.push(eo_if(n(c2), n(k), n(k + 1)));
-    let r = nodes.len() as u32;
-    nodes.push(eo_call("mem_read_int_raw", vec![n(1), p(5)]));
-    nodes.push(eo_call("int_to_str", vec![n(r)]));
-    nodes.push(eo_call("io_println", vec![n(r + 1)]));
-    CoreBundle {
-        version: "0.5".to_string(),
-        constant_pool: vec![eo_int(64), eo_int(0), eo_int(1), eo_int(5), eo_bool(false), eo_int(8), eo_text("")],
-        nodes,
-        result: NodeRef::Node(r + 2),
-    }
+    let c1 = and(&mut e, f.clone(), g);
+    let (ptr2, f2, h2) = (ptr.clone(), f.clone(), h.clone());
+    e.if_(
+        c1,
+        |e| e.call("mem_write_int_raw", vec![ptr2, p(5), p(2)]),
+        |e| {
+            let c2 = and(e, f2, h2);
+            e.if_(c2, |e| e.call("io_print", vec![p(6)]), |e| e.call("io_print", vec![p(6)]))
+        },
+    );
+    let c2 = and(&mut e, f, h);
+    e.if_(c2, |e| e.call("io_print", vec![p(6)]), |e| e.call("io_print", vec![p(6)]));
+    let rd = e.call("mem_read_int_raw", vec![ptr, p(5)]);
+    let s = e.call("int_to_str", vec![rd]);
+    let out = e.call("io_println", vec![s]);
+    e.bundle(out)
 }
 
 #[test]
 fn test_effect_order_nested_if_effect_hoist_repro_prints_0() {
-    // with the registry: the bool_and ifs are pure, so they are no effect to keep in order and nothing moves
-    // (EFFECT_ORDER_V1 part 2) -- no guarded wrapper is emitted at all
     for (name, bool_and) in [("eo_repro", true), ("eo_control", false)] {
         let (out, generated) = eo_run(name, &eo_repro(bool_and), EO_PURE).unwrap();
         assert_eq!(out, "0", "{name}");
         assert!(generated.contains("mem_write_int_raw"), "{name}: generated source not found");
-        assert!(!generated.contains("_g: Option<Value>"), "{name}: a write moved out of its if:\n{generated}");
+        assert_no_inference(&generated);
     }
 }
 
 #[test]
 fn test_effect_order_nested_if_effect_hoist_repro_moved_write_keeps_its_condition() {
-    // without the registry every call is an effect, so the then-arm write really must move ahead of the
-    // shared `if` -- and must still not run, since its condition is false
+    // without the registry every call counts as an effect -- which no longer changes where anything runs
     assert_eq!(eo_run("eo_repro_moved", &eo_repro(true), &[]).unwrap().0, "0");
     assert_eq!(eo_run("eo_control_moved", &eo_repro(false), &[]).unwrap().0, "0");
 }
 
-/// `if c { mem_write_int_raw(p, 8, int_div(7, x)) } else { j }` with `c = int_eq(x, 1)`, where `j` is
-/// `bool_and(true, h)` over `h = mem_write_int_raw(p, 8, 9)` (a let bound earlier, so it lands in j's arm): one
-/// shared `if`, used again after the outer `if` -- the shape the lab produces when the same `bool_and` appears
-/// in a branch and after it. j sits between the write and its `if`, so the write must run there, after h
-/// (h comes first in program order): slot 8 ends 7 when c holds; when it doesn't, neither the write nor its
-/// input `int_div(7, x)` -- which divides by zero for x = 0 -- runs, and slot 8 ends 9.
+/// `let h = mem_write_int_raw(p, 8, 9); if c { mem_write_int_raw(p, 8, int_div(7, x)) } else { bool_and(true, h) }`
+/// with `c = int_eq(x, 1)`: the write and its input `int_div(7, x)` -- which divides by zero for x = 0 -- are in
+/// the then-arm and run only when c holds. h is a top-level let and always runs first: slot 8 ends 7 when c holds,
+/// 9 when it doesn't.
 fn eo_moved_write(x: i64) -> CoreBundle {
-    let n = NodeRef::Node;
     let p = NodeRef::Pool;
-    CoreBundle {
-        version: "0.5".to_string(),
-        constant_pool: vec![eo_int(64), eo_int(0), eo_int(1), eo_int(7), eo_int(x), eo_int(8), eo_bool(true), eo_int(9)],
-        nodes: vec![
-            eo_call("mem_reserve_raw", vec![p(0)]),
-            eo_call("tuple_field", vec![n(0), p(1)]),
-            eo_call("int_eq", vec![p(4), p(2)]),                 // 2: c
-            eo_call("mem_write_int_raw", vec![n(1), p(5), p(7)]), // 3: h
-            eo_call("int_div", vec![p(3), p(4)]),                // 4
-            eo_call("mem_write_int_raw", vec![n(1), p(5), n(4)]), // 5: the write, in 7's then-arm
-            eo_if(p(6), n(3), p(1)),                             // 6: j, shared
-            eo_if(n(2), n(5), n(6)),                             // 7
-            eo_call("mem_read_int_raw", vec![n(1), p(5)]),
-            eo_call("int_to_str", vec![n(8)]),
-            eo_call("io_println", vec![n(9)]),
-            eo_call("seq", vec![n(6), n(10)]),                  // 11: j's use after the outer `if`
-        ],
-        result: NodeRef::Node(11),
-    }
+    let mut e = Eo::new(vec![eo_int(64), eo_int(0), eo_int(1), eo_int(7), eo_int(x), eo_int(8), eo_bool(true), eo_int(9)]);
+    let r = e.call("mem_reserve_raw", vec![p(0)]);
+    let ptr = e.call("tuple_field", vec![r, p(1)]);
+    let c = e.call("int_eq", vec![p(4), p(2)]);
+    let h = e.call("mem_write_int_raw", vec![ptr.clone(), p(5), p(7)]);
+    let ptr2 = ptr.clone();
+    let k = e.if_(
+        c,
+        |e| {
+            let d = e.call("int_div", vec![p(3), p(4)]);
+            e.call("mem_write_int_raw", vec![ptr2, p(5), d])
+        },
+        |e| e.if_(p(6), |_| h, |_| p(1)),
+    );
+    let rd = e.call("mem_read_int_raw", vec![ptr, p(5)]);
+    let s = e.call("int_to_str", vec![rd]);
+    let out = e.call("io_println", vec![s]);
+    let r = e.call("seq", vec![k, out]);
+    e.bundle(r)
 }
 
 #[test]
 fn test_effect_order_moved_write_runs_only_when_its_condition_holds() {
     let (out, generated) = eo_run("eo_moved_t", &eo_moved_write(1), EO_PURE).unwrap();
-    assert_eq!(out, "7", "condition true: the write runs, after h and before the shared if");
-    assert!(generated.contains("let node_5_g: Option<Value>"), "{generated}");
+    assert_eq!(out, "7", "condition true: the write runs, after h");
+    assert_no_inference(&generated);
     assert_eq!(eo_run("eo_moved_f", &eo_moved_write(0), EO_PURE).unwrap().0, "9",
                "condition false: neither the write nor its input runs");
 }
 
 #[test]
 fn test_effect_order_toplevel_let_with_an_outer_effect_between_stays_unconditional() {
-    // `let w = mem_write_int_raw(p, 8, 7); io_println(read(p, 8)); if c { w } else { 0 }` with c = false and
-    // computed BEFORE the write: c's position alone would say "written in the branch", but the println
-    // between w and the `if` is an effect the lab created outside the `if` -- so w is a top-level let and
-    // runs, before the println.
-    let n = NodeRef::Node;
+    // `let c = false; let w = mem_write_int_raw(p, 8, 7); io_println(read(p, 8)); if c { w } else { 0 }`:
+    // w is a top-level let, in no block, and runs where it was written, before the println.
     let p = NodeRef::Pool;
-    let b = CoreBundle {
-        version: "0.5".to_string(),
-        constant_pool: vec![eo_int(64), eo_int(0), eo_int(1), eo_int(7), eo_int(8)],
-        nodes: vec![
-            eo_call("mem_reserve_raw", vec![p(0)]),
-            eo_call("tuple_field", vec![n(0), p(1)]),
-            eo_call("int_eq", vec![p(1), p(2)]),                 // 2: c (false)
-            eo_call("mem_write_int_raw", vec![n(1), p(4), p(3)]), // 3: w
-            eo_call("mem_read_int_raw", vec![n(1), p(4)]),
-            eo_call("int_to_str", vec![n(4)]),
-            eo_call("io_println", vec![n(5)]),                   // 6
-            eo_if(n(2), n(3), p(1)),
-        ],
-        result: NodeRef::Node(6),
-    };
-    let (out, generated) = eo_run("eo_toplevel", &b, EO_PURE).unwrap();
+    let mut e = Eo::new(vec![eo_int(64), eo_int(0), eo_int(1), eo_int(7), eo_int(8)]);
+    let r = e.call("mem_reserve_raw", vec![p(0)]);
+    let ptr = e.call("tuple_field", vec![r, p(1)]);
+    let c = e.call("int_eq", vec![p(1), p(2)]);
+    let w = e.call("mem_write_int_raw", vec![ptr.clone(), p(4), p(3)]);
+    let rd = e.call("mem_read_int_raw", vec![ptr, p(4)]);
+    let s = e.call("int_to_str", vec![rd]);
+    let out = e.call("io_println", vec![s]);
+    let k = e.if_(c, |_| w, |_| p(1));
+    let res = e.call("seq", vec![k, out]);
+    let (out, generated) = eo_run("eo_toplevel", &e.bundle(res), EO_PURE).unwrap();
     assert_eq!(out, "7");
-    assert!(!generated.contains("_g: Option<Value>"), "{generated}");
+    assert_no_inference(&generated);
 }
 
-/// Two levels: the write sits in the then-arm of `if c2` which sits in the else-arm of `if c1`; it runs only
-/// when !c1 && c2. A shared `if` over an earlier write of 9 to the same slot -- the inner `if`'s else-arm, and used
-/// again after the outer one -- sits between it and both `if`s.
+/// Two levels: the write is in the then-arm of `if c2`, which is in the else-arm of `if c1`: it runs only when
+/// !c1 && c2. An earlier top-level write of 9 to the same slot sits in the inner else-arm's `bool_and`.
 fn eo_moved_two_levels(c1: bool, c2: bool) -> CoreBundle {
-    let n = NodeRef::Node;
     let p = NodeRef::Pool;
-    CoreBundle {
-        version: "0.5".to_string(),
-        constant_pool: vec![eo_int(64), eo_int(0), eo_int(7), eo_int(8), eo_bool(c1), eo_bool(c2), eo_bool(true), eo_int(9)],
-        nodes: vec![
-            eo_call("mem_reserve_raw", vec![p(0)]),
-            eo_call("tuple_field", vec![n(0), p(1)]),
-            eo_call("mem_write_int_raw", vec![n(1), p(3), p(7)]), // 2: h
-            eo_call("mem_write_int_raw", vec![n(1), p(3), p(2)]), // 3
-            eo_if(p(6), n(2), p(1)),                             // 4: j
-            eo_if(p(5), n(3), n(4)),                             // 5
-            eo_if(p(4), p(1), n(5)),                             // 6
-            eo_call("mem_read_int_raw", vec![n(1), p(3)]),
-            eo_call("int_to_str", vec![n(7)]),
-            eo_call("io_println", vec![n(8)]),
-            eo_call("seq", vec![n(4), n(9)]),
-        ],
-        result: NodeRef::Node(10),
-    }
+    let mut e = Eo::new(vec![eo_int(64), eo_int(0), eo_int(7), eo_int(8), eo_bool(c1), eo_bool(c2), eo_bool(true), eo_int(9)]);
+    let r = e.call("mem_reserve_raw", vec![p(0)]);
+    let ptr = e.call("tuple_field", vec![r, p(1)]);
+    let h = e.call("mem_write_int_raw", vec![ptr.clone(), p(3), p(7)]);
+    let ptr2 = ptr.clone();
+    let k = e.if_(
+        p(4),
+        |_| p(1),
+        |e| e.if_(p(5), |e| e.call("mem_write_int_raw", vec![ptr2, p(3), p(2)]), |e| e.if_(p(6), |_| h, |_| p(1))),
+    );
+    let rd = e.call("mem_read_int_raw", vec![ptr, p(3)]);
+    let s = e.call("int_to_str", vec![rd]);
+    let out = e.call("io_println", vec![s]);
+    let res = e.call("seq", vec![k, out]);
+    e.bundle(res)
 }
 
 #[test]
@@ -1685,89 +1687,255 @@ fn test_effect_order_moved_write_keeps_every_enclosing_condition() {
 
 #[test]
 fn test_effect_order_contradictory_case_is_a_build_error() {
-    // The write (node 4) is in the then-arm of `if c2` (node 6), which is in the then-arm of `if true` (node 7);
-    // c2 (node 3) is computed inside node 7's arm, before the write. The shared `if` j (node 5) sits between
-    // the write and node 7, so the write must run before node 7's arm is entered -- where c2 does not exist yet.
-    let n = NodeRef::Node;
+    // The shape EFFECT_ORDER_V1 could not place: a node written inside an arm (the `if` j, in the inner if's
+    // else-arm) and used again after the outer `if`. Core IR 0.6 has no such program -- the compiler never shares
+    // a node out of a closed block -- and the bridge refuses the bundle, naming the nodes.
     let p = NodeRef::Pool;
-    let b = CoreBundle {
-        version: "0.5".to_string(),
-        constant_pool: vec![eo_int(64), eo_int(0), eo_int(1), eo_int(7), eo_int(8), eo_bool(true)],
-        nodes: vec![
-            eo_call("mem_reserve_raw", vec![p(0)]),
-            eo_call("tuple_field", vec![n(0), p(1)]),
-            eo_call("mem_read_int_raw", vec![n(1), p(4)]),       // 2: h
-            eo_call("int_eq", vec![p(2), p(2)]),                 // 3: c2
-            eo_call("mem_write_int_raw", vec![n(1), p(4), p(3)]), // 4
-            eo_if(p(5), n(2), p(1)),                             // 5: j, node 6's else-arm and used after node 7
-            eo_if(n(3), n(4), n(5)),                             // 6
-            eo_if(p(5), n(6), p(1)),                             // 7
-            eo_call("seq", vec![n(5), n(7)]),
-        ],
-        result: NodeRef::Node(8),
-    };
-    let err = eo_run("eo_refused", &b, EO_PURE).expect_err("a contradictory placement must fail the build");
-    assert!(err.contains("EFFECT_ORDER_V1") && err.contains("node 4 (mem_write_int_raw)") && err.contains("if node 6")
-            && err.contains("node 3") && err.contains("Then arm of if node 7"), "{err}");
+    let mut e = Eo::new(vec![eo_int(64), eo_int(0), eo_int(1), eo_int(7), eo_int(8), eo_bool(true)]);
+    let r = e.call("mem_reserve_raw", vec![p(0)]);
+    let ptr = e.call("tuple_field", vec![r, p(1)]);
+    let h = e.call("mem_read_int_raw", vec![ptr.clone(), p(4)]);
+    let mut j = None;
+    let k = e.if_(
+        p(5),
+        |e| {
+            let c2 = e.call("int_eq", vec![p(2), p(2)]);
+            e.if_(c2, |e| e.call("mem_write_int_raw", vec![ptr, p(4), p(3)]), |e| {
+                let jj = e.if_(p(5), |_| h, |_| p(1));
+                j = Some(jj.clone());
+                jj
+            })
+        },
+        |_| p(1),
+    );
+    let res = e.call("seq", vec![j.unwrap(), k]);
+    let err = eo_run("eo_refused", &e.bundle(res), EO_PURE).expect_err("a use out of a closed arm must fail the build");
+    assert!(err.contains("block rule 4: node 20 uses node 13, which is inside the then arm of if node 19"), "{err}");
 }
 
 #[test]
 fn test_effect_order_toplevel_let_keeps_old_placement_past_a_pure_if() {
-    // `let w = mem_write_int_raw(p, 8, 7); let b = bool_and(true, int_eq(1, 1)); if c { w } else { 0 }` with
-    // c false and computed after w (nv_n_step's shape). w is a top-level let: the old bridge ran it
-    // unconditionally, because the `if` b sat between it and its consumer. b has no effect in its arms, which
-    // does not let w sink into the branch it was never written in.
-    let n = NodeRef::Node;
+    // `let w = mem_write_int_raw(p, 8, 7); let b = bool_and(true, int_eq(1, 1)); if c { w } else { 0 }` with c
+    // false and computed after w (nv_n_step's shape): w is a top-level let and runs.
     let p = NodeRef::Pool;
-    let b = CoreBundle {
-        version: "0.5".to_string(),
-        constant_pool: vec![eo_int(64), eo_int(0), eo_int(1), eo_int(7), eo_int(8), eo_bool(true), eo_bool(false)],
-        nodes: vec![
-            eo_call("mem_reserve_raw", vec![p(0)]),
-            eo_call("tuple_field", vec![n(0), p(1)]),
-            eo_call("mem_write_int_raw", vec![n(1), p(4), p(3)]), // 2: w
-            eo_call("int_eq", vec![p(2), p(2)]),
-            eo_if(p(5), n(3), p(6)),                             // 4: b, pure arms
-            eo_call("int_eq", vec![p(1), p(2)]),                 // 5: c (false)
-            eo_if(n(5), n(2), p(1)),                             // 6
-            eo_call("mem_read_int_raw", vec![n(1), p(4)]),
-            eo_call("int_to_str", vec![n(7)]),
-            eo_call("io_println", vec![n(8)]),
-            eo_call("seq", vec![n(4), n(9)]),
-        ],
-        result: NodeRef::Node(10),
-    };
-    assert_eq!(eo_run("eo_toplevel_pure_if", &b, EO_PURE).unwrap().0, "7");
+    let mut e = Eo::new(vec![eo_int(64), eo_int(0), eo_int(1), eo_int(7), eo_int(8), eo_bool(true), eo_bool(false)]);
+    let r = e.call("mem_reserve_raw", vec![p(0)]);
+    let ptr = e.call("tuple_field", vec![r, p(1)]);
+    let w = e.call("mem_write_int_raw", vec![ptr.clone(), p(4), p(3)]);
+    let b = e.if_(p(5), |e| e.call("int_eq", vec![p(2), p(2)]), |_| p(6));
+    let c = e.call("int_eq", vec![p(1), p(2)]);
+    e.if_(c, |_| w, |_| p(1));
+    let rd = e.call("mem_read_int_raw", vec![ptr, p(4)]);
+    let s = e.call("int_to_str", vec![rd]);
+    let out = e.call("io_println", vec![s]);
+    let res = e.call("seq", vec![b, out]);
+    assert_eq!(eo_run("eo_toplevel_pure_if", &e.bundle(res), EO_PURE).unwrap().0, "7");
 }
 
 #[test]
 fn test_effect_order_toplevel_let_under_a_condition_chain_stays_unconditional() {
-    // gfx3gate's g3_gate1: `let c1 = ..; let c2 = g3_check(..); return bool_and(bool_and(w, ..), bool_and(c1, c2))`.
-    // Here: c1 (node 2) is bound BEFORE the write w (node 3), and w is used only in `if c1 { w }` (node 6), which
-    // sits in the then-arm of `if x` (node 7). Node order alone says w comes after c1, as if written in that
-    // branch -- but `x` (nodes 4, 5: a pure bool_and) was created between w and node 6 and feeds node 7's
-    // condition, not node 6's arms: node 6's arms had not been begun when w was. w is a top-level let and runs,
-    // although x is false.
+    // gfx3gate's g3_gate1: `let c1 = ..; let w = g3_check(..); bool_and(x, bool_and(c1, w))` with x false. w is a
+    // top-level let and runs, although no arm that names it is taken.
+    let p = NodeRef::Pool;
+    let mut e = Eo::new(vec![eo_int(64), eo_int(0), eo_int(1), eo_int(7), eo_int(8), eo_bool(true), eo_bool(false), eo_int(2)]);
+    let r = e.call("mem_reserve_raw", vec![p(0)]);
+    let ptr = e.call("tuple_field", vec![r, p(1)]);
+    let c1 = e.call("int_eq", vec![p(2), p(2)]);
+    let w = e.call("mem_write_int_raw", vec![ptr.clone(), p(4), p(3)]);
+    let x = e.if_(p(5), |e| e.call("int_eq", vec![p(2), p(7)]), |_| p(6));
+    let k = e.if_(x, |e| e.if_(c1, |_| w, |_| p(6)), |_| p(6));
+    let rd = e.call("mem_read_int_raw", vec![ptr, p(4)]);
+    let s = e.call("int_to_str", vec![rd]);
+    let out = e.call("io_println", vec![s]);
+    let res = e.call("seq", vec![k, out]);
+    assert_eq!(eo_run("eo_cond_chain", &e.bundle(res), EO_PURE).unwrap().0, "7");
+}
+
+// ── the spec's worked examples, run ─────────────────────────────────────────────────────────────────────
+//
+// 1-6: tests/fixtures/core_ir_06/ex*.m1 (copies of axis-lang-lab examples/surface-m1/core_ir_06), compiled by the
+// lab. 7 (one-armed if) and 8 (plain grouping block): M1 writes neither, so they are built here.
+
+fn ex_run(name: &str, argv: &[&str]) -> String {
+    let (out, generated) = eo_run_file(&ex_fixture(&format!("{name}.coreir")), argv, EO_PURE).unwrap();
+    assert_no_inference(&generated);
+    out
+}
+
+#[test]
+fn test_core_ir_06_example_1_nested_if_effect_hoist_prints_0() {
+    assert_eq!(ex_run("ex1_nested_if_effect_hoist", &[]), "0");
+}
+
+#[test]
+fn test_core_ir_06_example_2_toplevel_let_used_in_a_branch_runs() {
+    assert_eq!(ex_run("ex2_toplevel_let_used_in_branch", &[]), "5");
+}
+
+#[test]
+fn test_core_ir_06_example_3_two_deep_ifs() {
+    for (c1, c2, want) in [("y", "y", "w"), ("y", "n", "p-inner"), ("n", "y", "p-outer"), ("n", "n", "p-outer")] {
+        assert_eq!(ex_run("ex3_two_deep", &[c1, c2]), format!("{want}\nend"), "c1={c1} c2={c2}");
+    }
+}
+
+#[test]
+fn test_core_ir_06_example_4_orphan_effect_runs_with_its_arm() {
+    assert_eq!(ex_run("ex4_orphan_effect", &["y"]), "top\nin-then\nx");
+    assert_eq!(ex_run("ex4_orphan_effect", &["n"]), "top\ny");
+}
+
+#[test]
+fn test_core_ir_06_example_5_av_admit_partial_call_stays_in_its_arm() {
+    // int_div(100, 0) would be a Defect (exit 4): it is in the arm `got` selects, and got is false
+    assert_eq!(ex_run("ex5_av_admit", &[]), "empty\ndone");
+}
+
+#[test]
+fn test_core_ir_06_example_6_nv_n_step_lets_run_every_call() {
+    assert_eq!(ex_run("ex6_nv_n_step", &[]), "1");
+}
+
+#[test]
+fn test_core_ir_06_example_7_one_armed_if() {
+    // if c { io_println("in") } (else = pool Unit); io_println("end")
+    for (c, want) in [(true, "in\nend"), (false, "end")] {
+        let p = NodeRef::Pool;
+        let unit = ConstantPoolEntry { def_hash: unit_type_hash(), payload: vec![] };
+        let mut e = Eo::new(vec![eo_bool(c), eo_text("in"), eo_text("end"), unit]);
+        let t = e.block(|e| {
+            let _ = e.call("io_println", vec![p(1)]);
+            p(3)
+        });
+        let k = e.push(Node::CIf { cond: p(0), then_: t, else_: p(3) });
+        let end = e.call("io_println", vec![p(2)]);
+        let res = e.call("seq", vec![k, end]);
+        let (out, generated) = eo_run("ex7", &e.bundle(res), EO_PURE).unwrap();
+        assert_eq!(out, want, "c={c}");
+        assert!(generated.contains("} else { Value::Unit };"), "{generated}");
+    }
+}
+
+#[test]
+fn test_core_ir_06_example_8_plain_grouping_block_always_runs() {
+    // [ a = int_add(2, 3); b = int_mul(a, 10); CEnd b ]; io_println(int_to_str(<the block>))
+    let p = NodeRef::Pool;
+    let mut e = Eo::new(vec![eo_int(2), eo_int(3), eo_int(10)]);
+    let blk = e.block(|e| {
+        let a = e.call("int_add", vec![p(0), p(1)]);
+        e.call("int_mul", vec![a, p(2)])
+    });
+    let s = e.call("int_to_str", vec![blk]);
+    let out = e.call("io_println", vec![s]);
+    let (stdout, generated) = eo_run("ex8", &e.bundle(out), EO_PURE).unwrap();
+    assert_eq!(stdout, "50");
+    assert!(generated.contains("let node_3: Value = {"), "{generated}");
+}
+
+// ── the spec's mutants: each bundle is refused by the bridge's loader, naming the node ──────────────────
+
+fn refused(name: &str, bytes: Vec<u8>) -> String {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join(format!("{name}.coreir"));
+    std::fs::write(&path, bytes).unwrap();
+    let out = dir.path().join(name);
+    let build = Command::new(bridge())
+        .args(["build", path.to_str().unwrap(), "--out", out.to_str().unwrap(), "--exe"])
+        .output()
+        .expect("bridge failed to run");
+    assert!(!build.status.success(), "{name}: the bridge built a bundle it must refuse");
+    String::from_utf8_lossy(&build.stderr).into_owned()
+}
+
+/// 0 c; [ 2 w ] [ 5 p ]; 7 if 0 then 3 else 6  (+ `extra` nodes, result `result`)
+fn two_arms(extra: Vec<Node>, result: u32) -> CoreBundle {
     let n = NodeRef::Node;
     let p = NodeRef::Pool;
-    let b = CoreBundle {
-        version: "0.5".to_string(),
-        constant_pool: vec![eo_int(64), eo_int(0), eo_int(1), eo_int(7), eo_int(8), eo_bool(true), eo_bool(false), eo_int(2)],
-        nodes: vec![
-            eo_call("mem_reserve_raw", vec![p(0)]),
-            eo_call("tuple_field", vec![n(0), p(1)]),
-            eo_call("int_eq", vec![p(2), p(2)]),                 // 2: c1
-            eo_call("mem_write_int_raw", vec![n(1), p(4), p(3)]), // 3: w
-            eo_call("int_eq", vec![p(2), p(7)]),                 // 4
-            eo_if(p(5), n(4), p(6)),                             // 5: x = bool_and(true, 1 == 2), false
-            eo_if(n(2), n(3), p(1)),                             // 6
-            eo_if(n(5), n(6), p(1)),                             // 7
-            eo_call("mem_read_int_raw", vec![n(1), p(4)]),
-            eo_call("int_to_str", vec![n(8)]),
-            eo_call("io_println", vec![n(9)]),
-            eo_call("seq", vec![n(7), n(10)]),
-        ],
-        result: NodeRef::Node(11),
-    };
-    assert_eq!(eo_run("eo_cond_chain", &b, EO_PURE).unwrap().0, "7");
+    let call = |args| Node::CCall { target_identity: sha256_bytes(b"int_to_str"), target_name: "int_to_str".to_string(), args };
+    let mut nodes = vec![
+        Node::CCall { target_identity: sha256_bytes(b"int_eq"), target_name: "int_eq".to_string(), args: vec![p(0), p(0)] },
+        Node::CBlock, call(vec![p(0)]), Node::CEnd { value: n(2) },
+        Node::CBlock, call(vec![p(0)]), Node::CEnd { value: n(5) },
+        Node::CIf { cond: n(0), then_: n(3), else_: n(6) },
+    ];
+    nodes.extend(extra);
+    CoreBundle { version: "0.6".to_string(), constant_pool: vec![eo_int(1)], nodes, result: n(result) }
+}
+
+fn mutant(nodes_edit: impl FnOnce(&mut Vec<Node>), result: u32) -> Vec<u8> {
+    let mut b = two_arms(vec![], 7);
+    nodes_edit(&mut b.nodes);
+    b.result = NodeRef::Node(result);
+    create_core_bundle_05(&b)
+}
+
+#[test]
+fn test_core_ir_06_mutant_cend_with_no_value_is_refused() {
+    // header, an empty pool, two nodes: CBlock, then a CEnd tag with nothing after it
+    let bytes = vec![b'A', b'X', b'C', b'I', 0, 6, 0, 2, 3, 4];
+    let err = refused("no_value", bytes);
+    assert!(err.contains("axbi: truncated"), "{err}");
+}
+
+#[test]
+fn test_core_ir_06_mutant_arm_cend_referenced_by_two_ifs_is_refused() {
+    let err = refused("two_ifs", mutant(|n| n.push(Node::CIf { cond: NodeRef::Node(0), then_: NodeRef::Node(3), else_: NodeRef::Node(6) }), 8));
+    assert!(err.contains("block rule 3: node 3 closes an arm of if node 7, and if node 8 references it too"), "{err}");
+}
+
+#[test]
+fn test_core_ir_06_mutant_arm_block_not_directly_before_its_if_is_refused() {
+    let err = refused("not_before", mutant(|n| {
+        let k = n.pop().unwrap();
+        n.push(Node::CCall { target_identity: sha256_bytes(b"int_to_str"), target_name: "int_to_str".to_string(), args: vec![NodeRef::Pool(0)] });
+        n.push(k);
+    }, 8));
+    assert!(err.contains("block rule 2: if node 8"), "{err}");
+}
+
+#[test]
+fn test_core_ir_06_mutant_use_of_a_node_inside_an_arm_from_outside_is_refused() {
+    let err = refused("inside_arm", mutant(|n| n.push(Node::CCall {
+        target_identity: sha256_bytes(b"io_println"), target_name: "io_println".to_string(), args: vec![NodeRef::Node(2)],
+    }), 8));
+    assert!(err.contains("block rule 4: node 8 uses node 2, which is inside the then arm of if node 7"), "{err}");
+}
+
+#[test]
+fn test_core_ir_06_mutant_unbalanced_blocks_are_refused() {
+    let err = refused("unclosed", mutant(|n| n.push(Node::CBlock), 7));
+    assert!(err.contains("block rule 1: the block opened at node 8 is never closed"), "{err}");
+    let err = refused("stray_end", mutant(|n| n.push(Node::CEnd { value: NodeRef::Node(7) }), 7));
+    assert!(err.contains("block rule 1: node 8 is a CEnd with no open block"), "{err}");
+}
+
+#[test]
+fn test_core_ir_06_mutant_share_across_sibling_blocks_is_refused() {
+    // the else-block reuses the then-block's node, as a compiler sharing across blocks would write it
+    let err = refused("sibling_share", mutant(|n| { n[5] = Node::CCall {
+        target_identity: sha256_bytes(b"int_to_str"), target_name: "int_to_str".to_string(), args: vec![NodeRef::Node(2)],
+    }; }, 7));
+    assert!(err.contains("block rule 4: node 5 uses node 2, which is inside the then arm of if node 7"), "{err}");
+}
+
+#[test]
+fn test_core_ir_06_mutant_a_core_ir_05_bundle_is_refused() {
+    let mut bytes = create_core_bundle_05(&two_arms(vec![], 7));
+    bytes[5] = 5;
+    let err = refused("v05", bytes);
+    assert!(err.contains("Core IR 0.5 bundle") && err.contains("recompile from source"), "{err}");
+}
+
+#[test]
+fn test_core_ir_06_fx_var_counts_every_row() {
+    // fx_var_main's shape: `let c = seq(<count>, true)` used only as an if's condition inside a bool_and arm
+    assert_eq!(ex_run("fx_var", &[""]), "b n=1");
+    assert_eq!(ex_run("fx_var", &["y"]), "a n=1");
+}
+
+#[test]
+fn test_core_ir_06_fx_split_counts_when_fresh_is_false() {
+    // fx_split_main's shape: `let sk = if <x> { <counter> } else { true }` used only as `bool_and(fresh, sk)`
+    assert_eq!(ex_run("fx_split", &[""]), "skipped=1");
+    assert_eq!(ex_run("fx_split", &["y"]), "skipped=1");
 }

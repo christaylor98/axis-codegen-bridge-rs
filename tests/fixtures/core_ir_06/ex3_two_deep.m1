@@ -1,0 +1,9 @@
+// Core IR 0.6 worked example 3: two-deep ifs. argv[1] and argv[2] are c1 and c2 ("y" = true). "w" prints iff
+// c1 and c2, "p-inner" iff c1 and not c2, "p-outer" iff not c1.
+fn main() -> Unit {
+  let c1 = str_eq(argv_or(Int(1), Text("")), Text("y"))
+  let c2 = str_eq(argv_or(Int(2), Text("")), Text("y"))
+  let _r = if c1 { if c2 { io_println(Text("w")) } else { io_println(Text("p-inner")) } }
+           else { io_println(Text("p-outer")) }
+  io_println(Text("end"))
+}

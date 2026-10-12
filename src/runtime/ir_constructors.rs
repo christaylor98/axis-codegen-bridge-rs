@@ -516,6 +516,8 @@ fn value_from_bundle_05(bundle: &crate::core_ir_05::CoreBundle) -> Value {
         ]),
         Node::CIf { cond, then_, else_ } => make_ctor("CIf", vec![nr(cond), nr(then_), nr(else_)]),
         Node::CDeterminate => make_ctor("CDeterminate", vec![]),
+        Node::CBlock => make_ctor("CBlock", vec![]),
+        Node::CEnd { value } => make_ctor("CEnd", vec![nr(value)]),
     }).collect();
     make_ctor("Bundle05", vec![Value::List(super::value::ListBuf::from(pool_vals)), Value::List(super::value::ListBuf::from(node_vals)), nr(&bundle.result)])
 }
@@ -572,12 +574,16 @@ fn value_to_bundle_05(v: &Value) -> Result<crate::core_ir_05::CoreBundle, String
                 else_: parse_nr(else_, &format!("node[{}] CIf else", i))?,
             }),
             ("CDeterminate", []) => Ok(Node::CDeterminate),
+            ("CBlock", []) => Ok(Node::CBlock),
+            ("CEnd", [value]) => Ok(Node::CEnd { value: parse_nr(value, &format!("node[{}] CEnd value", i))? }),
             _ => Err(format!("node[{}]: unknown shape {:?}", i, n)),
         },
         _ => Err(format!("node[{}]: expected Ctor, got {:?}", i, n)),
     }).collect::<Result<Vec<_>, String>>()?;
     let result = parse_nr(result_v, "result")?;
-    Ok(CoreBundle { version: "0.5".to_string(), constant_pool, nodes, result })
+    let bundle = CoreBundle { version: "0.6".to_string(), constant_pool, nodes, result };
+    crate::core_ir_05::verify_blocks(&bundle)?;
+    Ok(bundle)
 }
 
 fn render_bundle_05_str(bundle: &crate::core_ir_05::CoreBundle) -> String {
@@ -585,7 +591,7 @@ fn render_bundle_05_str(bundle: &crate::core_ir_05::CoreBundle) -> String {
         bool_type_hash, decode_bool_payload, decode_int_payload, decode_text_payload,
         hash256_to_hex, int_type_hash, text_type_hash, unit_type_hash, Node, NodeRef,
     };
-    let mut out = String::from("CoreIR 0.5\n");
+    let mut out = String::from("CoreIR 0.6\n");
     for (i, entry) in bundle.constant_pool.iter().enumerate() {
         let dh = entry.def_hash;
         let desc = if dh == unit_type_hash() {
@@ -629,6 +635,8 @@ fn render_bundle_05_str(bundle: &crate::core_ir_05::CoreBundle) -> String {
                 "CIf(cond={}, then={}, else={})", ref_str(cond), ref_str(then_), ref_str(else_)
             ),
             Node::CDeterminate => "CDeterminate".to_string(),
+            Node::CBlock => "CBlock".to_string(),
+            Node::CEnd { value } => format!("CEnd(value={})", ref_str(value)),
         };
         out.push_str(&format!("node[{}]: {}\n", i, desc));
     }

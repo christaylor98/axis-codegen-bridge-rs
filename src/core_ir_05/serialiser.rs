@@ -15,7 +15,7 @@ pub fn write_core_bundle_05_to_file(bundle: &CoreBundle, path: &str) -> Result<(
 
 pub fn make_unit_bundle() -> CoreBundle {
     CoreBundle {
-        version: "0.5".to_string(),
+        version: "0.6".to_string(),
         constant_pool: vec![ConstantPoolEntry {
             def_hash: super::unit_type_hash(),
             payload: vec![],
@@ -27,7 +27,7 @@ pub fn make_unit_bundle() -> CoreBundle {
 
 pub fn make_bool_bundle(v: bool) -> CoreBundle {
     CoreBundle {
-        version: "0.5".to_string(),
+        version: "0.6".to_string(),
         constant_pool: vec![ConstantPoolEntry {
             def_hash: super::bool_type_hash(),
             payload: super::encode_bool_payload(v),
@@ -39,7 +39,7 @@ pub fn make_bool_bundle(v: bool) -> CoreBundle {
 
 pub fn make_int_bundle(v: i64) -> CoreBundle {
     CoreBundle {
-        version: "0.5".to_string(),
+        version: "0.6".to_string(),
         constant_pool: vec![ConstantPoolEntry {
             def_hash: super::int_type_hash(),
             payload: super::encode_int_payload(v),
@@ -71,7 +71,7 @@ pub fn make_ccall_bundle_named(
     args: Vec<NodeRef>,
 ) -> CoreBundle {
     CoreBundle {
-        version: "0.5".to_string(),
+        version: "0.6".to_string(),
         constant_pool: pool,
         nodes: vec![Node::CCall { target_identity, args, target_name: target_name.to_string() }],
         result: NodeRef::Node(0),

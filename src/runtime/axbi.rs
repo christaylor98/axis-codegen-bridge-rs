@@ -15,7 +15,7 @@ use super::value::{Value, intern_str, intern_tag};
 
 const MAGIC: &[u8; 4] = b"AXCI";
 const IR_MAJOR: u8 = 0x00;
-const IR_MINOR: u8 = 0x05;
+const IR_MINOR: u8 = 0x06;
 
 // ── UNKNOWN gate ──────────────────────────────────────────────────────────────
 
@@ -163,6 +163,14 @@ fn parse_canonical(data: &[u8]) -> Value {
             2 => {
                 nodes.push(Value::Ctor { tag: intern_tag("CDeterminate"), fields: vec![] });
             }
+            // Core IR 0.6 blocks
+            3 => {
+                nodes.push(Value::Ctor { tag: intern_tag("CBlock"), fields: vec![] });
+            }
+            4 => {
+                let (value, p) = read_edge(data, pos, i, pool_len); pos = p;
+                nodes.push(Value::Ctor { tag: intern_tag("CEnd"), fields: vec![value] });
+            }
             k => hard_fail(&format!("unknown node kind tag {k}")),
         }
     }
@@ -191,8 +199,11 @@ pub fn axbi_parse(v: Value) -> Value {
     if &bytes[0..4] != MAGIC.as_slice() {
         hard_fail(&format!("bad magic {:?}: expected b\"AXCI\"", &bytes[0..4]));
     }
+    if bytes[4] == 0 && bytes[5] == 0x05 {
+        hard_fail(crate::core_ir_05::REFUSE_05);
+    }
     if bytes[4] != IR_MAJOR || bytes[5] != IR_MINOR {
-        hard_fail(&format!("unsupported IR version {}.{} (expected 0.5)", bytes[4], bytes[5]));
+        hard_fail(&format!("unsupported IR version {}.{} (expected 0.6)", bytes[4], bytes[5]));
     }
     parse_canonical(&bytes[6..])
 }
@@ -234,9 +245,17 @@ mod tests {
 
         let mut out = Vec::new();
         out.extend_from_slice(b"AXCI");
-        out.push(0x00); out.push(0x05);
+        out.push(0x00); out.push(0x06);
         out.extend_from_slice(&canonical);
         out
+    }
+
+    #[test]
+    #[should_panic(expected = "recompile from source")]
+    fn a_core_ir_05_stream_is_refused() {
+        let mut bytes = make_axbi();
+        bytes[5] = 0x05;
+        axbi_parse(as_list(&bytes));
     }
 
     fn as_list(bytes: &[u8]) -> Value {

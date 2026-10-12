@@ -1,0 +1,12 @@
+// Core IR 0.6: the counter is written at top level, so it runs every call (it was sunk into a branch by the
+// 0.5 bridges, and the r178 workaround kept that).
+// fx_var_main's original shape (CLAUDE.md, 2026-10-09): `let c = seq(<count every row>, ..)` consumed only by
+// `let s = if c { if eff {..} else {..} } else {..}`, and s consumed only as `bool_and(eff, s)`. argv[1] = "y"
+// makes eff true. Every row must be counted: prints n=1 either way if c runs where it is written.
+fn main() -> Unit {
+  let eff = str_eq(argv_or(Int(1), Text("")), Text("y"))
+  let c = seq(map_put(Text("c"), Text("n"), Text("1")), Bool(true))
+  let s = if c { if eff { seq(io_print(Text("")), Bool(true)) } else { Bool(false) } } else { Bool(false) }
+  let t = if bool_and(eff, bool_or(s, bool_not(s))) { Text("a") } else { Text("b") }
+  io_println(str_concat(t, str_concat(Text(" n="), map_get(Text("c"), Text("n")))))
+}

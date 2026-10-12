@@ -42,6 +42,8 @@ fn format_bundle(path: &str, bundle: &CoreBundle) -> String {
                 )
             }
             Node::CDeterminate => "CDeterminate".to_string(),
+            Node::CBlock => "CBlock".to_string(),
+            Node::CEnd { value } => format!("CEnd(value={:?})", value),
             Node::CIf { cond, then_, else_ } => {
                 format!(
                     "CIf(cond={}, then={}, else={})",

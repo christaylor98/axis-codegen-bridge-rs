@@ -1,0 +1,11 @@
+// Core IR 0.6 worked example 6 (nv_n_step's shape): `k` and `jdat` are top-level lets used only inside a later
+// if whose condition is false. They are in no block and run every call: slot 8 ends 1.
+fn main() -> Unit {
+  let p = tuple_field(mem_reserve_raw(Int(64)), Int(0))
+  let n = mem_read_int_raw(p, Int(0))
+  let k = int_add(mem_read_int_raw(p, Int(8)), Int(1))
+  let jdat = mem_write_int_raw(p, Int(8), k)
+  let c = int_eq(n, Int(1))
+  let _v = if c { jdat } else { io_print(Text("")) }
+  io_println(int_to_str(mem_read_int_raw(p, Int(8))))
+}

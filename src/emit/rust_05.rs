@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use crate::core_ir_05::{
     bool_type_hash, dec_type_hash, decode_bool_payload, decode_int_payload, decode_text_payload,
     float_type_hash, fn_type_hash, hash256_to_hex, int_type_hash, sha256_bytes, text_type_hash,
-    unit_type_hash, ConstantPoolEntry, CoreBundle, Hash256, Node, NodeRef,
+    unit_type_hash, verify_blocks, Arm, Blocks, ConstantPoolEntry, CoreBundle, Hash256, Node, NodeRef,
 };
 
 // ── Symbol map (name → bridge path) ─────────────────────────────────────────
@@ -879,17 +879,13 @@ pub fn load_registry_composite_bodies(paths: &[String]) -> HashMap<Hash256, Hash
     map
 }
 
-/// EFFECT_ORDER_V1: identities declared BOTH `effect pure` AND `deterministic
-/// true` across the `--reg` files — the same classification the compiler's
-/// CSE gate uses (hash-cons shareable only for pure+deterministic leaves).
-/// `compute_branch_paths` consults this set to refuse to SINK an
-/// effect-ordered node past another one: the registry type layer already
-/// declared cursor/set/map ops `deterministic false`, but branch scoping
-/// never looked, so a `cursor_get` consumed only by one if-arm was deferred
-/// into the arm and ran AFTER an earlier-positioned unconditional
-/// `cursor_close` (found via graphcore gr_cf_run: every current name filtered
-/// to empty). Unknown identities are treated as effectful (absent implies
-/// ordered).
+/// Identities declared BOTH `effect pure` AND `deterministic true` across the
+/// `--reg` files — the same classification the compiler's CSE gate uses
+/// (hash-cons shareable only for pure+deterministic leaves). The fault guard
+/// reads it: an effectful builtin does not run after its entry has faulted,
+/// and a panic in a pure one is a Defect. Placement never reads it (Core IR
+/// 0.6: a node runs where it was written). Unknown identities are treated as
+/// effectful (absent implies effectful).
 pub fn load_registry_pure_det(paths: &[String]) -> std::collections::HashSet<Hash256> {
     let mut set = std::collections::HashSet::new();
     for path in paths {
@@ -941,10 +937,9 @@ pub fn load_registry_pure_det(paths: &[String]) -> std::collections::HashSet<Has
 /// (axis-lang-lab `core_ir_05.rs` `push_node`): `any(xs, f)` has no effect of
 /// its own, but it runs `f`, so it is pure exactly when `f` is. Reading only
 /// `pure_det.contains(target)` let `any`/`all`/`count`/`find_index`/
-/// `flat_map`/`loop_while` — all declared `effect pure` — be SUNK past an
-/// outer effect by EFFECT_ORDER_V1 and keep running after a fault, however
-/// effectful their callback, and made an I/O panic inside that callback a
-/// DEFECT instead of an Unknown.
+/// `flat_map`/`loop_while` — all declared `effect pure` — keep running after
+/// a fault, however effectful their callback, and made an I/O panic inside
+/// that callback a DEFECT instead of an Unknown.
 ///
 /// A fn-ref arg is a pool entry whose def_hash is `fn_type_hash()` and whose
 /// payload is the callee's identity. A composite callback (xbundle) is never
@@ -1998,9 +1993,11 @@ fn ref_clone(r: &NodeRef) -> String {
 // whole list several times per call (into the guard, into the call, out of and back into a loop's state), so
 // building a list was quadratic although list_append itself pushes in place. A value is now MOVED at its last use:
 //   - a value with exactly one use (one operand slot anywhere, or the function's result) moves there;
-//   - a value with several uses, all of them in top-level nodes (none inside a CIf arm, so emission order is node
-//     order), moves at the highest-numbered node -- when that node names it once and the result doesn't use it.
+//   - a value with several uses, all of them in top-level nodes (in no block, so emission order is node order),
+//     moves at the highest-numbered node -- when that node names it once and the result doesn't use it.
 // There are no loops inside a generated function (loops are lifted to their own functions), so this is exact.
+// Core IR 0.6: a CEnd uses its value (inside its block); a CIf uses only its cond -- its then/else are the CEnds of
+// its arm blocks, which are the two arms of the Rust `if`, not variables.
 
 type MoveSet = std::collections::HashSet<((bool, u32), u32)>;   // (ref, node index) where the ref may move
 const RESULT_USE: u32 = u32::MAX;
@@ -2012,19 +2009,15 @@ fn ref_key(r: &NodeRef) -> (bool, u32) {
     }
 }
 
-fn last_uses(bundle: &CoreBundle, top_level: &std::collections::HashSet<u32>, copies: &[usize]) -> MoveSet {
+fn last_uses(bundle: &CoreBundle, top_level: &std::collections::HashSet<u32>) -> MoveSet {
     let mut uses: HashMap<(bool, u32), Vec<u32>> = HashMap::new();
     for (i, node) in bundle.nodes.iter().enumerate() {
-        // a node emitted in several scopes (GUARDED_SHARED_PURE_V1) uses its operands once per copy
-        let mut add = |r: &NodeRef| {
-            for _ in 0..copies[i] {
-                uses.entry(ref_key(r)).or_default().push(i as u32);
-            }
-        };
+        let mut add = |r: &NodeRef| uses.entry(ref_key(r)).or_default().push(i as u32);
         match node {
             Node::CCall { args, .. } => args.iter().for_each(&mut add),
-            Node::CIf { cond, then_, else_ } => { add(cond); add(then_); add(else_); }
-            Node::CDeterminate => {}
+            Node::CIf { cond, .. } => add(cond),
+            Node::CEnd { value } => add(value),
+            Node::CDeterminate | Node::CBlock => {}
         }
     }
     uses.entry(ref_key(&bundle.result)).or_default().push(RESULT_USE);
@@ -2046,442 +2039,45 @@ fn ref_take(r: &NodeRef, at: u32, moves: &MoveSet) -> String {
     if moves.contains(&(ref_key(r), at)) { ref_expr(r) } else { ref_clone(r) }
 }
 
-// ── Branch scoping (BRANCH_SCOPING_V1) ───────────────────────────────────────
+// ── Placement: Core IR 0.6 blocks ────────────────────────────────────────────
 //
-// The flat node list would, if emitted as a straight-line sequence of
-// unconditional `let node_N = <expr>;` statements, execute a `CIf`'s then_
-// AND else_ subtrees on every call — including any side-effecting CCall
-// inside the branch that isn't taken. `CIf` itself only ever *selects*
-// between two already-materialized values; it never gates their computation.
+// Where a node runs is in the IR (axis-lang-lab core_ir_spec/axis-core-ir-0.6.md): nodes are in source order, and
+// `CBlock` ... `CEnd { value }` is a block. A block whose `CEnd` is a `CIf`'s then/else is an arm, written directly
+// before its `CIf`; it runs only when the `CIf` selects it. Any other block is plain grouping and always runs. So
+// emission is one pass in index order, and Rust's block scoping is the IR's:
 //
-// To fix this without changing the IR shape (branches are still ordinary
-// nodes in the same flat list), the emitter computes, per node, the tightest
-// enclosing (CIf, arm) context that ALL of its uses agree on, and only
-// hoists a node to the unconditional top-level prelude when at least one use
-// requires it there (shared between both arms, referenced by `cond`, or used
-// outside any `CIf`). A node whose every use lives inside one arm of one
-// `CIf` is emitted as a `let` *inside that arm's Rust block*, so it only runs
-// when that arm is actually taken.
+//   then-arm CBlock of CIf k   let node_k: Value = if <cond Unknown or Err> { cond } else if truthy(cond) {
+//   its CEnd                       <value> } else {            (or `<value> } else { Value::Unit };`, one-armed)
+//   else-arm CBlock                (nothing)
+//   its CEnd                       <value> };
+//   CIf k                          (nothing: its value is node_k)
+//   plain CBlock               let node_e: Value = {           (e: the block's CEnd)
+//   its CEnd                       <value> };
+//   any other node             let node_i: Value = <expr>;
 //
-// This is possible in one descending pass because `NodeRef::Node(i)` inside
-// node j always has i < j (forward references are a hard verifier invariant
-// — see core_ir_05.rs: "Invariant: for every NodeRef::Node(i) inside node at
-// index j, i < j"), so by the time we compute node i's required scope, every
-// consumer j (j > i) already has its own scope resolved.
+// The bridge infers nothing and moves nothing. What this replaces -- the use-driven scope inference
+// (BRANCH_SCOPING_V1 / GUARDED_SHARED_PURE_V1 / ORPHAN_IS_TOP_LEVEL_V1), EFFECT_ORDER_V1's moves and the r178
+// node-order workaround -- existed because Core IR 0.5 did not say where a node was written.
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
-enum Branch {
-    Then,
-    Else,
-    /// Not a CIf arm: the inside of guarded node `k`'s condition wrapper (see `Guard`). Holds the arm-local
-    /// inputs of a moved effect, so they run under the same conditions it does.
-    Guard,
-}
-
-/// A node's required scope: the chain of (CIf node index, arm) it must be
-/// nested inside, outermost first. An empty path means "top-level,
-/// unconditional".
-type ScopePath = Vec<(u32, Branch)>;
-
-/// EFFECT_ORDER_V1: one condition a moved effect still runs under -- arm `arm` of CIf `cif`, decided by `cond`.
-#[derive(Clone, Debug)]
-struct Guard {
-    cif: u32,
-    cond: NodeRef,
-    arm: Branch,
-}
-
-/// Where every node is emitted.
-struct Placement {
-    /// Each node's scopes (several only for a pure node shared by guards that share no arm).
-    paths: Vec<Vec<ScopePath>>,
-    /// A guarded node: an effect that had to run before its CIf to keep effects in order. It is emitted at
-    /// `paths[i]` inside every condition it left (outermost first), as an `Option`, and rebound in `home` --
-    /// the scope its consumers read it in, where those conditions are known to hold.
-    guarded: HashMap<usize, (Vec<Guard>, ScopePath)>,
-}
-
-/// WORKAROUND (r178, replaced by r179): does an effect at node `i`, leaving an arm whose `if` is decided by
-/// `cond`, keep that condition? Core IR does not record which branch an effect was written in, so it is
-/// inferred from node order, which is source order (axis-lang-lab `Builder::push_node` appends; `nf_lowering`
-/// lowers a let's value before its body, and an `if`'s condition before its then-arm before its else-arm
-/// before the `CIf`; effectful calls are never shared). An effect written inside a branch therefore always
-/// comes AFTER that `if`'s condition: guard it. One that comes BEFORE the condition ran before the `if` was
-/// even decided -- a top-level `let` whose value only a branch uses -- so it was never conditional on it: it
-/// stays unconditional at that level, where the bridge always placed it. A constant condition is always
-/// available.
-///
-/// A condition before the effect does not settle it on its own: `if empty {..}` may test a `let` bound long
-/// before, with the effect a later top-level `let` (av_admit's `body`, gfx3gate's `c2`). `outside_witness`
-/// settles that case. nf_lowering lowers an `if`'s arms in one contiguous run of node indices that ends at the
-/// `CIf`, and every node created in that run feeds the `CIf`'s then/else edge through nodes created in the same
-/// run (an arm-local discarded effect is seq-threaded into the arm's result). So a node created between the
-/// effect and the `CIf` that does NOT -- the next statement's condition, a counter written at top level -- was
-/// created before the arms were begun, and so was the effect: it was not written in them, and stays
-/// unconditional. An effectful call there used outside the `if` proves the same (the lab never shares one, so it
-/// cannot have been created in an arm and reused outside). What node order cannot separate stays as the
-/// emitter has always read it: `let c = ..; let x = eff(); <lets used only in the arm>; if c { x }` reads as
-/// written in the branch.
-fn guard_this_level(cond: &NodeRef, i: usize, outside_witness: bool) -> bool {
-    !outside_witness
-        && match cond {
-            NodeRef::Pool(_) => true,
-            NodeRef::Node(c) => (*c as usize) < i,
-        }
-}
-
-enum Use {
-    /// This node is the bundle's final result — always required at top level.
-    Result,
-    /// Used by node `j` in a non-branching position (CCall arg, or CIf cond)
-    /// — required wherever `j` itself is required.
-    Same(u32),
-    /// Used as the `then_`/`else_` value of CIf `j` — required strictly
-    /// inside that arm of `j`.
-    ThenArm(u32),
-    ElseArm(u32),
-}
-
-fn longest_common_prefix(paths: &[ScopePath]) -> ScopePath {
-    let mut iter = paths.iter();
-    let mut prefix = match iter.next() {
-        Some(p) => p.clone(),
-        None => return Vec::new(),
-    };
-    for p in iter {
-        let common = prefix.iter().zip(p.iter()).take_while(|(a, b)| a == b).count();
-        prefix.truncate(common);
-        if prefix.is_empty() {
-            break;
-        }
-    }
-    prefix
-}
-
-/// Compute each node's required `ScopePath`, processed from the last node
-/// down to the first so every consumer's scope is already known.
-///
-/// ORPHAN_IS_TOP_LEVEL_V1 — a zero-consumer ("orphan") node, i.e. a discarded
-/// value such as `let _ = eff(); tail`, is **unconditional and top-level**,
-/// evaluated in node-index order. That is the IR's defined meaning for a node
-/// with no consumer edge, not a fallback: see `core_ir_05`'s `CoreBundle`
-/// docs, which state it as a producer contract.
-///
-/// The corollary a producer must honour: an arm-local discarded effect MUST be
-/// given a consumer edge inside its arm, because scope is carried by
-/// data-dependency edges and by nothing else. M1/AI3 does this in
-/// `nf_lowering.rs` `seq_scope_arm_effects` (called on both arms at :495/:498),
-/// which threads every unconsumed arm node into that arm's result via
-/// `seq(eff, result)`. Its `branch_scoping_tests` module pins the property,
-/// nested `if`s included.
-///
-/// This function previously carried a positional tripwire that refused to build
-/// when an orphan sat between a `CIf`'s cond anchor and the `CIf` itself, on
-/// the theory that such a node could not be attributed to `then` vs `else`.
-/// It was removed as unsound in both directions. An arm-local orphan and a
-/// top-level orphan lower to byte-identical node sequences — cond, orphan,
-/// `CIf` — so position cannot separate them, and the check rejected ordinary
-/// AI3 programs (a top-level discarded effect written after the condition's
-/// binding) while a mere statement reorder made it pass. It was also
-/// asymmetric: it keyed on `then_` being a bare pool ref, so `then_` pool +
-/// `else_` node was rejected and `then_` node + `else_` pool accepted, for the
-/// same shape. Do not reintroduce a positional form of this check; the
-/// guarantee belongs in the producer, where the arm structure still exists.
-fn compute_branch_paths(
-    bundle: &CoreBundle,
-    pure_det: &std::collections::HashSet<Hash256>,
-) -> Result<Placement, String> {
-    let n = bundle.nodes.len();
-    let mut uses: Vec<Vec<Use>> = (0..n).map(|_| Vec::new()).collect();
-    // `bundle.result` — not "the last node" — is the authoritative root (see
-    // BUG2_RESULT_FIELD_V1). A Pool ref needs no Use entry: pool entries are
-    // always hoisted constants, never branch-scoped.
-    if let NodeRef::Node(i) = bundle.result {
-        uses[i as usize].push(Use::Result);
-    }
-    for (j, node) in bundle.nodes.iter().enumerate() {
-        match node {
-            Node::CCall { args, .. } => {
-                for a in args {
-                    if let NodeRef::Node(i) = a {
-                        uses[*i as usize].push(Use::Same(j as u32));
-                    }
-                }
-            }
-            Node::CIf { cond, then_, else_ } => {
-                if let NodeRef::Node(i) = cond {
-                    uses[*i as usize].push(Use::Same(j as u32));
-                }
-                if let NodeRef::Node(i) = then_ {
-                    uses[*i as usize].push(Use::ThenArm(j as u32));
-                }
-                if let NodeRef::Node(i) = else_ {
-                    uses[*i as usize].push(Use::ElseArm(j as u32));
-                }
-            }
-            Node::CDeterminate => {}
-        }
-    }
-
-    // `CIf` counts as effectful (it may gate sunk effects); unknown identities count as effectful (absent
-    // implies ordered).
-    let effect: Vec<bool> = bundle
-        .nodes
-        .iter()
-        .map(|node| match node {
-            Node::CCall { target_identity, args, .. } => {
-                !call_is_pure_det(target_identity, args, &bundle.constant_pool, pure_det)
-            }
-            Node::CIf { .. } => true,
-            Node::CDeterminate => false,
-        })
-        .collect();
-
-    // EFFECT_ORDER_V1, part 2: an `if` gates effects only when an effect sits in one of its arms. A `CIf`
-    // whose arms hold none -- a plain `bool_and` lowers to one -- is not an effect for the ordering rule.
-    // Arm membership comes from the plain data-edge scopes, before any effect is moved: moving an effect only
-    // ever takes it OUT of arms, so an arm found effect-free here stays effect-free.
-    let mut arm_effect = vec![false; n];
-    let mut lcp: Vec<ScopePath> = vec![Vec::new(); n];
-    {
-        for i in (0..n).rev() {
-            let required: Vec<ScopePath> = uses[i]
-                .iter()
-                .map(|u| match u {
-                    Use::Result => Vec::new(),
-                    Use::Same(j) => lcp[*j as usize].clone(),
-                    Use::ThenArm(j) => [&lcp[*j as usize][..], &[(*j, Branch::Then)]].concat(),
-                    Use::ElseArm(j) => [&lcp[*j as usize][..], &[(*j, Branch::Else)]].concat(),
-                })
-                .collect();
-            lcp[i] = longest_common_prefix(&required);
-            if effect[i] && matches!(bundle.nodes[i], Node::CCall { .. }) {
-                for &(k, _) in &lcp[i] {
-                    arm_effect[k as usize] = true;
-                }
-            }
-        }
-    }
-    // an effect for the ordering rule: an effectful call, or an `if` with an effect in an arm
-    let orders = |idx: usize| -> bool {
-        match &bundle.nodes[idx] {
-            Node::CIf { .. } => arm_effect[idx],
-            _ => effect[idx],
-        }
-    };
-
-    // GUARDED_SHARED_PURE_V1: a pure, deterministic node may be needed in SEVERAL scopes that share no
-    // arm -- e.g. the same `str_char_code(s, i)` guarded by two different `if`s (node interning makes it one
-    // node). Hoisting it to their common prefix (the top level) ran it unguarded: a crash exactly when every
-    // guard said "don't". Such a node is emitted in each minimal scope that needs it instead (`paths[i]` is an
-    // antichain: no scope in it encloses another), so it runs only where a guard lets it. Rust allows the same
-    // `let node_i` in sibling blocks. Effectful nodes (and `CIf`) keep the single common-prefix scope: running
-    // an effect once per arm would change how many times it runs.
-    let mut paths: Vec<Vec<ScopePath>> = (0..n).map(|_| vec![Vec::new()]).collect();
-    let mut path: Vec<ScopePath> = (0..n).map(|_| Vec::new()).collect();
-    let mut guarded: HashMap<usize, (Vec<Guard>, ScopePath)> = HashMap::new();
-    for i in (0..n).rev() {
-        // the scopes a use by node `j` puts its operand in: inside `j`'s condition wrapper when `j` is guarded
-        let scopes_of = |j: u32| -> Vec<ScopePath> {
-            if guarded.contains_key(&(j as usize)) {
-                vec![[&paths[j as usize][0][..], &[(j, Branch::Guard)]].concat()]
-            } else {
-                paths[j as usize].clone()
-            }
-        };
-        let required: Vec<ScopePath> = uses[i]
-            .iter()
-            .flat_map(|u| -> Vec<ScopePath> {
-                match u {
-                    Use::Result => vec![Vec::new()],
-                    Use::Same(j) => scopes_of(*j),
-                    Use::ThenArm(j) => scopes_of(*j).into_iter().map(|mut p| {
-                        p.push((*j, Branch::Then));
-                        p
-                    }).collect(),
-                    Use::ElseArm(j) => scopes_of(*j).into_iter().map(|mut p| {
-                        p.push((*j, Branch::Else));
-                        p
-                    }).collect(),
-                }
-            })
-            .collect();
-        // A node with no recorded uses has no consumer edge to anchor a
-        // scope to, so its `required` set is empty and `longest_common_prefix`
-        // yields the empty path — unconditional, top-level, ordered by index.
-        // That is ORPHAN_IS_TOP_LEVEL_V1 (see this fn's doc comment), the IR's
-        // defined meaning for such a node, which the producer upholds by
-        // seq-threading any arm-local discarded effect into its arm result.
-        path[i] = longest_common_prefix(&required);
-        let pure_value = !effect[i];
-        if pure_value && required.len() > 1 {
-            // the minimal scopes: drop any required scope that another required scope encloses
-            let mut minimal: Vec<ScopePath> = Vec::new();
-            for p in &required {
-                if required.iter().any(|q| q.len() < p.len() && p[..q.len()] == q[..]) {
-                    continue;
-                }
-                if !minimal.contains(p) {
-                    minimal.push(p.clone());
-                }
-            }
-            paths[i] = minimal;
-        } else {
-            paths[i] = vec![path[i].clone()];
-        }
-        // EFFECT_ORDER_V1: sinking is unconditionally safe only for values.
-        // An effectful node written before the `CIf` (its consumers all sit in
-        // one arm) must NOT be deferred into the arm if that would let a
-        // later-indexed effectful node at an OUTER scope run before it — that
-        // reorders effects relative to program order (the cursor_get-after-
-        // cursor_close bug). It moves out one level at a time until no outer
-        // effect sits between it and the CIf it would defer to.
-        //
-        // A branch's guard is never dropped (WORKAROUND r178, see
-        // `guard_this_level`). Leaving the arm of an `if` whose condition
-        // comes before it -- it was written in that branch -- it takes the
-        // condition with it: it is emitted at the earlier position as
-        // `if <every condition it keeps> { Some(<effect>) } else { None }`,
-        // and its consumers, which all sit inside those arms, read the value
-        // back there. Moving it out of its branch with no condition -- the
-        // old `path[i].pop()` alone -- ran an arm's write whichever way the
-        // `if` went. Leaving the arm of an `if` whose condition comes after
-        // it, it stays unconditional at that level: it ran before that `if`.
-        // Arm-local effects (seq-threaded by nf_lowering into the arm result,
-        // with no outer effect between them and their CIf) never move, so
-        // BRANCH_SCOPING_V1 semantics are preserved.
-        // a node between node `i` and CIf `k` that was not created while lowering `k`'s arms (see `guard_this_level`)
-        let outside_witness = |i: usize, k: u32| -> bool {
-            let (lo, k) = (i + 1, k as usize);
-            if lo >= k {
-                return false;
-            }
-            // feeds[j - lo]: node j reaches k's then/else edge through nodes created before k
-            let mut feeds = vec![false; k - lo];
-            for j in (lo..k).rev() {
-                feeds[j - lo] = uses[j].iter().any(|u| match u {
-                    Use::ThenArm(c) | Use::ElseArm(c) if *c as usize == k => true,
-                    Use::Same(c) | Use::ThenArm(c) | Use::ElseArm(c) => (*c as usize) < k && feeds[*c as usize - lo],
-                    Use::Result => false,
-                });
-            }
-            (lo..k).any(|j| {
-                !feeds[j - lo]
-                    || (matches!(bundle.nodes[j], Node::CCall { .. }) && effect[j] && !lcp[j].iter().any(|&(x, _)| x as usize == k))
-            })
-        };
-        if effect[i] {
-            let home = path[i].clone();
-            let mut guards: Vec<Guard> = Vec::new();
-            while let Some(&(k, arm)) = path[i].last() {
-                // A level the effect was not written in (see `guard_this_level`) keeps the old bridge's placement
-                // exactly: any `if` between counts, as it always did. Only a level it WAS written in uses the
-                // narrower rule -- an `if` with no effect in its arms does not count -- and keeps its condition.
-                let written_in = match (arm, &bundle.nodes[k as usize]) {
-                    (Branch::Guard, _) => true,
-                    (_, Node::CIf { cond, .. }) => guard_this_level(cond, i, outside_witness(i, k)),
-                    _ => true,
-                };
-                let k = k as usize;
-                let reordered = ((i + 1)..k).any(|j| {
-                    (if written_in { orders(j) } else { effect[j] })
-                        && path[j].len() < path[i].len()
-                        && path[i][..path[j].len()] == path[j][..]
-                });
-                if !reordered {
-                    break;
-                }
-                let (k, arm) = path[i].pop().expect("the loop saw a last scope");
-                let left: Vec<Guard> = match (arm, &bundle.nodes[k as usize]) {
-                    // out of another moved effect's wrapper: the conditions it runs under
-                    (Branch::Guard, _) => guarded[&(k as usize)].0.clone(),
-                    (_, Node::CIf { cond, .. }) => vec![Guard { cif: k, cond: cond.clone(), arm }],
-                    (_, other) => unreachable!("scope ({}, {:?}) names node {:?}, not a CIf", k, arm, other),
-                };
-                let keeps = |g: &Guard| guard_this_level(&g.cond, i, outside_witness(i, g.cif));
-                let kept: Vec<Guard> = left.iter().filter(|g| keeps(g)).cloned().collect();
-                // every condition left behind must be one the effect ran before
-                assert!(
-                    left.iter().all(|g| kept.iter().any(|h| h.cif == g.cif) || !keeps(g)),
-                    "EFFECT_ORDER_V1: node {} left scope ({}, {:?}) without a condition it was written under",
-                    i, k, arm
-                );
-                guards.splice(0..0, kept);
-            }
-            if !guards.is_empty() {
-                guarded.insert(i, (guards, home));
-            }
-            paths[i] = vec![path[i].clone()];
-        }
-    }
-
-    // A kept condition comes before the effect in node order, but it must also be visible where the effect is
-    // now emitted: computed in that scope or an enclosing one, not inside the arm of an `if` the effect now
-    // runs ahead of. Otherwise the program asks for an effect inside a branch to run before an effect outside
-    // it, under a condition that only exists once that branch runs: contradictory, and the build fails.
-    for (&i, (guards, _)) in &guarded {
-        let at = &paths[i][0];
-        for g in guards {
-            let NodeRef::Node(c) = g.cond else { continue };
-            let ps = &paths[c as usize];
-            if ps.iter().any(|p| p.len() <= at.len() && at[..p.len()] == p[..]) {
-                continue;
-            }
-            let (k2, arm2) = ps[0].iter().zip(at.iter().chain(std::iter::repeat(&(u32::MAX, Branch::Guard))))
-                .find(|(x, y)| x != y)
-                .map(|(x, _)| *x)
-                .expect("a scope that does not enclose `at` differs from it somewhere");
+/// A Fn-typed pool ref in a data position (a CIf's cond or one-armed else, a CEnd's value) is "Fn as data".
+fn gate_data_ref(r: &NodeRef, label: &str, pool_kinds: &[PoolKind]) -> Result<(), String> {
+    if let NodeRef::Pool(pi) = r {
+        if let Some(PoolKind::FnRef(_)) = pool_kinds.get(*pi as usize) {
             return Err(format!(
-                "EFFECT_ORDER_V1 (WORKAROUND r178): node {} ({}) must run before a later effect, so it leaves the \
-                 {:?} arm of if node {}; that if's condition, node {}, is computed inside the {:?} arm of if node \
-                 {}, which has not run where node {} must run",
-                i, node_label(&bundle.nodes[i]), g.arm, g.cif, c, arm2, k2, i
+                "type gate: {} slot is Data but pool[{}] is Fn-typed — Fn refs are callee-only, never \
+                 a condition or a value (FN_REF_IS_CALLEE_ONLY)",
+                label, pi
             ));
         }
     }
-    Ok(Placement { paths, guarded })
+    Ok(())
 }
 
-fn node_label(node: &Node) -> String {
-    match node {
-        Node::CCall { target_name, .. } => target_name.clone(),
-        Node::CIf { .. } => "if".to_string(),
-        Node::CDeterminate => "determinate".to_string(),
-    }
-}
-
-/// Group node indices by the innermost scope they were assigned — `None` is
-/// the unconditional top-level prelude; `Some((k, arm))` is the direct
-/// contents of that arm of CIf `k`. Order within each group is ascending by
-/// index, matching the bundle's required topological order.
-/// A guarded node is in two groups: where it runs, and `home`, where it is
-/// read back.
-fn group_by_scope(n: usize, placement: &Placement) -> HashMap<Option<(u32, Branch)>, Vec<usize>> {
-    let mut groups: HashMap<Option<(u32, Branch)>, Vec<usize>> = HashMap::new();
-    for i in 0..n {
-        let mut keys: Vec<Option<(u32, Branch)>> = placement.paths[i].iter().map(|p| p.last().copied()).collect();
-        if let Some((_, home)) = placement.guarded.get(&i) {
-            keys.push(home.last().copied());
-        }
-        for key in keys {
-            let g = groups.entry(key).or_default();
-            if g.last() != Some(&i) {
-                g.push(i);
-            }
-        }
-    }
-    groups
-}
-
-/// Render every node assigned to scope `key` as Rust `let` statements.
-/// `CIf` nodes recurse into their own Then/Else scopes, so a node deferred
-/// into a branch is only ever computed when that branch actually runs.
+/// Emit every node of `bundle`, in index order, inside the blocks the IR puts it in.
 #[allow(clippy::too_many_arguments)]
-fn render_scope(
-    key: Option<(u32, Branch)>,
-    groups: &HashMap<Option<(u32, Branch)>, Vec<usize>>,
-    placement: &Placement,
+fn emit_blocks(
     bundle: &CoreBundle,
+    blocks: &Blocks,
     pool_kinds: &[PoolKind],
     arg_kind_table: &HashMap<&'static str, Vec<ArgKind>>,
     native_call_table: &HashMap<&'static str, Vec<NativeArgType>>,
@@ -2492,93 +2088,55 @@ fn render_scope(
     pure_det: &std::collections::HashSet<Hash256>,
     moves: &MoveSet,
 ) -> Result<String, String> {
+    const FAULT: &str = "axis_codegen_bridge::runtime::fault";
     let mut out = String::new();
-    let Some(indices) = groups.get(&key) else { return Ok(out) };
-    for &i in indices {
-        // EFFECT_ORDER_V1: a guarded node is read back in `home`, inside every condition it ran under
-        let guarded = placement.guarded.get(&i);
-        if let Some((_, home)) = guarded {
-            if key == home.last().copied() {
-                out.push_str(&format!(
-                    "    let node_{i}: Value = match node_{i}_g {{ Some(v) => v, None => unreachable!(\"EFFECT_ORDER_V1: node {i} is read only where its conditions held\") }};\n"
-                ));
-                continue;
-            }
-        }
-        let mut stmt = String::new();
-        let out_outer = std::mem::take(&mut out);
-        match &bundle.nodes[i] {
-            Node::CIf { cond, then_, else_ } => {
-                // cond / then / else are Data positions. A Fn-typed pool ref
-                // here would be "Fn as data" — reject (same gate as before).
-                for (label, r) in &[("cond", cond), ("then", then_), ("else", else_)] {
-                    if let NodeRef::Pool(pi) = r {
-                        let pi_us = *pi as usize;
-                        if let Some(PoolKind::FnRef(_)) = pool_kinds.get(pi_us) {
-                            return Err(format!(
-                                "type gate: CIf {} slot is Data but pool[{}] is Fn-typed — \
-                                 Fn refs are callee-only, never condition or branch value \
-                                 (FN_REF_IS_CALLEE_ONLY)",
-                                label, pi
-                            ));
-                        }
+    let mut depth = 1usize;
+    for (i, node) in bundle.nodes.iter().enumerate() {
+        match node {
+            Node::CBlock => {
+                let pad = "    ".repeat(depth);
+                let end = blocks.partner[i].expect("a verified block") as usize;
+                match blocks.arm[end] {
+                    Some((k, Arm::Then)) => {
+                        let Node::CIf { cond, .. } = &bundle.nodes[k as usize] else {
+                            unreachable!("an arm's CIf is a CIf")
+                        };
+                        gate_data_ref(cond, "CIf cond", pool_kinds)?;
+                        // FAULT_AS_UNKNOWN: an Unknown condition chooses no branch; the if yields it.
+                        let c = ref_expr(cond);
+                        out.push_str(&format!(
+                            "{pad}let node_{k}: Value = if {FAULT}::is_unknown(&{c}) || {FAULT}::is_err(&{c}) {{ {c}.clone() }} \
+                             else if axis_codegen_bridge::runtime::value::truthy(&{c}) {{\n"
+                        ));
                     }
+                    Some((_, Arm::Else)) => {} // opened by the then-arm's CEnd
+                    None => out.push_str(&format!("{pad}let node_{end}: Value = {{\n")),
                 }
-                let then_body = render_scope(
-                    Some((i as u32, Branch::Then)), groups, placement, bundle, pool_kinds,
-                    arg_kind_table, native_call_table, builtin, registry, name_to_path, xbundle, pure_det, moves,
-                )?;
-                let else_body = render_scope(
-                    Some((i as u32, Branch::Else)), groups, placement, bundle, pool_kinds,
-                    arg_kind_table, native_call_table, builtin, registry, name_to_path, xbundle, pure_det, moves,
-                )?;
-                out.push_str(&format!(
-                    // FAULT_AS_UNKNOWN: an Unknown condition chooses no branch; the if yields it (never a swallow).
-                    "    let node_{i}: Value = if axis_codegen_bridge::runtime::fault::is_unknown(&{cond}) || axis_codegen_bridge::runtime::fault::is_err(&{cond}) {{ {cond}.clone() }} else if axis_codegen_bridge::runtime::value::truthy(&{cond}) {{\n\
-                     {then_body}        {then_tail}\n    }} else {{\n\
-                     {else_body}        {else_tail}\n    }};\n",
-                    i = i,
-                    cond = ref_expr(cond),
-                    then_body = then_body,
-                    then_tail = ref_take(then_, i as u32, moves),
-                    else_body = else_body,
-                    else_tail = ref_take(else_, i as u32, moves),
-                ));
+                depth += 1;
             }
+            Node::CEnd { value } => {
+                gate_data_ref(value, "CEnd value", pool_kinds)?;
+                let v = ref_take(value, i as u32, moves);
+                depth -= 1;
+                let pad = "    ".repeat(depth);
+                let close = match blocks.arm[i] {
+                    Some((k, Arm::Then)) => match &bundle.nodes[k as usize] {
+                        Node::CIf { else_: NodeRef::Node(_), .. } => "} else {",
+                        _ => "} else { Value::Unit };", // one-armed: else is pool Unit
+                    },
+                    _ => "};",
+                };
+                out.push_str(&format!("{pad}    {v}\n{pad}{close}\n"));
+            }
+            Node::CIf { .. } => {} // bound as node_k at its then-arm
             other => {
+                let pad = "    ".repeat(depth);
                 let expr = emit_node(
                     i as u32, other, pool_kinds, arg_kind_table, native_call_table,
                     builtin, registry, name_to_path, xbundle, pure_det, &bundle.constant_pool, moves,
                 )
                 .map_err(|e| format!("node[{}]: {}", i, e))?;
-                out.push_str(&format!("    let node_{}: Value = {};\n", i, expr));
-            }
-        }
-        std::mem::swap(&mut out, &mut stmt);
-        out = out_outer;
-        match guarded {
-            None => out.push_str(&stmt),
-            Some((guards, _)) => {
-                // its arm-local inputs run under its conditions too
-                let inputs = render_scope(
-                    Some((i as u32, Branch::Guard)), groups, placement, bundle, pool_kinds,
-                    arg_kind_table, native_call_table, builtin, registry, name_to_path, xbundle, pure_det, moves,
-                )?;
-                let mut wrapped = format!("{{\n{inputs}{stmt}        Some(node_{i})\n    }}");
-                for g in guards.iter().rev() {
-                    let c = ref_expr(&g.cond);
-                    let not = match g.arm {
-                        Branch::Then => "",
-                        Branch::Else => "!",
-                        Branch::Guard => unreachable!("a guard is a CIf arm"),
-                    };
-                    // the arm runs only on a decided condition (FAULT_AS_UNKNOWN), so the guard asks the same
-                    wrapped = format!(
-                        "if !(axis_codegen_bridge::runtime::fault::is_unknown(&{c}) || axis_codegen_bridge::runtime::fault::is_err(&{c})) && {not}axis_codegen_bridge::runtime::value::truthy(&{c}) {wrapped} else {{ None }}"
-                    );
-                    wrapped = format!("{{\n    {wrapped}\n    }}");
-                }
-                out.push_str(&format!("    let node_{i}_g: Option<Value> = {wrapped};\n"));
+                out.push_str(&format!("{pad}let node_{i}: Value = {expr};\n"));
             }
         }
     }
@@ -2749,29 +2307,8 @@ fn emit_node(
                         match __pre {{ Some(v) => v, None => axis_codegen_bridge::runtime::fault::guard_run({:?}, {}, || {}) }} }}",
                        effectful, data_refs.join(", "), name, effectful, body))
         }
-        Node::CIf { cond, then_, else_ } => {
-            // cond / then / else are Data positions. A Fn-typed pool ref here
-            // would be "Fn as data" — reject.
-            for (label, r) in &[("cond", cond), ("then", then_), ("else", else_)] {
-                if let NodeRef::Pool(pi) = r {
-                    let pi_us = *pi as usize;
-                    if let Some(PoolKind::FnRef(_)) = pool_kinds.get(pi_us) {
-                        return Err(format!(
-                            "type gate: CIf {} slot is Data but pool[{}] is Fn-typed — \
-                             Fn refs are callee-only, never condition or branch value \
-                             (FN_REF_IS_CALLEE_ONLY)",
-                            label, pi
-                        ));
-                    }
-                }
-            }
-            // FAULT_AS_UNKNOWN: an Unknown condition chooses no branch -- the if yields that Unknown.
-            Ok(format!(
-                "if axis_codegen_bridge::runtime::fault::is_unknown(&{c}) || axis_codegen_bridge::runtime::fault::is_err(&{c}) {{ {c}.clone() }} else if axis_codegen_bridge::runtime::value::truthy(&{c}) {{ {} }} else {{ {} }}",
-                ref_take(then_, at, moves),
-                ref_take(else_, at, moves),
-                c = ref_expr(cond),
-            ))
+        Node::CIf { .. } | Node::CBlock | Node::CEnd { .. } => {
+            unreachable!("emit_blocks emits CIf, CBlock and CEnd itself")
         }
         // A determinacy gate has no operands and yields a Unit discharge token.
         Node::CDeterminate => Ok("Value::Unit".to_string()),
@@ -3204,23 +2741,17 @@ pub fn emit_rust_lib_from_bundle_with_dispatch(
         out.push_str("    let _ = &args;\n");
     }
 
-    // Nodes — branch-scoped (BRANCH_SCOPING_V1): a node used exclusively
-    // within one arm of a `CIf` is emitted inside that arm's Rust block, so
-    // it only executes when that arm is actually taken. Nodes required
-    // elsewhere (shared between arms, referenced by `cond`, or used outside
-    // any `CIf`) stay hoisted at the unconditional top level, exactly as
-    // before.
-    let placement = compute_branch_paths(bundle, pure_det)?;
-    let scope_groups = group_by_scope(bundle.nodes.len(), &placement);
-    let top_level: std::collections::HashSet<u32> =
-        scope_groups.get(&None).map(|v| v.iter().map(|i| *i as u32).collect()).unwrap_or_default();
-    let copies: Vec<usize> = placement.paths.iter().map(|p| p.len()).collect();
-    let moves = last_uses(bundle, &top_level, &copies);
-    out.push_str(&render_scope(
-        None,
-        &scope_groups,
-        &placement,
+    // Nodes — Core IR 0.6: each where it was written, inside the blocks the IR puts it in (`emit_blocks`).
+    let blocks = verify_blocks(bundle)?;
+    let top_level: std::collections::HashSet<u32> = (0..bundle.nodes.len())
+        .filter(|&i| blocks.home[i].is_none())
+        .filter(|&i| matches!(bundle.nodes[i], Node::CCall { .. } | Node::CDeterminate | Node::CIf { .. }))
+        .map(|i| i as u32)
+        .collect();
+    let moves = last_uses(bundle, &top_level);
+    out.push_str(&emit_blocks(
         bundle,
+        &blocks,
         &pool_kinds,
         &arg_kind_table,
         &native_call_table,

@@ -1,0 +1,10 @@
+// Core IR 0.6 worked example 4: a discarded effect inside an arm runs iff its arm does; one outside any if
+// always runs. argv[1] = "y" takes the then-arm.
+fn main() -> Unit {
+  let c = str_eq(argv_or(Int(1), Text("")), Text("y"))
+  let _t = io_println(Text("top"))
+  let r = if c { let _e = io_println(Text("in-then"))
+                 Text("x") }
+          else { Text("y") }
+  io_println(r)
+}

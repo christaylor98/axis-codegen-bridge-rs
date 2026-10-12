@@ -1,0 +1,11 @@
+// Core IR 0.6: the counter is written at top level, so it runs every call (it was sunk into a branch by the
+// 0.5 bridges, and the r178 workaround kept that).
+// fx_split_main's original shape (CLAUDE.md, 2026-10-09): `let sk = if <x> { <counter> } else { true }`
+// consumed only as `if bool_and(fresh, sk) {..}`. argv[1] = "y" makes fresh true. The counter must run when
+// fresh is false (x is true then): prints 1 either way if sk runs where it is written.
+fn main() -> Unit {
+  let fresh = str_eq(argv_or(Int(1), Text("")), Text("y"))
+  let sk = if bool_not(fresh) { seq(map_put(Text("c"), Text("skipped"), Text("1")), Bool(true)) } else { seq(map_put(Text("c"), Text("skipped"), Text("1")), Bool(true)) }
+  let w = if bool_and(fresh, sk) { io_print(Text("")) } else { io_print(Text("")) }
+  io_println(str_concat(Text("skipped="), map_get(Text("c"), Text("skipped"))))
+}
