@@ -1,0 +1,12 @@
+// EFFECT_ORDER_V1: the original case, graphcore gr_cf_run before its source-side reorder. `kept` is read by
+// a top-level let, the cursor is closed, and only then is the `if` that uses `kept` decided. The get must run
+// before the close. argv[1] is the error text ("" = keep).
+fn main() -> Unit {
+  let err = argv_or(Int(1), Text(""))
+  let kh = cursor_open(Text("t"))
+  let _a = cursor_append(kh, Text("abc"))
+  let kept = cursor_get(kh)
+  let _c = cursor_close(kh)
+  let res = if str_eq(err, Text("")) { str_concat(Text("K"), kept) } else { str_concat(Text("X"), err) }
+  io_println(res)
+}

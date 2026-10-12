@@ -2073,12 +2073,62 @@ fn ref_take(r: &NodeRef, at: u32, moves: &MoveSet) -> String {
 enum Branch {
     Then,
     Else,
+    /// Not a CIf arm: the inside of guarded node `k`'s condition wrapper (see `Guard`). Holds the arm-local
+    /// inputs of a moved effect, so they run under the same conditions it does.
+    Guard,
 }
 
 /// A node's required scope: the chain of (CIf node index, arm) it must be
 /// nested inside, outermost first. An empty path means "top-level,
 /// unconditional".
 type ScopePath = Vec<(u32, Branch)>;
+
+/// EFFECT_ORDER_V1: one condition a moved effect still runs under -- arm `arm` of CIf `cif`, decided by `cond`.
+#[derive(Clone, Debug)]
+struct Guard {
+    cif: u32,
+    cond: NodeRef,
+    arm: Branch,
+}
+
+/// Where every node is emitted.
+struct Placement {
+    /// Each node's scopes (several only for a pure node shared by guards that share no arm).
+    paths: Vec<Vec<ScopePath>>,
+    /// A guarded node: an effect that had to run before its CIf to keep effects in order. It is emitted at
+    /// `paths[i]` inside every condition it left (outermost first), as an `Option`, and rebound in `home` --
+    /// the scope its consumers read it in, where those conditions are known to hold.
+    guarded: HashMap<usize, (Vec<Guard>, ScopePath)>,
+}
+
+/// WORKAROUND (r178, replaced by r179): does an effect at node `i`, leaving an arm whose `if` is decided by
+/// `cond`, keep that condition? Core IR does not record which branch an effect was written in, so it is
+/// inferred from node order, which is source order (axis-lang-lab `Builder::push_node` appends; `nf_lowering`
+/// lowers a let's value before its body, and an `if`'s condition before its then-arm before its else-arm
+/// before the `CIf`; effectful calls are never shared). An effect written inside a branch therefore always
+/// comes AFTER that `if`'s condition: guard it. One that comes BEFORE the condition ran before the `if` was
+/// even decided -- a top-level `let` whose value only a branch uses -- so it was never conditional on it: it
+/// stays unconditional at that level, where the bridge always placed it. A constant condition is always
+/// available.
+///
+/// A condition before the effect does not settle it on its own: `if empty {..}` may test a `let` bound long
+/// before, with the effect a later top-level `let` (av_admit's `body`, gfx3gate's `c2`). `outside_witness`
+/// settles that case. nf_lowering lowers an `if`'s arms in one contiguous run of node indices that ends at the
+/// `CIf`, and every node created in that run feeds the `CIf`'s then/else edge through nodes created in the same
+/// run (an arm-local discarded effect is seq-threaded into the arm's result). So a node created between the
+/// effect and the `CIf` that does NOT -- the next statement's condition, a counter written at top level -- was
+/// created before the arms were begun, and so was the effect: it was not written in them, and stays
+/// unconditional. An effectful call there used outside the `if` proves the same (the lab never shares one, so it
+/// cannot have been created in an arm and reused outside). What node order cannot separate stays as the
+/// emitter has always read it: `let c = ..; let x = eff(); <lets used only in the arm>; if c { x }` reads as
+/// written in the branch.
+fn guard_this_level(cond: &NodeRef, i: usize, outside_witness: bool) -> bool {
+    !outside_witness
+        && match cond {
+            NodeRef::Pool(_) => true,
+            NodeRef::Node(c) => (*c as usize) < i,
+        }
+}
 
 enum Use {
     /// This node is the bundle's final result — always required at top level.
@@ -2140,7 +2190,7 @@ fn longest_common_prefix(paths: &[ScopePath]) -> ScopePath {
 fn compute_branch_paths(
     bundle: &CoreBundle,
     pure_det: &std::collections::HashSet<Hash256>,
-) -> Result<Vec<Vec<ScopePath>>, String> {
+) -> Result<Placement, String> {
     let n = bundle.nodes.len();
     let mut uses: Vec<Vec<Use>> = (0..n).map(|_| Vec::new()).collect();
     // `bundle.result` — not "the last node" — is the authoritative root (see
@@ -2173,6 +2223,53 @@ fn compute_branch_paths(
         }
     }
 
+    // `CIf` counts as effectful (it may gate sunk effects); unknown identities count as effectful (absent
+    // implies ordered).
+    let effect: Vec<bool> = bundle
+        .nodes
+        .iter()
+        .map(|node| match node {
+            Node::CCall { target_identity, args, .. } => {
+                !call_is_pure_det(target_identity, args, &bundle.constant_pool, pure_det)
+            }
+            Node::CIf { .. } => true,
+            Node::CDeterminate => false,
+        })
+        .collect();
+
+    // EFFECT_ORDER_V1, part 2: an `if` gates effects only when an effect sits in one of its arms. A `CIf`
+    // whose arms hold none -- a plain `bool_and` lowers to one -- is not an effect for the ordering rule.
+    // Arm membership comes from the plain data-edge scopes, before any effect is moved: moving an effect only
+    // ever takes it OUT of arms, so an arm found effect-free here stays effect-free.
+    let mut arm_effect = vec![false; n];
+    let mut lcp: Vec<ScopePath> = vec![Vec::new(); n];
+    {
+        for i in (0..n).rev() {
+            let required: Vec<ScopePath> = uses[i]
+                .iter()
+                .map(|u| match u {
+                    Use::Result => Vec::new(),
+                    Use::Same(j) => lcp[*j as usize].clone(),
+                    Use::ThenArm(j) => [&lcp[*j as usize][..], &[(*j, Branch::Then)]].concat(),
+                    Use::ElseArm(j) => [&lcp[*j as usize][..], &[(*j, Branch::Else)]].concat(),
+                })
+                .collect();
+            lcp[i] = longest_common_prefix(&required);
+            if effect[i] && matches!(bundle.nodes[i], Node::CCall { .. }) {
+                for &(k, _) in &lcp[i] {
+                    arm_effect[k as usize] = true;
+                }
+            }
+        }
+    }
+    // an effect for the ordering rule: an effectful call, or an `if` with an effect in an arm
+    let orders = |idx: usize| -> bool {
+        match &bundle.nodes[idx] {
+            Node::CIf { .. } => arm_effect[idx],
+            _ => effect[idx],
+        }
+    };
+
     // GUARDED_SHARED_PURE_V1: a pure, deterministic node may be needed in SEVERAL scopes that share no
     // arm -- e.g. the same `str_char_code(s, i)` guarded by two different `if`s (node interning makes it one
     // node). Hoisting it to their common prefix (the top level) ran it unguarded: a crash exactly when every
@@ -2182,20 +2279,27 @@ fn compute_branch_paths(
     // an effect once per arm would change how many times it runs.
     let mut paths: Vec<Vec<ScopePath>> = (0..n).map(|_| vec![Vec::new()]).collect();
     let mut path: Vec<ScopePath> = (0..n).map(|_| Vec::new()).collect();
+    let mut guarded: HashMap<usize, (Vec<Guard>, ScopePath)> = HashMap::new();
     for i in (0..n).rev() {
+        // the scopes a use by node `j` puts its operand in: inside `j`'s condition wrapper when `j` is guarded
+        let scopes_of = |j: u32| -> Vec<ScopePath> {
+            if guarded.contains_key(&(j as usize)) {
+                vec![[&paths[j as usize][0][..], &[(j, Branch::Guard)]].concat()]
+            } else {
+                paths[j as usize].clone()
+            }
+        };
         let required: Vec<ScopePath> = uses[i]
             .iter()
             .flat_map(|u| -> Vec<ScopePath> {
                 match u {
                     Use::Result => vec![Vec::new()],
-                    Use::Same(j) => paths[*j as usize].clone(),
-                    Use::ThenArm(j) => paths[*j as usize].iter().map(|p| {
-                        let mut p = p.clone();
+                    Use::Same(j) => scopes_of(*j),
+                    Use::ThenArm(j) => scopes_of(*j).into_iter().map(|mut p| {
                         p.push((*j, Branch::Then));
                         p
                     }).collect(),
-                    Use::ElseArm(j) => paths[*j as usize].iter().map(|p| {
-                        let mut p = p.clone();
+                    Use::ElseArm(j) => scopes_of(*j).into_iter().map(|mut p| {
                         p.push((*j, Branch::Else));
                         p
                     }).collect(),
@@ -2209,28 +2313,7 @@ fn compute_branch_paths(
         // defined meaning for such a node, which the producer upholds by
         // seq-threading any arm-local discarded effect into its arm result.
         path[i] = longest_common_prefix(&required);
-        // EFFECT_ORDER_V1: sinking is unconditionally safe only for values.
-        // An effectful node written before the `CIf` (its consumers all sit in
-        // one arm) must NOT be deferred into the arm if that would let a
-        // later-indexed effectful node at an OUTER scope run before it — that
-        // reorders effects relative to program order (the cursor_get-after-
-        // cursor_close bug). Unsink one level at a time until no outer
-        // effectful node sits between this node and the CIf it would defer to.
-        // Arm-local effects (seq-threaded by nf_lowering into the arm result,
-        // with no outer effect between them and their CIf) never trip this,
-        // so BRANCH_SCOPING_V1 semantics are preserved. `CIf` counts as
-        // effectful (it may gate sunk effects); unknown identities count as
-        // effectful (absent implies ordered).
-        let effectful = |idx: usize| -> bool {
-            match &bundle.nodes[idx] {
-                Node::CCall { target_identity, args, .. } => {
-                    !call_is_pure_det(target_identity, args, &bundle.constant_pool, pure_det)
-                }
-                Node::CIf { .. } => true,
-                Node::CDeterminate => false,
-            }
-        };
-        let pure_value = !effectful(i);
+        let pure_value = !effect[i];
         if pure_value && required.len() > 1 {
             // the minimal scopes: drop any required scope that another required scope encloses
             let mut minimal: Vec<ScopePath> = Vec::new();
@@ -2246,35 +2329,141 @@ fn compute_branch_paths(
         } else {
             paths[i] = vec![path[i].clone()];
         }
-        if effectful(i) {
-            while let Some(&(k, _)) = path[i].last() {
+        // EFFECT_ORDER_V1: sinking is unconditionally safe only for values.
+        // An effectful node written before the `CIf` (its consumers all sit in
+        // one arm) must NOT be deferred into the arm if that would let a
+        // later-indexed effectful node at an OUTER scope run before it — that
+        // reorders effects relative to program order (the cursor_get-after-
+        // cursor_close bug). It moves out one level at a time until no outer
+        // effect sits between it and the CIf it would defer to.
+        //
+        // A branch's guard is never dropped (WORKAROUND r178, see
+        // `guard_this_level`). Leaving the arm of an `if` whose condition
+        // comes before it -- it was written in that branch -- it takes the
+        // condition with it: it is emitted at the earlier position as
+        // `if <every condition it keeps> { Some(<effect>) } else { None }`,
+        // and its consumers, which all sit inside those arms, read the value
+        // back there. Moving it out of its branch with no condition -- the
+        // old `path[i].pop()` alone -- ran an arm's write whichever way the
+        // `if` went. Leaving the arm of an `if` whose condition comes after
+        // it, it stays unconditional at that level: it ran before that `if`.
+        // Arm-local effects (seq-threaded by nf_lowering into the arm result,
+        // with no outer effect between them and their CIf) never move, so
+        // BRANCH_SCOPING_V1 semantics are preserved.
+        // a node between node `i` and CIf `k` that was not created while lowering `k`'s arms (see `guard_this_level`)
+        let outside_witness = |i: usize, k: u32| -> bool {
+            let (lo, k) = (i + 1, k as usize);
+            if lo >= k {
+                return false;
+            }
+            // feeds[j - lo]: node j reaches k's then/else edge through nodes created before k
+            let mut feeds = vec![false; k - lo];
+            for j in (lo..k).rev() {
+                feeds[j - lo] = uses[j].iter().any(|u| match u {
+                    Use::ThenArm(c) | Use::ElseArm(c) if *c as usize == k => true,
+                    Use::Same(c) | Use::ThenArm(c) | Use::ElseArm(c) => (*c as usize) < k && feeds[*c as usize - lo],
+                    Use::Result => false,
+                });
+            }
+            (lo..k).any(|j| {
+                !feeds[j - lo]
+                    || (matches!(bundle.nodes[j], Node::CCall { .. }) && effect[j] && !lcp[j].iter().any(|&(x, _)| x as usize == k))
+            })
+        };
+        if effect[i] {
+            let home = path[i].clone();
+            let mut guards: Vec<Guard> = Vec::new();
+            while let Some(&(k, arm)) = path[i].last() {
+                // A level the effect was not written in (see `guard_this_level`) keeps the old bridge's placement
+                // exactly: any `if` between counts, as it always did. Only a level it WAS written in uses the
+                // narrower rule -- an `if` with no effect in its arms does not count -- and keeps its condition.
+                let written_in = match (arm, &bundle.nodes[k as usize]) {
+                    (Branch::Guard, _) => true,
+                    (_, Node::CIf { cond, .. }) => guard_this_level(cond, i, outside_witness(i, k)),
+                    _ => true,
+                };
                 let k = k as usize;
                 let reordered = ((i + 1)..k).any(|j| {
-                    effectful(j)
+                    (if written_in { orders(j) } else { effect[j] })
                         && path[j].len() < path[i].len()
                         && path[i][..path[j].len()] == path[j][..]
                 });
-                if reordered {
-                    path[i].pop();
-                } else {
+                if !reordered {
                     break;
                 }
+                let (k, arm) = path[i].pop().expect("the loop saw a last scope");
+                let left: Vec<Guard> = match (arm, &bundle.nodes[k as usize]) {
+                    // out of another moved effect's wrapper: the conditions it runs under
+                    (Branch::Guard, _) => guarded[&(k as usize)].0.clone(),
+                    (_, Node::CIf { cond, .. }) => vec![Guard { cif: k, cond: cond.clone(), arm }],
+                    (_, other) => unreachable!("scope ({}, {:?}) names node {:?}, not a CIf", k, arm, other),
+                };
+                let keeps = |g: &Guard| guard_this_level(&g.cond, i, outside_witness(i, g.cif));
+                let kept: Vec<Guard> = left.iter().filter(|g| keeps(g)).cloned().collect();
+                // every condition left behind must be one the effect ran before
+                assert!(
+                    left.iter().all(|g| kept.iter().any(|h| h.cif == g.cif) || !keeps(g)),
+                    "EFFECT_ORDER_V1: node {} left scope ({}, {:?}) without a condition it was written under",
+                    i, k, arm
+                );
+                guards.splice(0..0, kept);
+            }
+            if !guards.is_empty() {
+                guarded.insert(i, (guards, home));
             }
             paths[i] = vec![path[i].clone()];
         }
     }
-    Ok(paths)
+
+    // A kept condition comes before the effect in node order, but it must also be visible where the effect is
+    // now emitted: computed in that scope or an enclosing one, not inside the arm of an `if` the effect now
+    // runs ahead of. Otherwise the program asks for an effect inside a branch to run before an effect outside
+    // it, under a condition that only exists once that branch runs: contradictory, and the build fails.
+    for (&i, (guards, _)) in &guarded {
+        let at = &paths[i][0];
+        for g in guards {
+            let NodeRef::Node(c) = g.cond else { continue };
+            let ps = &paths[c as usize];
+            if ps.iter().any(|p| p.len() <= at.len() && at[..p.len()] == p[..]) {
+                continue;
+            }
+            let (k2, arm2) = ps[0].iter().zip(at.iter().chain(std::iter::repeat(&(u32::MAX, Branch::Guard))))
+                .find(|(x, y)| x != y)
+                .map(|(x, _)| *x)
+                .expect("a scope that does not enclose `at` differs from it somewhere");
+            return Err(format!(
+                "EFFECT_ORDER_V1 (WORKAROUND r178): node {} ({}) must run before a later effect, so it leaves the \
+                 {:?} arm of if node {}; that if's condition, node {}, is computed inside the {:?} arm of if node \
+                 {}, which has not run where node {} must run",
+                i, node_label(&bundle.nodes[i]), g.arm, g.cif, c, arm2, k2, i
+            ));
+        }
+    }
+    Ok(Placement { paths, guarded })
+}
+
+fn node_label(node: &Node) -> String {
+    match node {
+        Node::CCall { target_name, .. } => target_name.clone(),
+        Node::CIf { .. } => "if".to_string(),
+        Node::CDeterminate => "determinate".to_string(),
+    }
 }
 
 /// Group node indices by the innermost scope they were assigned — `None` is
 /// the unconditional top-level prelude; `Some((k, arm))` is the direct
 /// contents of that arm of CIf `k`. Order within each group is ascending by
 /// index, matching the bundle's required topological order.
-fn group_by_scope(n: usize, paths: &[Vec<ScopePath>]) -> HashMap<Option<(u32, Branch)>, Vec<usize>> {
+/// A guarded node is in two groups: where it runs, and `home`, where it is
+/// read back.
+fn group_by_scope(n: usize, placement: &Placement) -> HashMap<Option<(u32, Branch)>, Vec<usize>> {
     let mut groups: HashMap<Option<(u32, Branch)>, Vec<usize>> = HashMap::new();
     for i in 0..n {
-        for p in &paths[i] {
-            let key = p.last().copied();
+        let mut keys: Vec<Option<(u32, Branch)>> = placement.paths[i].iter().map(|p| p.last().copied()).collect();
+        if let Some((_, home)) = placement.guarded.get(&i) {
+            keys.push(home.last().copied());
+        }
+        for key in keys {
             let g = groups.entry(key).or_default();
             if g.last() != Some(&i) {
                 g.push(i);
@@ -2291,6 +2480,7 @@ fn group_by_scope(n: usize, paths: &[Vec<ScopePath>]) -> HashMap<Option<(u32, Br
 fn render_scope(
     key: Option<(u32, Branch)>,
     groups: &HashMap<Option<(u32, Branch)>, Vec<usize>>,
+    placement: &Placement,
     bundle: &CoreBundle,
     pool_kinds: &[PoolKind],
     arg_kind_table: &HashMap<&'static str, Vec<ArgKind>>,
@@ -2305,6 +2495,18 @@ fn render_scope(
     let mut out = String::new();
     let Some(indices) = groups.get(&key) else { return Ok(out) };
     for &i in indices {
+        // EFFECT_ORDER_V1: a guarded node is read back in `home`, inside every condition it ran under
+        let guarded = placement.guarded.get(&i);
+        if let Some((_, home)) = guarded {
+            if key == home.last().copied() {
+                out.push_str(&format!(
+                    "    let node_{i}: Value = match node_{i}_g {{ Some(v) => v, None => unreachable!(\"EFFECT_ORDER_V1: node {i} is read only where its conditions held\") }};\n"
+                ));
+                continue;
+            }
+        }
+        let mut stmt = String::new();
+        let out_outer = std::mem::take(&mut out);
         match &bundle.nodes[i] {
             Node::CIf { cond, then_, else_ } => {
                 // cond / then / else are Data positions. A Fn-typed pool ref
@@ -2323,11 +2525,11 @@ fn render_scope(
                     }
                 }
                 let then_body = render_scope(
-                    Some((i as u32, Branch::Then)), groups, bundle, pool_kinds,
+                    Some((i as u32, Branch::Then)), groups, placement, bundle, pool_kinds,
                     arg_kind_table, native_call_table, builtin, registry, name_to_path, xbundle, pure_det, moves,
                 )?;
                 let else_body = render_scope(
-                    Some((i as u32, Branch::Else)), groups, bundle, pool_kinds,
+                    Some((i as u32, Branch::Else)), groups, placement, bundle, pool_kinds,
                     arg_kind_table, native_call_table, builtin, registry, name_to_path, xbundle, pure_det, moves,
                 )?;
                 out.push_str(&format!(
@@ -2350,6 +2552,33 @@ fn render_scope(
                 )
                 .map_err(|e| format!("node[{}]: {}", i, e))?;
                 out.push_str(&format!("    let node_{}: Value = {};\n", i, expr));
+            }
+        }
+        std::mem::swap(&mut out, &mut stmt);
+        out = out_outer;
+        match guarded {
+            None => out.push_str(&stmt),
+            Some((guards, _)) => {
+                // its arm-local inputs run under its conditions too
+                let inputs = render_scope(
+                    Some((i as u32, Branch::Guard)), groups, placement, bundle, pool_kinds,
+                    arg_kind_table, native_call_table, builtin, registry, name_to_path, xbundle, pure_det, moves,
+                )?;
+                let mut wrapped = format!("{{\n{inputs}{stmt}        Some(node_{i})\n    }}");
+                for g in guards.iter().rev() {
+                    let c = ref_expr(&g.cond);
+                    let not = match g.arm {
+                        Branch::Then => "",
+                        Branch::Else => "!",
+                        Branch::Guard => unreachable!("a guard is a CIf arm"),
+                    };
+                    // the arm runs only on a decided condition (FAULT_AS_UNKNOWN), so the guard asks the same
+                    wrapped = format!(
+                        "if !(axis_codegen_bridge::runtime::fault::is_unknown(&{c}) || axis_codegen_bridge::runtime::fault::is_err(&{c})) && {not}axis_codegen_bridge::runtime::value::truthy(&{c}) {wrapped} else {{ None }}"
+                    );
+                    wrapped = format!("{{\n    {wrapped}\n    }}");
+                }
+                out.push_str(&format!("    let node_{i}_g: Option<Value> = {wrapped};\n"));
             }
         }
     }
@@ -2981,15 +3210,16 @@ pub fn emit_rust_lib_from_bundle_with_dispatch(
     // elsewhere (shared between arms, referenced by `cond`, or used outside
     // any `CIf`) stay hoisted at the unconditional top level, exactly as
     // before.
-    let branch_paths = compute_branch_paths(bundle, pure_det)?;
-    let scope_groups = group_by_scope(bundle.nodes.len(), &branch_paths);
+    let placement = compute_branch_paths(bundle, pure_det)?;
+    let scope_groups = group_by_scope(bundle.nodes.len(), &placement);
     let top_level: std::collections::HashSet<u32> =
         scope_groups.get(&None).map(|v| v.iter().map(|i| *i as u32).collect()).unwrap_or_default();
-    let copies: Vec<usize> = branch_paths.iter().map(|p| p.len()).collect();
+    let copies: Vec<usize> = placement.paths.iter().map(|p| p.len()).collect();
     let moves = last_uses(bundle, &top_level, &copies);
     out.push_str(&render_scope(
         None,
         &scope_groups,
+        &placement,
         bundle,
         &pool_kinds,
         &arg_kind_table,

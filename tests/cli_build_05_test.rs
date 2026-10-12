@@ -1419,3 +1419,355 @@ fn test_build_cache_tracks_provider_crate_submodule() {
     assert_eq!(edited.matches("rustc: 1 compiled, 0 cached").count(), 2, "{}", edited);
     assert_eq!(run_stdout(&exe), "63", "cache missed the edited provider sub-module");
 }
+
+// ── EFFECT_ORDER_V1: an effect moved out of its `if` keeps its condition ─────
+//
+// WORKAROUND (r178, replaced by r179). An effect consumed only inside an arm, with a later effect at an outer
+// scope between it and its `if`, has to run before that later effect. It used to be moved out of the arm with
+// no condition at all, so an arm's write ran whichever way the `if` went. Now, by node order (= source order):
+// an effect after its `if`'s condition was written in that branch and keeps the condition; an effect before
+// it ran before the `if` was decided (a top-level `let` only a branch uses) and stays unconditional.
+
+fn eo_int(v: i64) -> ConstantPoolEntry {
+    ConstantPoolEntry { def_hash: int_type_hash(), payload: encode_int_payload(v) }
+}
+
+fn eo_bool(v: bool) -> ConstantPoolEntry {
+    ConstantPoolEntry { def_hash: bool_type_hash(), payload: encode_bool_payload(v) }
+}
+
+fn eo_text(s: &str) -> ConstantPoolEntry {
+    ConstantPoolEntry {
+        def_hash: axis_codegen_bridge::core_ir_05::text_type_hash(),
+        payload: axis_codegen_bridge::core_ir_05::encode_text_payload(s),
+    }
+}
+
+fn eo_call(name: &str, args: Vec<NodeRef>) -> Node {
+    Node::CCall { target_identity: sha256_bytes(name.as_bytes()), target_name: name.to_string(), args }
+}
+
+fn eo_if(cond: NodeRef, then_: NodeRef, else_: NodeRef) -> Node {
+    Node::CIf { cond, then_, else_ }
+}
+
+const EO_PURE: &[&str] = &["tuple_field", "int_eq", "int_lt", "int_div", "int_to_str", "str_eq", "str_concat"];
+
+/// Build `coreir` as an exe -- with a registry declaring `pure` pure + deterministic -- and run it with `argv`.
+/// Ok((stdout, generated Rust)) on a clean run, Err(build stderr) when the build fails.
+fn eo_run_file(coreir: &std::path::Path, argv: &[&str], pure: &[&str]) -> Result<(String, String), String> {
+    let dir = TempDir::new().unwrap();
+    let mut reg = "registry effect-order-test 0.5\n\n".to_string();
+    for f in pure {
+        let ident: String = sha256_bytes(f.as_bytes()).iter().map(|b| format!("{:02x}", b)).collect();
+        reg.push_str(&format!(
+            "fn {f}\n  identity 0x{ident}\n  kind leaf\n  in (Value)\n  out Value\n  effect pure\n  \
+             deterministic true\n  idempotent true\nend\n\n"
+        ));
+    }
+    let reg_path = dir.path().join("pure.axreg");
+    std::fs::write(&reg_path, reg).unwrap();
+    let out = dir.path().join("eo");
+    let build = Command::new(bridge())
+        .args(["build", coreir.to_str().unwrap(), "--out", out.to_str().unwrap(), "--exe",
+               "--reg", reg_path.to_str().unwrap()])
+        .output()
+        .expect("bridge failed to run");
+    if !build.status.success() {
+        return Err(String::from_utf8_lossy(&build.stderr).into_owned());
+    }
+    let run = Command::new(&out).args(argv).output().expect("failed to run exe");
+    assert_eq!(run.status.code(), Some(0), "{}: stderr: {}", coreir.display(), String::from_utf8_lossy(&run.stderr));
+    let generated = std::fs::read_to_string(dir.path().join("generated_lib.rs")).unwrap_or_default();
+    Ok((String::from_utf8_lossy(&run.stdout).trim().to_string(), generated))
+}
+
+fn eo_run(name: &str, bundle: &CoreBundle, pure: &[&str]) -> Result<(String, String), String> {
+    let dir = TempDir::new().unwrap();
+    let fixture = write_05_bundle(&dir, &format!("{name}.coreir"), bundle);
+    eo_run_file(&fixture, &[], pure)
+}
+
+fn eo_fixture(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/effect_order").join(name)
+}
+
+#[test]
+fn test_effect_order_two_shapes_from_one_source_file() {
+    // tests/fixtures/effect_order/two_shapes.m1, compiled by the lab. Shape 1 (written in a branch whose
+    // condition is false) must not write slot 8; shape 2 (a top-level let only a branch uses, condition false)
+    // must write slot 16 -- both are moved ahead of a later outer effect.
+    let (out, generated) = eo_run_file(&eo_fixture("two_shapes.coreir"), &[], EO_PURE).unwrap();
+    assert_eq!(out, "0\n5", "slot 8 (guarded write), slot 16 (unconditional write)");
+    assert!(generated.contains("let node_6_g: Option<Value>"), "shape 1's write must be guarded:\n{generated}");
+    assert!(!generated.contains("node_16_g"), "shape 2's write must stay unconditional:\n{generated}");
+}
+
+#[test]
+fn test_effect_order_gr_cf_run_cursor_get_before_close() {
+    // the original EFFECT_ORDER_V1 case, from source: cursor_get (a top-level let), cursor_close, then the `if`
+    for (err, want) in [("", "Kabc"), ("bad", "Xbad")] {
+        let (out, _) = eo_run_file(&eo_fixture("gr_cf_run_shape.coreir"), &[err], EO_PURE).unwrap();
+        assert_eq!(out, want, "err={err:?}");
+    }
+}
+
+/// The lab's lowering of
+///   let p = tuple_field(mem_reserve_raw(64), 0); let z = mem_read_int_raw(p, 0)
+///   let f = int_eq(z, 0); let g = int_eq(z, 1); let h = int_lt(z, 5)
+///   let _x = if <c1> { mem_write_int_raw(p, 8, 1) } else { if <c2> { io_print("") } else { io_print("") } }
+///   let _y = if <c2> { io_print("") } else { io_print("") }
+///   io_println(int_to_str(mem_read_int_raw(p, 8)))
+/// with `c1 = bool_and(f, g)`, `c2 = bool_and(f, h)` (each an `if`; c2 is one node shared by `_x` and `_y`),
+/// or -- the control -- `c1 = g`, `c2 = h`. z is 0, so g is false and the write must not run: prints 0.
+fn eo_repro(bool_and: bool) -> CoreBundle {
+    let n = NodeRef::Node;
+    let p = NodeRef::Pool;
+    let mut nodes = vec![
+        eo_call("mem_reserve_raw", vec![p(0)]),
+        eo_call("tuple_field", vec![n(0), p(1)]),
+        eo_call("mem_read_int_raw", vec![n(1), p(1)]),
+        eo_call("int_eq", vec![n(2), p(1)]), // 3: f
+        eo_call("int_eq", vec![n(2), p(2)]), // 4: g
+        eo_call("int_lt", vec![n(2), p(3)]), // 5: h
+    ];
+    let (c1, c2) = if bool_and {
+        nodes.push(eo_if(n(3), n(4), p(4))); // 6: bool_and(f, g)
+        (6, 8)
+    } else {
+        (4, 5)
+    };
+    let w = nodes.len() as u32;
+    nodes.push(eo_call("mem_write_int_raw", vec![n(1), p(5), p(2)]));
+    if bool_and {
+        nodes.push(eo_if(n(3), n(5), p(4))); // 8: bool_and(f, h)
+    }
+    let k = nodes.len() as u32;
+    nodes.push(eo_call("io_print", vec![p(6)]));
+    nodes.push(eo_call("io_print", vec![p(6)]));
+    nodes.push(eo_if(n(c2), n(k), n(k + 1)));
+    nodes.push(eo_if(n(c1), n(w), n(k + 2)));
+    let k = nodes.len() as u32;
+    nodes.push(eo_call("io_print", vec![p(6)]));
+    nodes.push(eo_call("io_print", vec![p(6)]));
+    nodes.push(eo_if(n(c2), n(k), n(k + 1)));
+    let r = nodes.len() as u32;
+    nodes.push(eo_call("mem_read_int_raw", vec![n(1), p(5)]));
+    nodes.push(eo_call("int_to_str", vec![n(r)]));
+    nodes.push(eo_call("io_println", vec![n(r + 1)]));
+    CoreBundle {
+        version: "0.5".to_string(),
+        constant_pool: vec![eo_int(64), eo_int(0), eo_int(1), eo_int(5), eo_bool(false), eo_int(8), eo_text("")],
+        nodes,
+        result: NodeRef::Node(r + 2),
+    }
+}
+
+#[test]
+fn test_effect_order_nested_if_effect_hoist_repro_prints_0() {
+    // with the registry: the bool_and ifs are pure, so they are no effect to keep in order and nothing moves
+    // (EFFECT_ORDER_V1 part 2) -- no guarded wrapper is emitted at all
+    for (name, bool_and) in [("eo_repro", true), ("eo_control", false)] {
+        let (out, generated) = eo_run(name, &eo_repro(bool_and), EO_PURE).unwrap();
+        assert_eq!(out, "0", "{name}");
+        assert!(generated.contains("mem_write_int_raw"), "{name}: generated source not found");
+        assert!(!generated.contains("_g: Option<Value>"), "{name}: a write moved out of its if:\n{generated}");
+    }
+}
+
+#[test]
+fn test_effect_order_nested_if_effect_hoist_repro_moved_write_keeps_its_condition() {
+    // without the registry every call is an effect, so the then-arm write really must move ahead of the
+    // shared `if` -- and must still not run, since its condition is false
+    assert_eq!(eo_run("eo_repro_moved", &eo_repro(true), &[]).unwrap().0, "0");
+    assert_eq!(eo_run("eo_control_moved", &eo_repro(false), &[]).unwrap().0, "0");
+}
+
+/// `if c { mem_write_int_raw(p, 8, int_div(7, x)) } else { j }` with `c = int_eq(x, 1)`, where `j` is
+/// `bool_and(true, h)` over `h = mem_write_int_raw(p, 8, 9)` (a let bound earlier, so it lands in j's arm): one
+/// shared `if`, used again after the outer `if` -- the shape the lab produces when the same `bool_and` appears
+/// in a branch and after it. j sits between the write and its `if`, so the write must run there, after h
+/// (h comes first in program order): slot 8 ends 7 when c holds; when it doesn't, neither the write nor its
+/// input `int_div(7, x)` -- which divides by zero for x = 0 -- runs, and slot 8 ends 9.
+fn eo_moved_write(x: i64) -> CoreBundle {
+    let n = NodeRef::Node;
+    let p = NodeRef::Pool;
+    CoreBundle {
+        version: "0.5".to_string(),
+        constant_pool: vec![eo_int(64), eo_int(0), eo_int(1), eo_int(7), eo_int(x), eo_int(8), eo_bool(true), eo_int(9)],
+        nodes: vec![
+            eo_call("mem_reserve_raw", vec![p(0)]),
+            eo_call("tuple_field", vec![n(0), p(1)]),
+            eo_call("int_eq", vec![p(4), p(2)]),                 // 2: c
+            eo_call("mem_write_int_raw", vec![n(1), p(5), p(7)]), // 3: h
+            eo_call("int_div", vec![p(3), p(4)]),                // 4
+            eo_call("mem_write_int_raw", vec![n(1), p(5), n(4)]), // 5: the write, in 7's then-arm
+            eo_if(p(6), n(3), p(1)),                             // 6: j, shared
+            eo_if(n(2), n(5), n(6)),                             // 7
+            eo_call("mem_read_int_raw", vec![n(1), p(5)]),
+            eo_call("int_to_str", vec![n(8)]),
+            eo_call("io_println", vec![n(9)]),
+            eo_call("seq", vec![n(6), n(10)]),                  // 11: j's use after the outer `if`
+        ],
+        result: NodeRef::Node(11),
+    }
+}
+
+#[test]
+fn test_effect_order_moved_write_runs_only_when_its_condition_holds() {
+    let (out, generated) = eo_run("eo_moved_t", &eo_moved_write(1), EO_PURE).unwrap();
+    assert_eq!(out, "7", "condition true: the write runs, after h and before the shared if");
+    assert!(generated.contains("let node_5_g: Option<Value>"), "{generated}");
+    assert_eq!(eo_run("eo_moved_f", &eo_moved_write(0), EO_PURE).unwrap().0, "9",
+               "condition false: neither the write nor its input runs");
+}
+
+#[test]
+fn test_effect_order_toplevel_let_with_an_outer_effect_between_stays_unconditional() {
+    // `let w = mem_write_int_raw(p, 8, 7); io_println(read(p, 8)); if c { w } else { 0 }` with c = false and
+    // computed BEFORE the write: c's position alone would say "written in the branch", but the println
+    // between w and the `if` is an effect the lab created outside the `if` -- so w is a top-level let and
+    // runs, before the println.
+    let n = NodeRef::Node;
+    let p = NodeRef::Pool;
+    let b = CoreBundle {
+        version: "0.5".to_string(),
+        constant_pool: vec![eo_int(64), eo_int(0), eo_int(1), eo_int(7), eo_int(8)],
+        nodes: vec![
+            eo_call("mem_reserve_raw", vec![p(0)]),
+            eo_call("tuple_field", vec![n(0), p(1)]),
+            eo_call("int_eq", vec![p(1), p(2)]),                 // 2: c (false)
+            eo_call("mem_write_int_raw", vec![n(1), p(4), p(3)]), // 3: w
+            eo_call("mem_read_int_raw", vec![n(1), p(4)]),
+            eo_call("int_to_str", vec![n(4)]),
+            eo_call("io_println", vec![n(5)]),                   // 6
+            eo_if(n(2), n(3), p(1)),
+        ],
+        result: NodeRef::Node(6),
+    };
+    let (out, generated) = eo_run("eo_toplevel", &b, EO_PURE).unwrap();
+    assert_eq!(out, "7");
+    assert!(!generated.contains("_g: Option<Value>"), "{generated}");
+}
+
+/// Two levels: the write sits in the then-arm of `if c2` which sits in the else-arm of `if c1`; it runs only
+/// when !c1 && c2. A shared `if` over an earlier write of 9 to the same slot -- the inner `if`'s else-arm, and used
+/// again after the outer one -- sits between it and both `if`s.
+fn eo_moved_two_levels(c1: bool, c2: bool) -> CoreBundle {
+    let n = NodeRef::Node;
+    let p = NodeRef::Pool;
+    CoreBundle {
+        version: "0.5".to_string(),
+        constant_pool: vec![eo_int(64), eo_int(0), eo_int(7), eo_int(8), eo_bool(c1), eo_bool(c2), eo_bool(true), eo_int(9)],
+        nodes: vec![
+            eo_call("mem_reserve_raw", vec![p(0)]),
+            eo_call("tuple_field", vec![n(0), p(1)]),
+            eo_call("mem_write_int_raw", vec![n(1), p(3), p(7)]), // 2: h
+            eo_call("mem_write_int_raw", vec![n(1), p(3), p(2)]), // 3
+            eo_if(p(6), n(2), p(1)),                             // 4: j
+            eo_if(p(5), n(3), n(4)),                             // 5
+            eo_if(p(4), p(1), n(5)),                             // 6
+            eo_call("mem_read_int_raw", vec![n(1), p(3)]),
+            eo_call("int_to_str", vec![n(7)]),
+            eo_call("io_println", vec![n(8)]),
+            eo_call("seq", vec![n(4), n(9)]),
+        ],
+        result: NodeRef::Node(10),
+    }
+}
+
+#[test]
+fn test_effect_order_moved_write_keeps_every_enclosing_condition() {
+    for (c1, c2, want) in [(false, true, "7"), (true, true, "9"), (false, false, "9"), (true, false, "9")] {
+        assert_eq!(eo_run("eo_two", &eo_moved_two_levels(c1, c2), EO_PURE).unwrap().0, want, "c1={c1} c2={c2}");
+    }
+}
+
+#[test]
+fn test_effect_order_contradictory_case_is_a_build_error() {
+    // The write (node 4) is in the then-arm of `if c2` (node 6), which is in the then-arm of `if true` (node 7);
+    // c2 (node 3) is computed inside node 7's arm, before the write. The shared `if` j (node 5) sits between
+    // the write and node 7, so the write must run before node 7's arm is entered -- where c2 does not exist yet.
+    let n = NodeRef::Node;
+    let p = NodeRef::Pool;
+    let b = CoreBundle {
+        version: "0.5".to_string(),
+        constant_pool: vec![eo_int(64), eo_int(0), eo_int(1), eo_int(7), eo_int(8), eo_bool(true)],
+        nodes: vec![
+            eo_call("mem_reserve_raw", vec![p(0)]),
+            eo_call("tuple_field", vec![n(0), p(1)]),
+            eo_call("mem_read_int_raw", vec![n(1), p(4)]),       // 2: h
+            eo_call("int_eq", vec![p(2), p(2)]),                 // 3: c2
+            eo_call("mem_write_int_raw", vec![n(1), p(4), p(3)]), // 4
+            eo_if(p(5), n(2), p(1)),                             // 5: j, node 6's else-arm and used after node 7
+            eo_if(n(3), n(4), n(5)),                             // 6
+            eo_if(p(5), n(6), p(1)),                             // 7
+            eo_call("seq", vec![n(5), n(7)]),
+        ],
+        result: NodeRef::Node(8),
+    };
+    let err = eo_run("eo_refused", &b, EO_PURE).expect_err("a contradictory placement must fail the build");
+    assert!(err.contains("EFFECT_ORDER_V1") && err.contains("node 4 (mem_write_int_raw)") && err.contains("if node 6")
+            && err.contains("node 3") && err.contains("Then arm of if node 7"), "{err}");
+}
+
+#[test]
+fn test_effect_order_toplevel_let_keeps_old_placement_past_a_pure_if() {
+    // `let w = mem_write_int_raw(p, 8, 7); let b = bool_and(true, int_eq(1, 1)); if c { w } else { 0 }` with
+    // c false and computed after w (nv_n_step's shape). w is a top-level let: the old bridge ran it
+    // unconditionally, because the `if` b sat between it and its consumer. b has no effect in its arms, which
+    // does not let w sink into the branch it was never written in.
+    let n = NodeRef::Node;
+    let p = NodeRef::Pool;
+    let b = CoreBundle {
+        version: "0.5".to_string(),
+        constant_pool: vec![eo_int(64), eo_int(0), eo_int(1), eo_int(7), eo_int(8), eo_bool(true), eo_bool(false)],
+        nodes: vec![
+            eo_call("mem_reserve_raw", vec![p(0)]),
+            eo_call("tuple_field", vec![n(0), p(1)]),
+            eo_call("mem_write_int_raw", vec![n(1), p(4), p(3)]), // 2: w
+            eo_call("int_eq", vec![p(2), p(2)]),
+            eo_if(p(5), n(3), p(6)),                             // 4: b, pure arms
+            eo_call("int_eq", vec![p(1), p(2)]),                 // 5: c (false)
+            eo_if(n(5), n(2), p(1)),                             // 6
+            eo_call("mem_read_int_raw", vec![n(1), p(4)]),
+            eo_call("int_to_str", vec![n(7)]),
+            eo_call("io_println", vec![n(8)]),
+            eo_call("seq", vec![n(4), n(9)]),
+        ],
+        result: NodeRef::Node(10),
+    };
+    assert_eq!(eo_run("eo_toplevel_pure_if", &b, EO_PURE).unwrap().0, "7");
+}
+
+#[test]
+fn test_effect_order_toplevel_let_under_a_condition_chain_stays_unconditional() {
+    // gfx3gate's g3_gate1: `let c1 = ..; let c2 = g3_check(..); return bool_and(bool_and(w, ..), bool_and(c1, c2))`.
+    // Here: c1 (node 2) is bound BEFORE the write w (node 3), and w is used only in `if c1 { w }` (node 6), which
+    // sits in the then-arm of `if x` (node 7). Node order alone says w comes after c1, as if written in that
+    // branch -- but `x` (nodes 4, 5: a pure bool_and) was created between w and node 6 and feeds node 7's
+    // condition, not node 6's arms: node 6's arms had not been begun when w was. w is a top-level let and runs,
+    // although x is false.
+    let n = NodeRef::Node;
+    let p = NodeRef::Pool;
+    let b = CoreBundle {
+        version: "0.5".to_string(),
+        constant_pool: vec![eo_int(64), eo_int(0), eo_int(1), eo_int(7), eo_int(8), eo_bool(true), eo_bool(false), eo_int(2)],
+        nodes: vec![
+            eo_call("mem_reserve_raw", vec![p(0)]),
+            eo_call("tuple_field", vec![n(0), p(1)]),
+            eo_call("int_eq", vec![p(2), p(2)]),                 // 2: c1
+            eo_call("mem_write_int_raw", vec![n(1), p(4), p(3)]), // 3: w
+            eo_call("int_eq", vec![p(2), p(7)]),                 // 4
+            eo_if(p(5), n(4), p(6)),                             // 5: x = bool_and(true, 1 == 2), false
+            eo_if(n(2), n(3), p(1)),                             // 6
+            eo_if(n(5), n(6), p(1)),                             // 7
+            eo_call("mem_read_int_raw", vec![n(1), p(4)]),
+            eo_call("int_to_str", vec![n(8)]),
+            eo_call("io_println", vec![n(9)]),
+            eo_call("seq", vec![n(7), n(10)]),
+        ],
+        result: NodeRef::Node(11),
+    };
+    assert_eq!(eo_run("eo_cond_chain", &b, EO_PURE).unwrap().0, "7");
+}

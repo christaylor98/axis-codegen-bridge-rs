@@ -1,0 +1,22 @@
+// EFFECT_ORDER_V1 (WORKAROUND r178): the two shapes the bridge tells apart by node order, in one file.
+// Compiled by axis-lang-lab to two_shapes.coreir; see tests/cli_build_05_test.rs.
+fn main() -> Unit {
+  let p = tuple_field(mem_reserve_raw(Int(64)), Int(0))
+  let z = mem_read_int_raw(p, Int(0))
+  let f = int_eq(z, Int(0))
+  let g = int_eq(z, Int(1))
+  let h = mem_read_int_raw(p, Int(24))
+  // Shape 1, written in a branch: the write is inside `if g` (g is false). `bool_and(f, int_eq(h, Int(0)))` is
+  // one shared `if` with an effect (the read of h) in its arm, and it sits between the write and its `if`, so
+  // the write has to run early: it must keep its condition and not run.
+  let _x = if g { mem_write_int_raw(p, Int(8), Int(1)) }
+           else { if bool_and(f, int_eq(h, Int(0))) { io_print(Text("")) } else { io_print(Text("")) } }
+  let _y = if bool_and(f, int_eq(h, Int(0))) { io_print(Text("")) } else { io_print(Text("")) }
+  // Shape 2, a top-level let used only in a branch: the write runs where it is written, before the `if` is
+  // decided (its condition is computed after it, and is false), with an effect in between. It must run.
+  let w = mem_write_int_raw(p, Int(16), Int(5))
+  let _o = io_print(Text(""))
+  let _v = if int_lt(z, Int(0)) { w } else { io_print(Text("")) }
+  let _p8 = io_println(int_to_str(mem_read_int_raw(p, Int(8))))
+  io_println(int_to_str(mem_read_int_raw(p, Int(16))))
+}
