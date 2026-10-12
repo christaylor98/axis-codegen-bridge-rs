@@ -540,3 +540,48 @@ mod shared_bytes_tests {
         assert_eq!(ptr(&w), before);
     }
 }
+
+// ── number packing for frames (F24 slice 0, approved by Chris 2026-10-12) ───────────────────────────────────────────
+// Little-endian u32 and f32 appended to Bytes and read back at an offset. Strict like bytes_push / bytes_slice: a value
+// out of range, a non-Float, or an offset that leaves the blob panics. f32 goes through the machine conversion f64 -> f32
+// (a Float is an f64): 0, -0.0, large, infinities and quiet NaN payloads round-trip bit for bit; a signalling NaN is
+// quietened by the hardware. The raw bits are always readable as a u32.
+
+/// `bytes_push_u32le(b: Bytes, n: Int) -> Bytes` — `n` in `0..=4294967295`.
+#[track_caller]
+pub fn bytes_push_u32le(mut bytes: super::value::BytesBuf, n: i64) -> Value {
+    if !(0..=0xFFFF_FFFF).contains(&n) { panic!("bytes_push_u32le: {} is not a u32 value (0..=4294967295)", n) }
+    bytes.extend_from_slice(&(n as u32).to_le_bytes());
+    Value::Bytes(bytes.into())
+}
+
+/// `bytes_push_f32le(b: Bytes, x: Float) -> Bytes` — the four little-endian bytes of `x as f32`.
+#[track_caller]
+pub fn bytes_push_f32le(mut bytes: super::value::BytesBuf, x: Value) -> Value {
+    match x {
+        Value::Float(f) => bytes.extend_from_slice(&(f as f32).to_le_bytes()),
+        _ => panic!("bytes_push_f32le: expected Float"),
+    }
+    Value::Bytes(bytes.into())
+}
+
+#[track_caller]
+fn word_at(fname: &str, bytes: &super::value::BytesBuf, off: i64) -> [u8; 4] {
+    if off < 0 || (off as usize).checked_add(4).map_or(true, |end| end > bytes.len()) {
+        panic!("{}: offset {} leaves Bytes of len {}", fname, off, bytes.len());
+    }
+    let o = off as usize;
+    [bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]]
+}
+
+/// `bytes_get_u32le(b: Bytes, off: Int) -> Int` — the little-endian u32 at `off`.
+#[track_caller]
+pub fn bytes_get_u32le(bytes: super::value::BytesBuf, off: i64) -> Value {
+    Value::Int(u32::from_le_bytes(word_at("bytes_get_u32le", &bytes, off)) as i64)
+}
+
+/// `bytes_get_f32le(b: Bytes, off: Int) -> Float` — the little-endian f32 at `off`, widened to a Float.
+#[track_caller]
+pub fn bytes_get_f32le(bytes: super::value::BytesBuf, off: i64) -> Value {
+    Value::Float(f32::from_le_bytes(word_at("bytes_get_f32le", &bytes, off)) as f64)
+}

@@ -634,6 +634,11 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     // width-named codecs below compose from these in M1.
     m.insert("bytes_get",            "axis_codegen_bridge::runtime::bytes_codec::bytes_get");
     m.insert("bytes_push",           "axis_codegen_bridge::runtime::bytes_codec::bytes_push");
+    // Number packing for frames (F24 slice 0, Chris approved 2026-10-12): little-endian u32 and f32.
+    m.insert("bytes_push_u32le",     "axis_codegen_bridge::runtime::bytes_codec::bytes_push_u32le");
+    m.insert("bytes_push_f32le",     "axis_codegen_bridge::runtime::bytes_codec::bytes_push_f32le");
+    m.insert("bytes_get_u32le",      "axis_codegen_bridge::runtime::bytes_codec::bytes_get_u32le");
+    m.insert("bytes_get_f32le",      "axis_codegen_bridge::runtime::bytes_codec::bytes_get_f32le");
     m.insert("int16_be_encode",      "axis_codegen_bridge::runtime::bytes_codec::int16_be_encode");
     m.insert("int32_be_encode",      "axis_codegen_bridge::runtime::bytes_codec::int32_be_encode");
     // int16_be_decode / int32_be_decode RETIRED by BYTE_INT_CODEC_COLLAPSE_V1
@@ -1343,6 +1348,10 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("bytes_slice",       vec![Bytes, Int, Int]);
     m.insert("bytes_get",         vec![Bytes, Int]);
     m.insert("bytes_push",        vec![Bytes, Int]);
+    m.insert("bytes_push_u32le",  vec![Bytes, Int]);
+    m.insert("bytes_push_f32le",  vec![Bytes, Value]);
+    m.insert("bytes_get_u32le",   vec![Bytes, Int]);
+    m.insert("bytes_get_f32le",   vec![Bytes, Int]);
     m.insert("int16_be_encode",   vec![Int]);
     m.insert("int32_be_encode",   vec![Int]);
     // ── stdlib: bytes (B08-A) ──────────────────────────────────────────────
