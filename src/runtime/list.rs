@@ -27,6 +27,8 @@ fn value_tag_name(v: &Value) -> &'static str {
         Value::Dec(_) => "Dec",
         Value::Float(_) => "Float",
         Value::Bytes(_) => "Bytes",
+        Value::Local(_) => "LocalMap",
+        Value::Frozen(_) => "FrozenMap",
     }
 }
 
@@ -266,7 +268,7 @@ pub fn list_len(list: Value) -> Value {
 pub fn list_get(list: Value, idx: i64) -> Value {
     match list {
         Value::List(elems) => elems[idx as usize].clone(),
-        _ => panic!("list_get: expected List"),
+        other => panic!("list_get: expected List, got {:?}", other),
     }
 }
 

@@ -130,7 +130,7 @@ thread_local! {
 /// `Value::Tuple` boxing.
 #[track_caller]
 pub fn channel_send(name: std::sync::Arc<str>, data: Value) -> Value {
-    super::scratch::refuse_handle(&data, "channel_send");
+    super::hmap::refuse_handle(&data, "channel_send");
     let chan = channel_for(&name);
     chan.lfq.push(data); // our lock-free MPSC primitive; single atomic swap
     // Wake any thread blocked in wait() — see wake()'s doc comment. Notifying
@@ -431,7 +431,7 @@ pub(crate) fn bounded_drain_batch(name: &str, max: usize, window_ms: u64) -> Vec
 /// `Value::Tuple` boxing.
 #[track_caller]
 pub fn bchan_send(name: std::sync::Arc<str>, item: Value) -> Value {
-    super::scratch::refuse_handle(&item, "bchan_send");
+    super::hmap::refuse_handle(&item, "bchan_send");
     bounded_send_blocking(&name, item);
     Value::Unit
 }

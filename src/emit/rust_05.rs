@@ -571,12 +571,13 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("map_get",              "axis_codegen_bridge::runtime::scratch::map_get");
     m.insert("map_len",              "axis_codegen_bridge::runtime::scratch::map_len");
     m.insert("map_clear",            "axis_codegen_bridge::runtime::scratch::map_clear");
-    // r185 kind 2: local mutable map handles (scratch.rs), no name
-    m.insert("hmap_new",             "axis_codegen_bridge::runtime::scratch::hmap_new");
-    m.insert("hmap_put",             "axis_codegen_bridge::runtime::scratch::hmap_put");
-    m.insert("hmap_has",             "axis_codegen_bridge::runtime::scratch::hmap_has");
-    m.insert("hmap_get",             "axis_codegen_bridge::runtime::scratch::hmap_get");
-    m.insert("hmap_free",            "axis_codegen_bridge::runtime::scratch::hmap_free");
+    // r185 kind 2: local mutable maps owned by their handle, and the frozen map (hmap.rs); no locks
+    m.insert("hmap_new",             "axis_codegen_bridge::runtime::hmap::hmap_new");
+    m.insert("hmap_put",             "axis_codegen_bridge::runtime::hmap::hmap_put");
+    m.insert("hmap_has",             "axis_codegen_bridge::runtime::hmap::hmap_has");
+    m.insert("hmap_get",             "axis_codegen_bridge::runtime::hmap::hmap_get");
+    m.insert("hmap_freeze",          "axis_codegen_bridge::runtime::hmap::hmap_freeze");
+    m.insert("hmap_hash",            "axis_codegen_bridge::runtime::hmap::hmap_hash");
     // ── AXVERITY_U32V_BRIDGE_PRIMITIVE_V1: named, growable, APPEND-ONLY u32
     //    arrays with one sealed in-place sort (u32v.rs). Thread-local, never
     //    durable. The surface is deliberately new/push/get/len/sort3 — there is
@@ -1420,7 +1421,8 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("hmap_put",          vec![Value, Text, Text]);
     m.insert("hmap_has",          vec![Value, Text]);
     m.insert("hmap_get",          vec![Value, Text]);
-    m.insert("hmap_free",         vec![Value]);
+    m.insert("hmap_freeze",       vec![Value]);
+    m.insert("hmap_hash",         vec![Value]);
     m.insert("map_put",           vec![Text, Text, Text]);
     m.insert("map_get",           vec![Text, Text]);
     m.insert("map_len",           vec![Text]);

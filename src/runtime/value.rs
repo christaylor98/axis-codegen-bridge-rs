@@ -121,6 +121,10 @@ impl std::fmt::Debug for BytesBuf {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
+    /// r185 kind 2: a local mutable map, owned by its handle (hmap.rs); the storage is thread-local, the handle is an id.
+    Local(super::hmap::LocalMap),
+    /// r185: the immutable map a local map freezes into (hmap.rs): an Arc, readable from any thread.
+    Frozen(super::hmap::FrozenMap),
     Int(i64),
     Bool(bool),
     // M1_VALUE_STR_ARC_IMPLEMENTATION_V1: Str now carries the string inline as
@@ -247,6 +251,8 @@ impl std::fmt::Display for Value {
                 write!(f, ")")
             }
             Value::Bytes(bs) => write!(f, "<{} bytes>", bs.len()),
+            Value::Local(l)  => write!(f, "{:?}", l),
+            Value::Frozen(m) => write!(f, "{:?}", m),
         }
     }
 }
@@ -264,6 +270,7 @@ pub fn truthy(v: &Value) -> bool {
         Value::Dec(d)     => !d.is_zero(),
         Value::Float(x)   => *x != 0.0,
         Value::Bytes(bs)  => !bs.is_empty(),
+        Value::Local(_) | Value::Frozen(_) => true,
     }
 }
 

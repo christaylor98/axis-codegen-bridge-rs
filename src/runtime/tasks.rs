@@ -129,7 +129,7 @@ fn handle_id(v: &Value) -> i64 {
 /// launder an effectful worker through it.
 #[track_caller]
 pub fn spawn(callee: fn(Value) -> Value, arg: Value) -> Value {
-    super::scratch::refuse_handle(&arg, "spawn");
+    super::hmap::refuse_handle(&arg, "spawn");
     let handle = next_handle();
     let jh = std::thread::Builder::new()
         .name(format!("axis-task-{}", handle))

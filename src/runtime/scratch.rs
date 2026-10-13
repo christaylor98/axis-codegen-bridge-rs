@@ -174,13 +174,9 @@ pub fn set_clear(name: std::sync::Arc<str>) -> Value {
 /// new key mints a `String`, and that `String` is what the map keeps.
 #[track_caller]
 pub fn map_put(name: std::sync::Arc<str>, key: std::sync::Arc<str>, val: std::sync::Arc<str>) -> Value {
-    put_in(&name, key, val)
-}
-
-fn put_in(name: &str, key: std::sync::Arc<str>, val: std::sync::Arc<str>) -> Value {
     MAPS.with(|m| {
         let mut store = m.borrow_mut();
-        match store.get_mut(name) {
+        match store.get_mut(&*name) {
             Some(map) => match map.get_mut(&*key) {
                 Some(slot) => {
                     *slot = val;
@@ -207,143 +203,12 @@ fn put_in(name: &str, key: std::sync::Arc<str>, val: std::sync::Arc<str>) -> Val
 /// `Arc` (refcount bump); a miss clones the thread's cached empty `Arc`.
 #[track_caller]
 pub fn map_get(name: std::sync::Arc<str>, key: std::sync::Arc<str>) -> Value {
-    match find_in(&name, &key) {
-        Some(v) => Value::Str(v),
-        None => empty_text(),
-    }
-}
-
-fn find_in(name: &str, key: &str) -> Option<Arc<str>> {
     MAPS.with(|m| {
-        let store = m.borrow();
-        let map = store.get(name)?;
-        #[cfg(test)]
-        if MUTANT.load(std::sync::atomic::Ordering::Relaxed) == 1 {
-            return map.iter().find(|(ek, _)| ek.starts_with(key) || key.starts_with(ek.as_str())).map(|(_, v)| v.clone());
+        match m.borrow().get(&*name).and_then(|map| map.get(&*key)) {
+            Some(v) => Value::Str(v.clone()),
+            None => empty_text(),
         }
-        map.get(key).cloned()
     })
-}
-
-// ── KIND 2 MEMORY (r185): LOCAL MUTABLE MAP HANDLES ──────────────────────────────────────────────────────────────────
-//
-// A map owned by ONE loop, written in place, dropped by `hmap_free`. It is the `map_*` storage above with the NAME taken
-// out of the program's hands: `hmap_new` mints a fresh, never-reused name for the thread and returns a handle, and every
-// later call spells that name itself, on the stack. The handle is a `Ctor` with the reserved tag HANDLE_TAG: it is a Value
-// because the owner loop carries it in its loop state, which is a Value (a typed handle could not come back out of
-// `ctor_field`). It is not Text, so the verifier refuses it as a key or a map_* name; `refuse_handle` makes the cross-thread
-// doors (spawn, channel_send, bchan_send) panic on it; ids are unique process-wide, so a handle used on another thread is
-// "not live", never another thread's map. The storage is thread-local like the rest of this module.
-//   hmap_new(Unit) -> Value               a new empty map; no two handles ever share contents
-//   hmap_put(m, k, v) -> Bool             set k to v in place; true iff k was new
-//   hmap_has(m, k) -> Bool                exact key membership (never a prefix)
-//   hmap_get(m, k) -> Text                "Ok:" + value, or "Unknown" (no sentinel value)
-//   hmap_free(m) -> Unit                  drop the map; any later use of the handle panics
-static NEXT_HANDLE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1);
-const HANDLE_TAG: u32 = u32::MAX;
-
-/// Panic if `v` is, or holds anywhere inside it, a map handle. Called at the doors by which a Value leaves its thread.
-pub fn refuse_handle(v: &Value, who: &str) {
-    #[cfg(test)]
-    if MUTANT.load(std::sync::atomic::Ordering::Relaxed) == 3 {
-        return;
-    }
-    match v {
-        Value::Ctor { tag, fields } => {
-            if *tag == HANDLE_TAG {
-                panic!("{who}: a local map handle cannot be shared (it belongs to the loop that made it)");
-            }
-            fields.iter().for_each(|f| refuse_handle(f, who));
-        }
-        Value::Tuple(t) => t.iter().for_each(|f| refuse_handle(f, who)),
-        Value::List(l) => l.iter().for_each(|f| refuse_handle(f, who)),
-        _ => {}
-    }
-}
-
-#[cfg(test)]
-pub static MUTANT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0); // 0 real, 1 prefix compare, 2 one shared name
-
-/// The internal name of handle `id`, spelled into `buf` (no allocation). A leading control byte keeps it out of reach of any
-/// name a program can write for the map_* family.
-fn handle_name(id: i64, buf: &mut [u8; 24]) -> &str {
-    #[cfg(test)]
-    if MUTANT.load(std::sync::atomic::Ordering::Relaxed) == 2 {
-        return "\u{1}h0";
-    }
-    let mut digits = [0u8; 20];
-    let (mut n, mut at) = (id as u64, digits.len());
-    loop {
-        at -= 1;
-        digits[at] = b'0' + (n % 10) as u8;
-        n /= 10;
-        if n == 0 { break; }
-    }
-    buf[0] = 1;
-    buf[1] = b'h';
-    let len = digits.len() - at;
-    buf[2..2 + len].copy_from_slice(&digits[at..]);
-    std::str::from_utf8(&buf[..2 + len]).unwrap()
-}
-
-fn handle_id(h: &Value, who: &str) -> i64 {
-    match h {
-        Value::Ctor { tag, fields } if *tag == HANDLE_TAG && fields.len() == 1 => match &fields[0] {
-            Value::Int(id) => *id,
-            _ => panic!("{who}: not a map handle"),
-        },
-        _ => panic!("{who}: not a map handle"),
-    }
-}
-
-fn live(name: &str, who: &str) {
-    if !MAPS.with(|m| m.borrow().contains_key(name)) {
-        panic!("{who}: map handle is not live (freed, or made on another thread)");
-    }
-}
-
-#[track_caller]
-pub fn hmap_new(_: Value) -> Value {
-    let id = NEXT_HANDLE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let mut buf = [0u8; 24];
-    let name = handle_name(id, &mut buf).to_string();
-    MAPS.with(|m| { m.borrow_mut().entry(name).or_insert_with(HashMap::new); });
-    Value::Ctor { tag: HANDLE_TAG, fields: vec![Value::Int(id)] }
-}
-
-#[track_caller]
-pub fn hmap_put(h: Value, k: Arc<str>, v: Arc<str>) -> Value {
-    let mut buf = [0u8; 24];
-    let name = handle_name(handle_id(&h, "hmap_put"), &mut buf);
-    live(name, "hmap_put");
-    put_in(name, k, v)
-}
-
-#[track_caller]
-pub fn hmap_has(h: Value, k: Arc<str>) -> Value {
-    let mut buf = [0u8; 24];
-    let name = handle_name(handle_id(&h, "hmap_has"), &mut buf);
-    live(name, "hmap_has");
-    Value::Bool(find_in(name, &k).is_some())
-}
-
-#[track_caller]
-pub fn hmap_get(h: Value, k: Arc<str>) -> Value {
-    let mut buf = [0u8; 24];
-    let name = handle_name(handle_id(&h, "hmap_get"), &mut buf);
-    live(name, "hmap_get");
-    match find_in(name, &k) {
-        Some(v) => Value::Str(Arc::from(format!("Ok:{}", v))),
-        None => Value::Str(Arc::from("Unknown")),
-    }
-}
-
-#[track_caller]
-pub fn hmap_free(h: Value) -> Value {
-    let mut buf = [0u8; 24];
-    let name = handle_name(handle_id(&h, "hmap_free"), &mut buf).to_string();
-    MAPS.with(|m| { m.borrow_mut().remove(&name); });
-    Value::Unit
 }
 
 /// `map_len(name) -> Int` — entry count; 0 for an unknown name.
@@ -712,95 +577,5 @@ mod tests {
             assert_eq!(p, N);
         });
         report_allocs("S3c set_has", N, probe_has);
-    }
-
-    // ── kind 2 (local map handles); the trie spike's tests, kept: interference, prefix, many keys. Run with --test-threads=1
-    // because MUTANT is global.
-    use std::sync::atomic::Ordering::Relaxed;
-    fn k(x: &str) -> Arc<str> { intern_str(x) }
-    fn hnew() -> Value { hmap_new(Value::Unit) }
-    fn hget(m: &Value, key: &str) -> String { match hmap_get(m.clone(), k(key)) { Value::Str(x) => x.to_string(), _ => panic!() } }
-    fn hhas(m: &Value, key: &str) -> bool { hmap_has(m.clone(), k(key)) == Value::Bool(true) }
-
-    fn interference() -> bool {
-        let a = hnew();
-        let b = hnew();
-        hmap_put(a.clone(), k("k1"), k("v1"));
-        hmap_put(b.clone(), k("k1"), k("v1"));
-        hmap_put(a.clone(), k("k2"), k("v2"));
-        let ok = !hhas(&b, "k2") && hhas(&a, "k2") && !hhas(&hnew(), "k1");
-        hmap_free(a);
-        hmap_free(b);
-        ok
-    }
-    fn prefix() -> bool {
-        let m = hnew();
-        hmap_put(m.clone(), k("sha256:abcdef"), k("v"));
-        let ok = !hhas(&m, "sha256:abc") && !hhas(&m, "sha256:abcdefg") && hget(&m, "sha256:abc") == "Unknown" && hget(&m, "sha256:abcdef") == "Ok:v";
-        hmap_free(m);
-        ok
-    }
-
-    #[test]
-    fn kind2_real_keeps_both() {
-        MUTANT.store(0, Relaxed);
-        assert!(interference() && prefix());
-    }
-
-    #[test]
-    fn kind2_many_keys_overwrite_and_free() {
-        MUTANT.store(0, Relaxed);
-        let m = hnew();
-        for i in 0..5000 { assert_eq!(hmap_put(m.clone(), k(&format!("k{i}")), k(&format!("v{i}"))), Value::Bool(true)); }
-        for i in 0..5000 { assert_eq!(hget(&m, &format!("k{i}")), format!("Ok:v{i}")); }
-        assert_eq!(hget(&m, "k5000"), "Unknown");
-        assert_eq!(hmap_put(m.clone(), k("k7"), k("new")), Value::Bool(false));
-        assert_eq!(hget(&m, "k7"), "Ok:new");
-        hmap_free(m);
-    }
-
-    #[test]
-    #[should_panic(expected = "not live")]
-    fn kind2_use_after_free_panics() {
-        MUTANT.store(0, Relaxed);
-        let m = hnew();
-        hmap_free(m.clone());
-        hmap_has(m, k("x"));
-    }
-
-    // a handle placed into a shared value: alone, inside a Ctor, inside a List, through the real doors
-    fn shared_refused() -> bool {
-        let h = hnew();
-        let inside = Value::Ctor { tag: 0, fields: vec![Value::Int(1), Value::List(crate::runtime::value::ListBuf::from(vec![h.clone()]))] };
-        let refused = |v: &Value| std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| refuse_handle(v, "t"))).is_err();
-        let door = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| crate::runtime::channels::channel_send(k("kind2_door"), inside.clone()))).is_err();
-        let plain = !refused(&Value::Ctor { tag: 0, fields: vec![Value::Int(1)] }) && !refused(&Value::Tuple(vec![Value::Int(1), Value::Unit]));
-        let ok = refused(&h) && refused(&inside) && door && plain;
-        hmap_free(h);
-        ok
-    }
-
-    #[test]
-    fn kind2_handle_is_not_shareable_and_not_foreign() {
-        MUTANT.store(0, Relaxed);
-        assert!(shared_refused());
-        // a handle used on another thread is not live there (ids are process-wide, so it never lands on another map)
-        let m = hnew();
-        hmap_put(m.clone(), k("a"), k("1"));
-        let m2 = m.clone();
-        let r = std::thread::spawn(move || std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| hmap_has(m2, k("a")))).is_err()).join().unwrap();
-        assert!(r);
-        hmap_free(m);
-    }
-
-    #[test]
-    fn kind2_mutants_fail() {
-        MUTANT.store(3, Relaxed);
-        assert!(!shared_refused(), "mutant 3 (handle accepted into a shared value) was not caught");
-        MUTANT.store(1, Relaxed);
-        assert!(!prefix(), "mutant 1 (prefix compare) was not caught");
-        MUTANT.store(2, Relaxed);
-        assert!(!interference(), "mutant 2 (two handles share contents) was not caught");
-        MUTANT.store(0, Relaxed);
     }
 }
