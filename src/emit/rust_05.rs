@@ -782,6 +782,8 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("text_list_pack",           "axis_codegen_bridge::runtime::list::text_list_pack");
     m.insert("text_list_unpack",         "axis_codegen_bridge::runtime::list::text_list_unpack");
     m.insert("value_to_bool",                     "axis_codegen_bridge::runtime::list::value_to_bool");
+    m.insert("value_to_float",                    "axis_codegen_bridge::runtime::list::value_to_float");
+    m.insert("value_to_dec",                      "axis_codegen_bridge::runtime::list::value_to_dec");
 
     m
 }

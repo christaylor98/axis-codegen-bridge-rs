@@ -152,6 +152,18 @@ pub fn value_to_int(v: Value) -> Value {
     narrow_value("value_to_int", "Int", v, |v| matches!(v, Value::Int(_)))
 }
 
+/// `value_to_float(v)`: v when it holds a Float, so an AI3 program can carry a Float in a `Value(..)` field.
+#[track_caller]
+pub fn value_to_float(v: Value) -> Value {
+    narrow_value("value_to_float", "Float", v, |v| matches!(v, Value::Float(_)))
+}
+
+/// `value_to_dec(v)`: v when it holds a Dec.
+#[track_caller]
+pub fn value_to_dec(v: Value) -> Value {
+    narrow_value("value_to_dec", "Dec", v, |v| matches!(v, Value::Dec(_)))
+}
+
 #[track_caller]
 pub fn value_to_text(v: Value) -> Value {
     narrow_value("value_to_text", "Text", v, |v| matches!(v, Value::Str(_)))
@@ -529,4 +541,25 @@ mod float_list_tests {
     #[test]
     #[should_panic(expected = "element 1 is Int, expected Float")]
     fn narrowing_rejects_a_non_float_item() { value_list_to_float_list(Value::List(vec![Value::Float(1.0), Value::Int(2)].into_iter().collect())); }
+}
+
+#[cfg(test)]
+mod narrow_float_dec_tests {
+    use super::*;
+    use super::super::value::Decimal;
+
+    fn msg(f: impl FnOnce() -> Value + std::panic::UnwindSafe) -> String {
+        let e = std::panic::catch_unwind(f).expect_err("must panic");
+        e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string())).unwrap()
+    }
+
+    #[test]
+    fn value_to_float_and_dec_return_their_own_kind_and_name_the_tag_otherwise() {
+        assert_eq!(value_to_float(Value::Float(1.5)), Value::Float(1.5));
+        assert_eq!(value_to_dec(Value::Dec(Decimal::new(125, 2))), Value::Dec(Decimal::new(125, 2)));
+        assert_eq!(msg(|| value_to_float(Value::Int(1))), "value_to_float: expected Float, got Int");
+        assert_eq!(msg(|| value_to_float(Value::Dec(Decimal::ONE))), "value_to_float: expected Float, got Dec");
+        assert_eq!(msg(|| value_to_dec(Value::Float(1.0))), "value_to_dec: expected Dec, got Float");
+        assert_eq!(msg(|| value_to_dec(Value::Str("x".into()))), "value_to_dec: expected Dec, got Text");
+    }
 }

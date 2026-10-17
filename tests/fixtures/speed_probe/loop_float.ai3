@@ -1,0 +1,15 @@
+fn f_more(st: Value(Int, Float, Int)) -> Bool {
+  return int_lt(value_to_int(ctor_field(st, Int(0))), value_to_int(ctor_field(st, Int(2))))
+}
+
+fn f_step(st: Value(Int, Float, Int)) -> Value(Int, Float, Int) {
+  let i = value_to_int(ctor_field(st, Int(0)))
+  let acc = value_to_float(ctor_field(st, Int(1)))
+  return value_make(int_add(i, Int(1)), float_add(acc, int_to_float(int_mod(i, Int(7)))), value_to_int(ctor_field(st, Int(2))))
+}
+
+fn main() -> Unit {
+  let n = str_to_int(argv_or(Int(1), Text("0")))
+  let r = loop_while(value_make(Int(0), str_to_float(Text("0")), n), f_more, f_step, int_add(n, Int(1)))
+  return io_print(float_to_text(value_to_float(ctor_field(r, Int(1)))))
+}

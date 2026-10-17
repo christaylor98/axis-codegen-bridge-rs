@@ -648,6 +648,8 @@ impl<'a> Gen<'a> {
             }
             "list::value_to_int" => { want(1)?; Ok(Val::I(self.to_i(&a[0])?)) }
             "list::value_to_bool" => { want(1)?; Ok(Val::B(self.to_b(&a[0])?)) }
+            "list::value_to_float" => { want(1)?; Ok(Val::F(self.to_f(&a[0])?)) }
+            "list::value_to_dec" => { want(1)?; Ok(Val::D(self.to_d(&a[0])?)) }
             "list::value_to_text" => { want(1)?; Ok(Val::T(self.to_t(&a[0])?)) }
             "tuple::ctor_field" => {
                 want(2)?;

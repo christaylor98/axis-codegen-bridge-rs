@@ -61,7 +61,7 @@ impl P {
 const PURE: &[&str] = &[
     "int_add", "int_sub", "int_mul", "int_div", "int_mod", "int_lt", "int_lte", "int_gt", "int_eq", "int_bit_and",
     "int_bit_xor", "int_shr", "int_bit_or", "bool_not", "bool_and", "value_to_int", "value_to_text", "ctor_field", "value_make",
-    "str_trim", "str_to_float", "str_to_dec", "int_to_float", "int_to_dec", "float_id", "dec_id", "str_len", "str_char", "float_add", "float_sub", "float_mul", "float_div", "float_neg", "float_abs", "float_sqrt",
+    "value_to_float", "value_to_dec", "str_trim", "str_to_float", "str_to_dec", "int_to_float", "int_to_dec", "float_id", "dec_id", "str_len", "str_char", "float_add", "float_sub", "float_mul", "float_div", "float_neg", "float_abs", "float_sqrt",
     "float_floor", "float_ceil", "float_round", "float_pow", "float_min", "float_max", "float_is_nan", "float_lt", "float_lte",
     "float_gt", "float_gte", "float_eq", "dec_add", "dec_sub", "dec_mul", "dec_div", "dec_round", "dec_neg", "dec_abs",
     "dec_min", "dec_max", "dec_lt", "dec_lte", "dec_gt", "dec_gte", "dec_eq", "str_char", "str_char_at", "str_eq", "text_eq", "value_0", "str_to_int", "int_to_str", "tuple_field",
@@ -734,4 +734,43 @@ fn str_trim_feeding_str_to_dec_matches_generic() {
     let r = differential(&root, &[("trimd", &lib)], &["trimd"], &cs);
     assert_eq!(r[0].code, Some(0), "{:?}", r[0]);
     assert_eq!(r[2].code, Some(4), "{:?}", r[2]);
+}
+
+
+// ── 14. value_to_float / value_to_dec (the AI3 narrowings): same value when right, same defect when not ─────────────
+
+#[test]
+fn value_to_float_and_dec_match_generic_including_the_wrong_kind() {
+    let mut p = P::new();
+    let (a, b) = (p.param(0), p.param(1));
+    let f = p.call("value_to_float", vec![a]);
+    let one = p.float(1.0);
+    let fs = p.call("float_add", vec![f, one]);
+    let d = p.call("value_to_dec", vec![b]);
+    let q = p.dec("0.5");
+    let ds = p.call("dec_add", vec![d, q]);
+    let r = p.call("value_make", vec![fs, ds]);
+    let lib = p.done(r);
+    // mode 0: (Float, Dec); 1: an Int where the Float goes; 2: a Float where the Dec goes
+    let mut p = P::new();
+    let mode = argv_int(&mut p, 1);
+    let (f, d, i) = (argv_float(&mut p, 2), argv_dec(&mut p, 3), argv_int(&mut p, 4));
+    let (m1, m2) = (p.int(1), p.int(2));
+    let (c1, c2) = (p.call("int_eq", vec![mode.clone(), m1]), p.call("int_eq", vec![mode, m2]));
+    let (f1, d1, i1, f2) = (f.clone(), d.clone(), i.clone(), f.clone());
+    let r = p.if_(
+        c1,
+        move |p| p.call("vals", vec![i1, d1]),
+        move |p| p.if_(c2, move |p| p.call("vals", vec![f2.clone(), f2]), move |p| p.call("vals", vec![f, d])),
+    );
+    let _ = (i, f1);
+    let root = p.done(r);
+    let cases: Vec<Vec<&str>> = vec![vec!["0", "2.5", "3.25", "7"], vec!["1", "2.5", "3.25", "7"], vec!["2", "2.5", "3.25", "7"], vec!["0", "nan", "-0.0", "0"]];
+    let cs: Vec<&[&str]> = cases.iter().map(|c| c.as_slice()).collect();
+    let r = differential(&root, &[("vals", &lib)], &["vals"], &cs);
+    assert_eq!(r[0].code, Some(0), "{:?}", r[0]);
+    assert_eq!(r[1].code, Some(4), "{:?}", r[1]);
+    assert!(r[1].stderr.contains("value_to_float: expected Float, got Int"), "{:?}", r[1].stderr);
+    assert_eq!(r[2].code, Some(4), "{:?}", r[2]);
+    assert!(r[2].stderr.contains("value_to_dec: expected Dec, got Float"), "{:?}", r[2].stderr);
 }
