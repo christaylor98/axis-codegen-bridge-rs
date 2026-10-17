@@ -369,6 +369,61 @@ fn text_index_fast_path_matches_generic() {
     assert_eq!(r[8].code, Some(4));
 }
 
+// ── 6. loop_while with fast cond/step (step C): same result, same defects, same stuck-on-Unknown ──────────────
+
+fn more_lib() -> CoreBundle {
+    let mut p = P::new();
+    let st = p.param(0);
+    let (k0, k2) = (p.int(0), p.int(2));
+    let f0 = p.call("ctor_field", vec![st.clone(), k0]);
+    let i = p.call("value_to_int", vec![f0]);
+    let f2 = p.call("ctor_field", vec![st, k2]);
+    let n = p.call("value_to_int", vec![f2]);
+    let r = p.call("int_lt", vec![i, n]);
+    p.done(r)
+}
+
+#[test]
+fn loop_while_with_fast_callbacks_matches_generic() {
+    let (more, step) = (more_lib(), step_lib());
+    let mut p = P::new();
+    let n = argv_int(&mut p, 1);
+    let start = argv_int(&mut p, 2);
+    let zero = p.int(0);
+    let init = p.call("value_make", vec![zero, start, n.clone()]);
+    let (cond, stepf) = (p.fnref("more"), p.fnref("step"));
+    let one = p.int(1);
+    let cap = p.call("int_add", vec![n, one]);
+    let r = p.call("loop_while", vec![init, cond, stepf, cap]);
+    let k1 = p.int(1);
+    let acc = p.call("ctor_field", vec![r, k1]);
+    let a = p.call("value_to_int", vec![acc]);
+    let s = p.call("int_to_str", vec![a]);
+    let out = p.call("io_print", vec![s]);
+    let root = p.done(out);
+    let max = i64::MAX.to_string();
+    let near = (i64::MAX - 20).to_string();
+    let cases: Vec<Vec<&str>> = vec![
+        vec!["0", "0"], vec!["1", "0"], vec!["100", "0"], vec!["100000", "5"],
+        vec!["10", &near],           // acc overflows part-way through the loop: DEFECT after some fast steps
+        vec!["10", &max],            // overflows on the first step that adds a non-zero
+        vec!["-3", "0"],             // cap <= 0 iterations
+    ];
+    let cs: Vec<&[&str]> = cases.iter().map(|c| c.as_slice()).collect();
+    let r = differential(&root, &[("more", &more), ("step", &step)], &["more", "step"], &cs);
+    assert!(r[0].code == Some(0));
+    assert_eq!(r[2].stdout.trim(), "295");   // sum of i mod 7 for i in 0..100 (14 full cycles of 21, then 0 and 1)
+    // a pure builtin's DEFECT inside a callback is seen by the (effect-gated) loop_while guard: an Unknown, exit 3, as before
+    for k in [4, 5] {
+        assert_eq!(r[k].code, Some(3), "{:?}", r[k]);
+        assert!(r[k].stderr.contains("DEFECT in int_add: int_add: overflow"), "{:?}", r[k].stderr);
+    }
+    let f = build(&root, &[("more", &more), ("step", &step)], true);
+    assert!(f.glue.contains("loop_while_f"), "the call site did not use loop_while_f");
+    let g = build(&root, &[("more", &more), ("step", &step)], false);
+    assert!(!g.glue.contains("loop_while_f"), "--no-fast must keep the plain loop_while");
+}
+
 // ── 7. bit ops, shifts and bool ops (including the shift's own failure and its past-63 saturation) ─────────────
 
 #[test]

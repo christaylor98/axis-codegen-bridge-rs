@@ -2298,7 +2298,15 @@ fn emit_node(
             //   any FnRef arg, or fn opted into native_call_fn_arg_types →
             //     native multi-arg Rust call (`f(a, b, c)`)
             //   else → existing Value::Tuple-packed call (data UNARY_INVARIANT)
-            let body = if any_fn_ref || native_types.is_some() {
+            let body = if use_fast && name == "loop_while" && arg_exprs.len() == 4
+                && arg_exprs[1].ends_with("_xfn") && arg_exprs[2].ends_with("_xfn")
+            {
+                // AX146 step C: both callbacks are composites, which export a speculative form
+                format!(
+                    "axis_codegen_bridge::runtime::iter::loop_while_f({}, {}, {}_fast, {}, {}_fast, {})",
+                    arg_exprs[0], arg_exprs[1], arg_exprs[1], arg_exprs[2], arg_exprs[2], arg_exprs[3]
+                )
+            } else if any_fn_ref || native_types.is_some() {
                 format!("{}({})", path, arg_exprs.join(", "))
             } else {
                 match arg_exprs.len() {

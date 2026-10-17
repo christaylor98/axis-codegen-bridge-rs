@@ -104,6 +104,43 @@ pub fn loop_while(
     acc
 }
 
+/// `loop_while` for a cond/step pair that also has speculative fast forms (emit/fast_05.rs). Same result, same
+/// stopping rules. `*_fast(&acc)` is Some only when it computed exactly what the generic fn would have returned, and
+/// reads the state by reference: no clone of the state for `cond`, no guards. None runs the generic fn on the state.
+#[track_caller]
+pub fn loop_while_f(
+    init: Value,
+    cond: fn(Value) -> Value,
+    cond_fast: fn(&Value) -> Option<Value>,
+    step: fn(Value) -> Value,
+    step_fast: fn(&Value) -> Option<Value>,
+    max: Value,
+) -> Value {
+    let limit = max.as_int();
+    let mut acc = init;
+    let iters = if limit > 0 { limit as u64 } else { 0 };
+    for _ in 0..iters {
+        let c = match cond_fast(&acc) {
+            Some(c) => c,
+            None => cond(acc.clone()),
+        };
+        if stuck(&c) {
+            return c;
+        }
+        if !truthy(&c) {
+            break;
+        }
+        acc = match step_fast(&acc) {
+            Some(n) => n,
+            None => step(acc),
+        };
+        if stuck(&acc) {
+            return acc;
+        }
+    }
+    acc
+}
+
 /// `fold(xs, init, step) -> Value` — left fold. Threads ONLY the accumulator
 /// through `step`; the list is iterated natively here. `step` receives a
 /// `Tuple(acc, elem)` and returns the new acc.
@@ -517,6 +554,49 @@ mod stop_on_unknown_tests {
     fn neg_is_bad(v: Value) -> Value { if v.as_int() < 0 { bad() } else { Value::Bool(v.as_int() > 0) } }
     fn fold_step(args: Value) -> Value {
         match args { Value::Tuple(es) => if es[1].as_int() < 0 { bad() } else { Value::Int(es[0].as_int() + es[1].as_int()) }, _ => unreachable!() }
+    }
+
+    // ── loop_while_f: the same loop, with speculative callbacks ──────────────────────────────────────────────────
+    fn int_of(v: &Value) -> i64 { v.as_int() }
+    fn lt_10(v: Value) -> Value { Value::Bool(int_of(&v) < 10) }
+    fn lt_10_fast(v: &Value) -> Option<Value> { match v { Value::Int(n) => Some(Value::Bool(*n < 10)), _ => None } }
+    fn inc(v: Value) -> Value { Value::Int(int_of(&v) + 1) }
+    fn inc_fast(v: &Value) -> Option<Value> { match v { Value::Int(n) => Some(Value::Int(n + 1)), _ => None } }
+    fn never(_: &Value) -> Option<Value> { None }
+
+    #[test]
+    fn loop_while_f_equals_loop_while_with_fast_none_or_some() {
+        let want = loop_while(Value::Int(0), lt_10, inc, Value::Int(1000));
+        assert_eq!(want, Value::Int(10));
+        assert_eq!(loop_while_f(Value::Int(0), lt_10, lt_10_fast, inc, inc_fast, Value::Int(1000)), want);
+        assert_eq!(loop_while_f(Value::Int(0), lt_10, never, inc, never, Value::Int(1000)), want);          // all fall back
+        assert_eq!(loop_while_f(Value::Int(0), lt_10, lt_10_fast, inc, never, Value::Int(1000)), want);     // mixed
+        assert_eq!(loop_while_f(Value::Int(0), lt_10, never, inc, inc_fast, Value::Int(1000)), want);
+        // the iteration cap binds exactly as before, and a non-positive cap runs nothing
+        assert_eq!(loop_while_f(Value::Int(0), lt_10, lt_10_fast, inc, inc_fast, Value::Int(4)), Value::Int(4));
+        assert_eq!(loop_while_f(Value::Int(7), lt_10, lt_10_fast, inc, inc_fast, Value::Int(0)), Value::Int(7));
+        assert_eq!(loop_while_f(Value::Int(7), lt_10, lt_10_fast, inc, inc_fast, Value::Int(-3)), Value::Int(7));
+    }
+
+    fn poison_at_3_fast(v: &Value) -> Option<Value> {
+        match v { Value::Int(3) => Some(fault::unknown("bridge_fault", "t", "boom", "here")), Value::Int(n) => Some(Value::Int(n + 1)), _ => None }
+    }
+    fn cond_unknown_fast(_: &Value) -> Option<Value> { Some(fault::unknown("bridge_fault", "t", "cond", "here")) }
+
+    #[test]
+    fn loop_while_f_stops_on_an_unknown_from_a_fast_step_or_a_fast_cond() {
+        STEPS.store(0, Ordering::SeqCst);
+        let r = loop_while_f(Value::Int(0), always, never, step_poisons_at_3, poison_at_3_fast, Value::Int(1_000_000_000));
+        assert!(fault::is_unknown(&r), "{:?}", r);
+        let r = loop_while_f(Value::Int(0), cond_unknown, cond_unknown_fast, inc, inc_fast, Value::Int(10));
+        assert!(fault::is_unknown(&r), "{:?}", r);
+    }
+
+    #[test]
+    fn loop_while_f_prefers_the_fast_form_and_does_not_call_the_generic_one() {
+        fn boom(_: Value) -> Value { panic!("the generic callback ran although the fast one answered") }
+        let r = loop_while_f(Value::Int(0), boom, lt_10_fast, boom, inc_fast, Value::Int(100));
+        assert_eq!(r, Value::Int(10));
     }
 
     #[test]
