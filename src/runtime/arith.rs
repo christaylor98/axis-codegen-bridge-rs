@@ -682,3 +682,26 @@ mod dec_agg_tests {
         assert_eq!(div(1, 1), "1.0000000000000000");
     }
 }
+
+
+// ── fast-path helpers (emit/fast_05.rs): the same arithmetic as dec_div / dec_round, with None where those panic ──
+
+/// `dec_div`'s quotient, or None for a zero divisor.
+pub fn fast_dec_div(x: Decimal, y: Decimal) -> Option<Decimal> {
+    if y == Decimal::ZERO { return None; }
+    let mut q = (x / y).round_dp_with_strategy(16, RoundingStrategy::MidpointAwayFromZero);
+    q.rescale(16);
+    Some(q)
+}
+
+/// `dec_round`'s result, or None for negative places.
+pub fn fast_dec_round(x: Decimal, places: i64) -> Option<Decimal> {
+    if places < 0 { return None; }
+    Some(x.round_dp_with_strategy(places as u32, RoundingStrategy::MidpointAwayFromZero))
+}
+
+/// `str_to_float`'s parse, or None where it panics.
+pub fn fast_str_to_float(s: &str) -> Option<f64> { s.parse().ok() }
+
+/// `str_to_dec`'s parse, or None where it panics.
+pub fn fast_str_to_dec(s: &str) -> Option<Decimal> { s.parse().ok() }

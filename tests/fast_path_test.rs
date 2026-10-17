@@ -9,7 +9,7 @@
 use axis_codegen_bridge::core_ir_05::{
     bool_type_hash, fn_type_hash, int_type_hash, param_type_hash, sha256_bytes, text_type_hash,
     serialiser::create_core_bundle_05, ConstantPoolEntry, CoreBundle, Node, NodeRef,
-    encode_int_payload, encode_text_payload,
+    encode_int_payload, encode_text_payload, encode_float_payload, encode_dec_payload, float_type_hash, dec_type_hash,
 };
 use std::process::Command;
 use tempfile::TempDir;
@@ -32,6 +32,8 @@ impl P {
     }
     fn int(&mut self, v: i64) -> NodeRef { self.pool(int_type_hash(), encode_int_payload(v)) }
     fn text(&mut self, s: &str) -> NodeRef { self.pool(text_type_hash(), encode_text_payload(s)) }
+    fn float(&mut self, v: f64) -> NodeRef { self.pool(float_type_hash(), encode_float_payload(v)) }
+    fn dec(&mut self, v: &str) -> NodeRef { self.pool(dec_type_hash(), encode_dec_payload(v.parse().unwrap())) }
     fn param(&mut self, slot: u8) -> NodeRef { self.pool(param_type_hash(), vec![slot]) }
     fn fnref(&mut self, name: &str) -> NodeRef { self.pool(fn_type_hash(), sha256_bytes(name.as_bytes()).to_vec()) }
     fn call(&mut self, name: &str, args: Vec<NodeRef>) -> NodeRef {
@@ -59,7 +61,10 @@ impl P {
 const PURE: &[&str] = &[
     "int_add", "int_sub", "int_mul", "int_div", "int_mod", "int_lt", "int_lte", "int_gt", "int_eq", "int_bit_and",
     "int_bit_xor", "int_shr", "int_bit_or", "bool_not", "bool_and", "value_to_int", "value_to_text", "ctor_field", "value_make",
-    "str_len", "str_char", "str_char_at", "str_eq", "text_eq", "value_0", "str_to_int", "int_to_str", "tuple_field",
+    "str_trim", "str_to_float", "str_to_dec", "int_to_float", "int_to_dec", "float_id", "dec_id", "str_len", "str_char", "float_add", "float_sub", "float_mul", "float_div", "float_neg", "float_abs", "float_sqrt",
+    "float_floor", "float_ceil", "float_round", "float_pow", "float_min", "float_max", "float_is_nan", "float_lt", "float_lte",
+    "float_gt", "float_gte", "float_eq", "dec_add", "dec_sub", "dec_mul", "dec_div", "dec_round", "dec_neg", "dec_abs",
+    "dec_min", "dec_max", "dec_lt", "dec_lte", "dec_gt", "dec_gte", "dec_eq", "str_char", "str_char_at", "str_eq", "text_eq", "value_0", "str_to_int", "int_to_str", "tuple_field",
 ];
 
 fn registry(dir: &TempDir) -> std::path::PathBuf {
@@ -507,4 +512,226 @@ fn negative_constants_build_and_agree() {
     let r = differential(&root, &[("neg", &lib)], &["neg"], &cs);
     assert_eq!(r[0].stdout.trim(), "-15");   // (4 * -3) - (-7 mod 5 = 3)
     assert_eq!(r[3].code, Some(4), "-7 mod 0 is a defect: {:?}", r[3]);
+}
+
+
+// ── 10. Float: IEEE all the way -- inf, NaN, signed zero, overflow to inf, all identical to the generic ops ──────
+
+fn argv_float(p: &mut P, i: i64) -> NodeRef {
+    let (idx, dflt) = (p.int(i), p.text("0"));
+    let t = p.call("argv_or", vec![idx, dflt]);
+    p.call("str_to_float", vec![t])
+}
+
+#[test]
+fn float_ops_match_generic_including_nan_inf_and_signed_zero() {
+    // h = sqrt(a*a + b*b); q = h / b; if q < 10.0 { max(q, -h) } else { abs(floor(q)) }
+    let mut p = P::new();
+    let (a, b) = (p.param(0), p.param(1));
+    let aa = p.call("float_mul", vec![a.clone(), a]);
+    let bb = p.call("float_mul", vec![b.clone(), b.clone()]);
+    let sum = p.call("float_add", vec![aa, bb]);
+    let h = p.call("float_sqrt", vec![sum]);
+    let q = p.call("float_div", vec![h.clone(), b]);
+    let ten = p.float(10.0);
+    let c = p.call("float_lt", vec![q.clone(), ten]);
+    let (q2, h2, q3) = (q.clone(), h.clone(), q.clone());
+    let r = p.if_(
+        c,
+        move |p| { let nh = p.call("float_neg", vec![h2]); p.call("float_max", vec![q2, nh]) },
+        move |p| { let f = p.call("float_floor", vec![q3]); p.call("float_abs", vec![f]) },
+    );
+    let lib = p.done(r);
+    // g = round(pow(a, b)); ceil(g) - min(a, b), and a NaN / equality probe boxed in a value_make
+    let mut p = P::new();
+    let (a, b) = (p.param(0), p.param(1));
+    let pw = p.call("float_pow", vec![a.clone(), b.clone()]);
+    let rd = p.call("float_round", vec![pw]);
+    let ce = p.call("float_ceil", vec![rd.clone()]);
+    let mn = p.call("float_min", vec![a.clone(), b.clone()]);
+    let df = p.call("float_sub", vec![ce, mn]);
+    let nan = p.call("float_is_nan", vec![df.clone()]);
+    let eq = p.call("float_eq", vec![a, b]);
+    let r = p.call("value_make", vec![df, nan, eq, rd]);
+    let lib2 = p.done(r);
+    for (name, l) in [("hyp", &lib), ("pw", &lib2)] {
+        let mut p = P::new();
+        let a = argv_float(&mut p, 1);
+        let b = argv_float(&mut p, 2);
+        let r = p.call(name, vec![a, b]);
+        let root = p.done(r);
+        let cases: Vec<Vec<&str>> = vec![
+            vec!["3", "4"], vec!["3", "0"], vec!["0", "0"], vec!["-0", "0"], vec!["1e308", "1e308"], vec!["-2.5", "1e-5"],
+            vec!["nan", "2"], vec!["inf", "2"], vec!["2", "inf"], vec!["2", "-3"], vec!["-8", "0.5"], vec!["0.1", "0.2"],
+        ];
+        let cs: Vec<&[&str]> = cases.iter().map(|c| c.as_slice()).collect();
+        let r = differential(&root, &[(name, l)], &[name], &cs);
+        assert!(r.iter().all(|x| x.code == Some(0)), "{name}: {:?}", r.iter().map(|x| (x.code, &x.stderr)).collect::<Vec<_>>());
+    }
+}
+
+#[test]
+fn float_wrong_type_is_the_same_defect() {
+    // hyp(a, b) fed an Int: DEFECT in float_mul exactly as before
+    let mut p = P::new();
+    let (a, b) = (p.param(0), p.param(1));
+    let r = p.call("float_add", vec![a, b]);
+    let lib = p.done(r);
+    let mut p = P::new();
+    let i = argv_int(&mut p, 1);
+    let f = p.float(1.5);
+    let r = p.call("fadd", vec![f, i]);
+    let root = p.done(r);
+    let r = differential(&root, &[("fadd", &lib)], &["fadd"], &[&["2"]]);
+    assert_eq!(r[0].code, Some(4), "{:?}", r[0]);
+    assert!(r[0].stderr.contains("DEFECT in float_add"), "{:?}", r[0].stderr);
+}
+
+// ── 11. Dec: checked ops fall back on overflow; min/max keep the scale rust_decimal's Ord picks ───────────────────
+
+fn argv_dec(p: &mut P, i: i64) -> NodeRef {
+    let (idx, dflt) = (p.int(i), p.text("0"));
+    let t = p.call("argv_or", vec![idx, dflt]);
+    p.call("str_to_dec", vec![t])
+}
+
+#[test]
+fn dec_ops_match_generic_including_overflow_zero_divisor_and_scale() {
+    // s = a + b; m = s * b; d = m / a; r = round(d, 2); max(abs(r), -a) - 0.5
+    let mut p = P::new();
+    let (a, b) = (p.param(0), p.param(1));
+    let s = p.call("dec_add", vec![a.clone(), b.clone()]);
+    let m = p.call("dec_mul", vec![s, b]);
+    let d = p.call("dec_div", vec![m, a.clone()]);
+    let two = p.int(2);
+    let r = p.call("dec_round", vec![d, two]);
+    let ab = p.call("dec_abs", vec![r]);
+    let na = p.call("dec_neg", vec![a]);
+    let mx = p.call("dec_max", vec![ab, na]);
+    let half = p.dec("0.5");
+    let out = p.call("dec_sub", vec![mx, half]);
+    let lib = p.done(out);
+    // value_make(min(a,b), max(a,b), a<b, a<=b, a>b, a>=b, a==b)
+    let mut p = P::new();
+    let (a, b) = (p.param(0), p.param(1));
+    let mn = p.call("dec_min", vec![a.clone(), b.clone()]);
+    let mx = p.call("dec_max", vec![a.clone(), b.clone()]);
+    let c1 = p.call("dec_lt", vec![a.clone(), b.clone()]);
+    let c2 = p.call("dec_lte", vec![a.clone(), b.clone()]);
+    let c3 = p.call("dec_gt", vec![a.clone(), b.clone()]);
+    let c4 = p.call("dec_gte", vec![a.clone(), b.clone()]);
+    let c5 = p.call("dec_eq", vec![a, b]);
+    let r = p.call("value_make", vec![mn, mx, c1, c2, c3, c4, c5]);
+    let lib2 = p.done(r);
+    let max = "79228162514264337593543950335";
+    for (name, l, cases) in [
+        ("dchain", &lib, vec![vec!["1.5", "2.25"], vec!["-7.125", "3"], vec!["0", "1"], vec![max, "1"], vec!["3", max], vec!["0.0000000000000000001", "7"], vec!["2.675", "0.005"]]),
+        ("dcmp", &lib2, vec![vec!["1.0", "1.00"], vec!["1.00", "1.0"], vec!["2", "-3.5"], vec!["-0.0", "0"], vec!["0.10", "0.1"]]),
+    ] {
+        let mut p = P::new();
+        let a = argv_dec(&mut p, 1);
+        let b = argv_dec(&mut p, 2);
+        let r = p.call(name, vec![a, b]);
+        let root = p.done(r);
+        let cs: Vec<&[&str]> = cases.iter().map(|c| c.as_slice()).collect();
+        let r = differential(&root, &[(name, l)], &[name], &cs);
+        if name == "dchain" {
+            assert_eq!(r[2].code, Some(4), "dec_div by zero is a defect: {:?}", r[2]);
+            assert!(r[2].stderr.contains("dec_div: division by zero"), "{:?}", r[2].stderr);
+            assert_eq!(r[3].code, Some(4), "{:?}", r[3]);
+            assert!(r[3].stderr.contains("dec_add: overflow"), "{:?}", r[3].stderr);
+            assert_eq!(r[0].code, Some(0), "{:?}", r[0]);
+        } else {
+            assert!(r.iter().all(|x| x.code == Some(0)), "{:?}", r);
+        }
+    }
+}
+
+
+// ── 12. Int -> Float / Dec conversions and the identity narrowings PyAx uses ───────────────────────────────────
+
+#[test]
+fn int_to_float_and_dec_and_ids_match_generic() {
+    // value_make(float_id(int_to_float(a)) * 0.5, dec_id(int_to_dec(a)) + 1.25)
+    let mut p = P::new();
+    let a = p.param(0);
+    let f = p.call("int_to_float", vec![a.clone()]);
+    let fi = p.call("float_id", vec![f]);
+    let half = p.float(0.5);
+    let fm = p.call("float_mul", vec![fi, half]);
+    let d = p.call("int_to_dec", vec![a]);
+    let di = p.call("dec_id", vec![d]);
+    let q = p.dec("1.25");
+    let ds = p.call("dec_add", vec![di, q]);
+    let r = p.call("value_make", vec![fm, ds]);
+    let lib = p.done(r);
+    let mut p = P::new();
+    let a = argv_int(&mut p, 1);
+    let r = p.call("conv", vec![a]);
+    let root = p.done(r);
+    let max = i64::MAX.to_string();
+    let min = i64::MIN.to_string();
+    let cases: Vec<Vec<&str>> = vec![vec!["0"], vec!["7"], vec!["-9"], vec![&max], vec![&min], vec!["9007199254740993"]];
+    let cs: Vec<&[&str]> = cases.iter().map(|c| c.as_slice()).collect();
+    let r = differential(&root, &[("conv", &lib)], &["conv"], &cs);
+    assert!(r.iter().all(|x| x.code == Some(0)), "{:?}", r);
+}
+
+
+// ── 13. str_to_float / str_to_dec: a literal is parsed once; a bad literal is the same defect ──────────────────────
+
+#[test]
+fn str_to_float_and_dec_literals_and_args_match_generic() {
+    // value_make(float(lit) + float(arg), dec(lit2) + dec(arg))
+    let mut p = P::new();
+    let (a, b) = (p.param(0), p.param(1));
+    let l1 = p.text("0.999");
+    let f1 = p.call("str_to_float", vec![l1]);
+    let f2 = p.call("str_to_float", vec![a]);
+    let fs = p.call("float_add", vec![f1, f2]);
+    let l2 = p.text("0.25");
+    let d1 = p.call("str_to_dec", vec![l2]);
+    let d2 = p.call("str_to_dec", vec![b]);
+    let ds = p.call("dec_add", vec![d1, d2]);
+    let r = p.call("value_make", vec![fs, ds]);
+    let lib = p.done(r);
+    let mut p = P::new();
+    let (ia, ib) = (p.int(1), p.int(2));
+    let (d0, d1) = (p.text("0"), p.text("0"));
+    let a = p.call("argv_or", vec![ia, d0]);
+    let b = p.call("argv_or", vec![ib, d1]);
+    let r = p.call("lits", vec![a, b]);
+    let root = p.done(r);
+    let cases: Vec<Vec<&str>> = vec![vec!["1.5", "2.5"], vec!["inf", "-0.0"], vec!["nan", "1e3"], vec!["abc", "1"], vec!["1", "x.5"]];
+    let cs: Vec<&[&str]> = cases.iter().map(|c| c.as_slice()).collect();
+    let r = differential(&root, &[("lits", &lib)], &["lits"], &cs);
+    assert_eq!(r[0].code, Some(0), "{:?}", r[0]);
+    assert_eq!(r[3].code, Some(4), "invalid float text is a defect: {:?}", r[3]);
+    assert!(r[3].stderr.contains("DEFECT in str_to_float"), "{:?}", r[3].stderr);
+    assert_eq!(r[4].code, Some(4), "{:?}", r[4]);
+}
+
+
+#[test]
+fn str_trim_feeding_str_to_dec_matches_generic() {
+    // Decimal(trim(lit)) + Decimal(trim(arg))
+    let mut p = P::new();
+    let a = p.param(0);
+    let l = p.text("  1.5 ");
+    let tl = p.call("str_trim", vec![l]);
+    let d1 = p.call("str_to_dec", vec![tl]);
+    let ta = p.call("str_trim", vec![a]);
+    let d2 = p.call("str_to_dec", vec![ta]);
+    let r = p.call("dec_add", vec![d1, d2]);
+    let lib = p.done(r);
+    let mut p = P::new();
+    let (i, d) = (p.int(1), p.text("0"));
+    let a = p.call("argv_or", vec![i, d]);
+    let r = p.call("trimd", vec![a]);
+    let root = p.done(r);
+    let cases: Vec<Vec<&str>> = vec![vec!["2.25"], vec![" \t 7 \n"], vec!["x"], vec![" "]];
+    let cs: Vec<&[&str]> = cases.iter().map(|c| c.as_slice()).collect();
+    let r = differential(&root, &[("trimd", &lib)], &["trimd"], &cs);
+    assert_eq!(r[0].code, Some(0), "{:?}", r[0]);
+    assert_eq!(r[2].code, Some(4), "{:?}", r[2]);
 }

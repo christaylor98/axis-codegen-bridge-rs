@@ -1,0 +1,14 @@
+from decimal import Decimal
+
+
+def main(args: list[str]) -> None:
+    n = int(args[0])
+    i = 0
+    acc = Decimal("0")
+    step = Decimal("0.25")
+    while i < n:
+        acc = acc + step
+        if acc > Decimal("1000"):
+            acc = acc - Decimal("1000")
+        i = i + 1
+    print(acc)

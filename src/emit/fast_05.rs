@@ -24,6 +24,7 @@
 //! (`return None`) if it sits in an `if` arm (typically a cold error arm that calls an effectful `fail`).
 
 use crate::core_ir_05::{
+    dec_type_hash, decode_dec_payload, decode_float_payload, float_type_hash,
     bool_type_hash, decode_bool_payload, decode_int_payload, decode_text_payload, fn_type_hash, int_type_hash,
     param_type_hash, text_type_hash, unit_type_hash, verify_blocks, Arm, Blocks, CoreBundle, Hash256, Node, NodeRef,
 };
@@ -57,9 +58,12 @@ impl Resolver<'_> {
 enum Val {
     I(String),   // i64
     B(String),   // bool
+    F(String),   // f64
+    D(String),   // Decimal
     R(String),   // &Value, borrowed from the arguments
     T(String),   // &Arc<str>
     L(String),   // &'static str (a Text literal)
+    S(String),   // &str borrowed from the arguments (a trimmed Text)
     P(String),   // &Arc<str> that came from str_char_at: only value_0 may take it
     O(String),   // an owned Value this function built
     U,           // Unit
@@ -89,9 +93,12 @@ fn ty(v: &Val) -> &'static str {
     match v {
         Val::I(_) | Val::Never => "i64",
         Val::B(_) => "bool",
+        Val::F(_) => "f64",
+        Val::D(_) => "axis_codegen_bridge::runtime::value::Decimal",
         Val::R(_) => "&Value",
         Val::T(_) | Val::P(_) => "&std::sync::Arc<str>",
         Val::L(_) => "&'static str",
+        Val::S(_) => "&str",
         Val::O(_) => "Value",
         Val::U => "()",
     }
@@ -99,7 +106,7 @@ fn ty(v: &Val) -> &'static str {
 
 fn expr(v: &Val) -> String {
     match v {
-        Val::I(e) | Val::B(e) | Val::R(e) | Val::T(e) | Val::L(e) | Val::P(e) | Val::O(e) => e.clone(),
+        Val::I(e) | Val::B(e) | Val::F(e) | Val::D(e) | Val::R(e) | Val::T(e) | Val::L(e) | Val::S(e) | Val::P(e) | Val::O(e) => e.clone(),
         Val::U => "()".into(),
         Val::Never => "return None".into(),
     }
@@ -109,10 +116,13 @@ fn with_expr(like: &Val, e: String) -> Val {
     match like {
         Val::I(_) | Val::Never => Val::I(e),
         Val::B(_) => Val::B(e),
+        Val::F(_) => Val::F(e),
+        Val::D(_) => Val::D(e),
         Val::R(_) => Val::R(e),
         Val::T(_) => Val::T(e),
         Val::P(_) => Val::P(e),
         Val::L(_) => Val::L(e),
+        Val::S(_) => Val::S(e),
         Val::O(_) => Val::O(e),
         Val::U => Val::U,
     }
@@ -156,6 +166,30 @@ impl<'a> Gen<'a> {
         }
     }
 
+    fn to_f(&mut self, v: &Val) -> Res<String> {
+        match v {
+            Val::F(e) => Ok(e.clone()),
+            Val::R(e) => {
+                let t = self.fresh();
+                self.line(format!("let {t}: f64 = match {e} {{ Value::Float(x) => *x, _ => return None }};"));
+                Ok(t)
+            }
+            other => Err(format!("not a Float: {:?}", other)),
+        }
+    }
+
+    fn to_d(&mut self, v: &Val) -> Res<String> {
+        match v {
+            Val::D(e) => Ok(e.clone()),
+            Val::R(e) => {
+                let t = self.fresh();
+                self.line(format!("let {t}: axis_codegen_bridge::runtime::value::Decimal = match {e} {{ Value::Dec(x) => *x, _ => return None }};"));
+                Ok(t)
+            }
+            other => Err(format!("not a Dec: {:?}", other)),
+        }
+    }
+
     /// An `&Arc<str>`.
     fn to_t(&mut self, v: &Val) -> Res<String> {
         match v {
@@ -172,10 +206,10 @@ impl<'a> Gen<'a> {
     /// A `&str`.
     fn to_s(&mut self, v: &Val) -> Res<String> {
         match v {
-            Val::L(e) => Ok(e.clone()),
+            Val::L(e) | Val::S(e) => Ok(e.clone()),
             other => {
                 let t = self.to_t(other)?;
-                Ok(format!("&**{}", t))
+                Ok(format!("(&**{})", t))
             }
         }
     }
@@ -185,9 +219,11 @@ impl<'a> Gen<'a> {
         Ok(match v {
             Val::I(e) => format!("Value::Int({e})"),
             Val::B(e) => format!("Value::Bool({e})"),
+            Val::F(e) => format!("Value::Float({e})"),
+            Val::D(e) => format!("Value::Dec({e})"),
             Val::R(e) => format!("({e}).clone()"),
             Val::T(e) => format!("Value::Str(std::sync::Arc::clone({e}))"),
-            Val::L(e) => format!("Value::Str(std::sync::Arc::from({e}))"),
+            Val::L(e) | Val::S(e) => format!("Value::Str(std::sync::Arc::from({e}))"),
             Val::O(e) => if move_ok { e.clone() } else { format!("{e}.clone()") },
             Val::U => "Value::Unit".into(),
             Val::Never => "return None".into(),
@@ -324,7 +360,7 @@ impl<'a> Gen<'a> {
 
         // unify the two arms' values
         let same = |a: &Val, b: &Val| matches!((a, b),
-            (Val::I(_), Val::I(_)) | (Val::B(_), Val::B(_)) | (Val::R(_), Val::R(_)) | (Val::T(_), Val::T(_))
+            (Val::I(_), Val::I(_)) | (Val::B(_), Val::B(_)) | (Val::F(_), Val::F(_)) | (Val::D(_), Val::D(_)) | (Val::R(_), Val::R(_)) | (Val::T(_), Val::T(_))
             | (Val::L(_), Val::L(_)) | (Val::U, Val::U) | (Val::O(_), Val::O(_)));
         let (ty_s, te, ee, mk): (String, String, String, Box<dyn Fn(String) -> Val>) = match (&tv, &ev) {
             (Val::Never, Val::Never) => ("i64".into(), "return None".into(), "return None".into(), Box::new(Val::I)),
@@ -467,6 +503,134 @@ impl<'a> Gen<'a> {
                 ));
                 Ok(Val::I(t))
             }
+            "arith::float_add" | "arith::float_sub" | "arith::float_mul" | "arith::float_div" | "arith::float_pow"
+            | "arith::float_min" | "arith::float_max" => {
+                want(2)?;
+                let (x, y) = (self.to_f(&a[0])?, self.to_f(&a[1])?);
+                let e = match op {
+                    "arith::float_add" => format!("{x} + {y}"),
+                    "arith::float_sub" => format!("{x} - {y}"),
+                    "arith::float_mul" => format!("{x} * {y}"),
+                    "arith::float_div" => format!("{x} / {y}"),
+                    "arith::float_pow" => format!("f64::powf({x}, {y})"),
+                    "arith::float_min" => format!("f64::min({x}, {y})"),
+                    _ => format!("f64::max({x}, {y})"),
+                };
+                let t = self.fresh();
+                self.line(format!("let {t}: f64 = {e};"));
+                Ok(Val::F(t))
+            }
+            "arith::float_neg" | "arith::float_abs" | "arith::float_sqrt" | "arith::float_floor" | "arith::float_ceil"
+            | "arith::float_round" => {
+                want(1)?;
+                let x = self.to_f(&a[0])?;
+                let e = match op {
+                    "arith::float_neg" => format!("-{x}"),
+                    "arith::float_abs" => format!("f64::abs({x})"),
+                    "arith::float_sqrt" => format!("f64::sqrt({x})"),
+                    "arith::float_floor" => format!("f64::floor({x})"),
+                    "arith::float_ceil" => format!("f64::ceil({x})"),
+                    _ => format!("f64::round({x})"),
+                };
+                let t = self.fresh();
+                self.line(format!("let {t}: f64 = {e};"));
+                Ok(Val::F(t))
+            }
+            "arith::str_to_float" | "arith::str_to_dec" => {
+                want(1)?;
+                let (f, rty) = if op.ends_with("float") { ("fast_str_to_float", "f64") } else { ("fast_str_to_dec", "axis_codegen_bridge::runtime::value::Decimal") };
+                let t = self.fresh();
+                match &a[0] {
+                    // a literal is parsed once per process, not once per call
+                    Val::L(lit) => self.line(format!(
+                        "let {t}: {rty} = {{ static C: std::sync::OnceLock<Option<{rty}>> = std::sync::OnceLock::new(); \
+                         match *C.get_or_init(|| {RT}::arith::{f}({lit})) {{ Some(v) => v, None => return None }} }};"
+                    )),
+                    other => {
+                        let sx = self.to_s(other)?;
+                        self.line(format!("let {t}: {rty} = match {RT}::arith::{f}({sx}) {{ Some(v) => v, None => return None }};"));
+                    }
+                }
+                Ok(if op.ends_with("float") { Val::F(t) } else { Val::D(t) })
+            }
+            "coerce::int_to_float" => {
+                want(1)?;
+                let x = self.to_i(&a[0])?;
+                let t = self.fresh();
+                self.line(format!("let {t}: f64 = {x} as f64;"));
+                Ok(Val::F(t))
+            }
+            "coerce::int_to_dec" => {
+                want(1)?;
+                let x = self.to_i(&a[0])?;
+                let t = self.fresh();
+                self.line(format!("let {t}: axis_codegen_bridge::runtime::value::Decimal = axis_codegen_bridge::runtime::value::Decimal::from({x});"));
+                Ok(Val::D(t))
+            }
+            "coerce::float_id" => { want(1)?; Ok(Val::F(self.to_f(&a[0])?)) }
+            "coerce::dec_id" => { want(1)?; Ok(Val::D(self.to_d(&a[0])?)) }
+            "arith::float_is_nan" => {
+                want(1)?;
+                let x = self.to_f(&a[0])?;
+                let t = self.fresh();
+                self.line(format!("let {t}: bool = f64::is_nan({x});"));
+                Ok(Val::B(t))
+            }
+            "arith::float_lt" | "arith::float_lte" | "arith::float_gt" | "arith::float_gte" | "arith::float_eq" => {
+                want(2)?;
+                let (x, y) = (self.to_f(&a[0])?, self.to_f(&a[1])?);
+                let o = match op { "arith::float_lt" => "<", "arith::float_lte" => "<=", "arith::float_gt" => ">", "arith::float_gte" => ">=", _ => "==" };
+                let t = self.fresh();
+                self.line(format!("let {t}: bool = {x} {o} {y};"));
+                Ok(Val::B(t))
+            }
+            "arith::dec_add" | "arith::dec_sub" | "arith::dec_mul" => {
+                want(2)?;
+                let (x, y) = (self.to_d(&a[0])?, self.to_d(&a[1])?);
+                let m = match op { "arith::dec_add" => "checked_add", "arith::dec_sub" => "checked_sub", _ => "checked_mul" };
+                let t = self.fresh();
+                self.line(format!("let {t}: axis_codegen_bridge::runtime::value::Decimal = match {x}.{m}({y}) {{ Some(r) => r, None => return None }};"));
+                Ok(Val::D(t))
+            }
+            "arith::dec_div" => {
+                want(2)?;
+                let (x, y) = (self.to_d(&a[0])?, self.to_d(&a[1])?);
+                let t = self.fresh();
+                self.line(format!("let {t}: axis_codegen_bridge::runtime::value::Decimal = match {RT}::arith::fast_dec_div({x}, {y}) {{ Some(r) => r, None => return None }};"));
+                Ok(Val::D(t))
+            }
+            "arith::dec_round" => {
+                want(2)?;
+                let x = self.to_d(&a[0])?;
+                let n = self.to_i(&a[1])?;
+                let t = self.fresh();
+                self.line(format!("let {t}: axis_codegen_bridge::runtime::value::Decimal = match {RT}::arith::fast_dec_round({x}, {n}) {{ Some(r) => r, None => return None }};"));
+                Ok(Val::D(t))
+            }
+            "arith::dec_neg" | "arith::dec_abs" => {
+                want(1)?;
+                let x = self.to_d(&a[0])?;
+                let e = if op.ends_with("neg") { format!("-{x}") } else { format!("{x}.abs()") };
+                let t = self.fresh();
+                self.line(format!("let {t}: axis_codegen_bridge::runtime::value::Decimal = {e};"));
+                Ok(Val::D(t))
+            }
+            "arith::dec_min" | "arith::dec_max" => {
+                want(2)?;
+                let (x, y) = (self.to_d(&a[0])?, self.to_d(&a[1])?);
+                let m = if op.ends_with("min") { "min" } else { "max" };
+                let t = self.fresh();
+                self.line(format!("let {t}: axis_codegen_bridge::runtime::value::Decimal = Ord::{m}({x}, {y});"));
+                Ok(Val::D(t))
+            }
+            "arith::dec_lt" | "arith::dec_lte" | "arith::dec_gt" | "arith::dec_gte" | "arith::dec_eq" => {
+                want(2)?;
+                let (x, y) = (self.to_d(&a[0])?, self.to_d(&a[1])?);
+                let o = match op { "arith::dec_lt" => "<", "arith::dec_lte" => "<=", "arith::dec_gt" => ">", "arith::dec_gte" => ">=", _ => "==" };
+                let t = self.fresh();
+                self.line(format!("let {t}: bool = {x} {o} {y};"));
+                Ok(Val::B(t))
+            }
             "bool_ops::bool_and" | "bool_ops::bool_or" => {
                 want(2)?;
                 let (x, y) = (self.to_b(&a[0])?, self.to_b(&a[1])?);
@@ -576,6 +740,14 @@ impl<'a> Gen<'a> {
                 self.line(format!("let {t}: i64 = match {RT}::str_ops::fast_char_code({s}, {k}) {{ Some(c) => c, None => return None }};"));
                 Ok(Val::I(t))
             }
+            "str_ops::str_trim" => {
+                want(1)?;
+                let sx = self.to_s(&a[0])?;
+                Ok(match &a[0] {
+                    Val::L(_) => Val::L(format!("{sx}.trim()")),   // still 'static
+                    _ => { let t = self.fresh(); self.line(format!("let {t}: &str = {sx}.trim();")); Val::S(t) }
+                })
+            }
             "str_ops::str_eq" | "str_ops::text_eq" => {
                 want(2)?;
                 let (x, y) = (self.to_s(&a[0])?, self.to_s(&a[1])?);
@@ -619,6 +791,12 @@ impl<'b> St<'b> {
                 Some(Val::L(format!("{:?}", decode_text_payload(&e.payload)?)))
             } else if *dh == uh {
                 Some(Val::U)
+            } else if *dh == float_type_hash() {
+                Some(Val::F(format!("f64::from_bits({}u64)", decode_float_payload(&e.payload)?.to_bits())))
+            } else if *dh == dec_type_hash() {
+                let bytes = decode_dec_payload(&e.payload)?.serialize();
+                let lit = bytes.iter().map(|b| format!("{}u8", b)).collect::<Vec<_>>().join(", ");
+                Some(Val::D(format!("axis_codegen_bridge::runtime::value::Decimal::deserialize([{}])", lit)))
             } else if *dh == fh {
                 None
             } else {
