@@ -482,3 +482,29 @@ fn value_make_of_a_sticky_argument_stays_sticky() {
     assert_eq!(r[0].code, Some(0));
     assert_eq!(r[1].code, Some(3), "an Unknown argument must come back as the Unknown: {:?}", r[1]);
 }
+
+// ── 9. negative constants in receiver position (found by the lab's PyAx fixtures: `-1i64.checked_add` did not parse) ──
+
+#[test]
+fn negative_constants_build_and_agree() {
+    // f(a) = ((-1 + a) * -3) - (-7 mod a)
+    let mut p = P::new();
+    let a = p.param(0);
+    let (m1, m3, m7) = (p.int(-1), p.int(-3), p.int(-7));
+    let t = p.call("int_add", vec![m1, a.clone()]);
+    let u = p.call("int_mul", vec![t, m3]);
+    let v = p.call("int_mod", vec![m7, a]);
+    let r = p.call("int_sub", vec![u, v]);
+    let lib = p.done(r);
+    let mut p = P::new();
+    let a = argv_int(&mut p, 1);
+    let f = p.call("neg", vec![a]);
+    let s = p.call("int_to_str", vec![f]);
+    let r = p.call("io_print", vec![s]);
+    let root = p.done(r);
+    let cases: Vec<Vec<&str>> = vec![vec!["5"], vec!["-5"], vec!["1"], vec!["0"]];
+    let cs: Vec<&[&str]> = cases.iter().map(|c| c.as_slice()).collect();
+    let r = differential(&root, &[("neg", &lib)], &["neg"], &cs);
+    assert_eq!(r[0].stdout.trim(), "-15");   // (4 * -3) - (-7 mod 5 = 3)
+    assert_eq!(r[3].code, Some(4), "-7 mod 0 is a defect: {:?}", r[3]);
+}

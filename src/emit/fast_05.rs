@@ -612,7 +612,7 @@ impl<'b> St<'b> {
                 let slot = crate::core_ir_05::decode_unsigned_varint(&e.payload)? as usize;
                 Some(params.get(slot).cloned().ok_or("param slot out of range")?)
             } else if *dh == ih {
-                Some(Val::I(format!("{}i64", decode_int_payload(&e.payload)?)))
+                Some(Val::I(format!("({}i64)", decode_int_payload(&e.payload)?)))   // parenthesised: `-1i64.m()` is `-(1i64.m())`
             } else if *dh == bh {
                 Some(Val::B(format!("{}", decode_bool_payload(&e.payload)?)))
             } else if *dh == th {
