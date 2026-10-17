@@ -2100,6 +2100,7 @@ fn emit_blocks(
     xbundle: &HashMap<Hash256, String>,
     pure_det: &std::collections::HashSet<Hash256>,
     moves: &MoveSet,
+    use_fast: bool,
 ) -> Result<String, String> {
     const FAULT: &str = "axis_codegen_bridge::runtime::fault";
     let mut out = String::new();
@@ -2146,7 +2147,7 @@ fn emit_blocks(
                 let pad = "    ".repeat(depth);
                 let expr = emit_node(
                     i as u32, other, pool_kinds, arg_kind_table, native_call_table,
-                    builtin, registry, name_to_path, xbundle, pure_det, &bundle.constant_pool, moves,
+                    builtin, registry, name_to_path, xbundle, pure_det, &bundle.constant_pool, moves, use_fast,
                 )
                 .map_err(|e| format!("node[{}]: {}", i, e))?;
                 out.push_str(&format!("{pad}let node_{i}: Value = {expr};\n"));
@@ -2171,6 +2172,7 @@ fn emit_node(
     pure_det: &std::collections::HashSet<Hash256>,
     constant_pool: &[ConstantPoolEntry],
     moves: &MoveSet,
+    use_fast: bool,
 ) -> Result<String, String> {
     match node {
         Node::CCall { target_identity, args, target_name } => {
@@ -2402,6 +2404,20 @@ pub fn sanitise(name: &str) -> String {
 ///   `pub extern "C" fn <fn_name>(args: Value) -> Value`   ← Rust-mangled (USER_NAMES_STAY_MANGLED_V1)
 ///   `#[no_mangle] pub extern "C" fn ax_fn_<hex>(args: Value) -> Value`  ← identity export
 ///   `#[no_mangle] pub extern "C" fn _ax_exe_<fn_name>(args: Value) -> Value`
+/// AX146 step B/C: the speculative fast paths (emit/fast_05.rs). `callees` are the composite bodies it may inline,
+/// keyed by the identity a CCall uses. `enabled: false` (bridge `--no-fast`, env AX_NO_FAST) emits none of it: the
+/// generated code is then the generic code only, which is what the differential tests compare against.
+pub struct FastOptions<'a> {
+    pub enabled: bool,
+    pub callees: HashMap<Hash256, &'a CoreBundle>,
+}
+
+impl Default for FastOptions<'_> {
+    fn default() -> Self {
+        FastOptions { enabled: true, callees: HashMap::new() }
+    }
+}
+
 pub fn emit_rust_lib_from_bundle(
     bundle: &CoreBundle,
     fn_name: &str,
@@ -2419,6 +2435,7 @@ pub fn emit_rust_lib_from_bundle(
         pure_det,
         &DispatchOverlay::default(),
         &[],
+        &FastOptions::default(),
     )
 }
 
@@ -2438,6 +2455,7 @@ pub fn emit_rust_lib_from_bundle_with_dispatch(
     pure_det: &std::collections::HashSet<Hash256>,
     overlay: &DispatchOverlay,
     provider_crate_names: &[String],
+    fast: &FastOptions,
 ) -> Result<String, String> {
     let builtin = bridge_builtin_map_with_overlay(overlay);
     let name_to_path = symbol_map_with_overlay(overlay);
@@ -2667,11 +2685,30 @@ pub fn emit_rust_lib_from_bundle_with_dispatch(
     // jumped into the user's `write` (segfault), `free`/`read` hung the program. Nothing links this name: other
     // bundles and every harness call the identity export `ax_fn_<hash>`, the exe driver calls `_ax_exe_<name>`,
     // both below and both still unmangled.
+    let fast_src_pre: Option<String> = if fast.enabled {
+        let resolver = super::fast_05::Resolver {
+            builtin: &builtin,
+            registry: registry_identity_map,
+            name_to_path: &name_to_path,
+            pure_det,
+            callees: &fast.callees,
+        };
+        super::fast_05::emit_fast(&resolver, bundle, &safe_name)
+    } else {
+        None
+    };
     out.push_str(&format!(
         "#[allow(non_snake_case)]\npub extern \"C-unwind\" fn {}(args: Value) -> Value {{\n",
         safe_name
     ));
     out.push_str("    init_runtime();\n");
+    // the hook shares init_runtime's line, and everything new is appended at the END of the file, so every line of
+    // the generic code keeps its number (panic locations in DEFECT/UNKNOWN messages are generated-file:line)
+    if fast_src_pre.is_some() {
+        out.push_str(&format!("    init_runtime(); if let Some(__fast) = {}_fast(&args) {{ return __fast; }}\n", safe_name));
+    } else {
+        out.push_str("    init_runtime();\n");
+    }
 
     // Classify all pool entries up front. Fn-typed entries are NOT emitted as
     // `let pool_N` — they are resolved to bare Rust fn paths inside CCall.
@@ -2774,6 +2811,7 @@ pub fn emit_rust_lib_from_bundle_with_dispatch(
         xbundle_providers,
         pure_det,
         &moves,
+        fast.enabled,
     )?);
 
     // Result: the bundle's own authoritative `result` ref (BUG2_RESULT_FIELD_V1)
@@ -2804,6 +2842,10 @@ pub fn emit_rust_lib_from_bundle_with_dispatch(
     ));
     out.push_str(&format!("    {}(args)\n", safe_name));
     out.push_str("}\n\n");
+    out.push_str(&format!(
+        "#[no_mangle]\npub extern \"C-unwind\" fn {}_fast(args: &Value) -> Option<Value> {{\n    {}_fast(args)\n}}\n\n",
+        identity_sym, safe_name
+    ));
 
     // Exe shim
     out.push_str(&format!(
@@ -2812,6 +2854,27 @@ pub fn emit_rust_lib_from_bundle_with_dispatch(
     ));
     out.push_str(&format!("    {}(args)\n", safe_name));
     out.push_str("}\n");
+
+    // ── AX146: the speculative forms, appended so nothing above moves ──
+    out.push('\n');
+    match &fast_src_pre {
+        Some(f) => out.push_str(f),
+        None => out.push_str(&format!(
+            "#[allow(non_snake_case, dead_code)]\nfn {}_fast(_args: &Value) -> Option<Value> {{ None }}\n\n", safe_name
+        )),
+    }
+    let self_sym = format!("ax_fn_{}", hash256_to_hex(&self_identity));
+    let ext: Vec<&String> = xbundle_fnref_syms.iter().filter(|s| **s != self_sym).collect();
+    if !ext.is_empty() {
+        out.push_str("#[allow(improper_ctypes)]\nextern \"C-unwind\" {\n");
+        for sym in &ext {
+            out.push_str(&format!("    fn {}_fast(args: &Value) -> Option<Value>;\n", sym));
+        }
+        out.push_str("}\n");
+    }
+    for sym in &xbundle_fnref_syms {
+        out.push_str(&format!("fn {sym}_xfn_fast(args: &Value) -> Option<Value> {{ unsafe {{ {sym}_fast(args) }} }}\n"));
+    }
 
     Ok(out)
 }

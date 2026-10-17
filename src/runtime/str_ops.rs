@@ -94,13 +94,34 @@ fn char_at_idx(s: &std::sync::Arc<str>, idx: usize) -> Option<char> {
 
 /// The one-code-point Text for `c`. The 128 ASCII ones are preallocated and shared (a refcount bump, no allocation);
 /// sharing is unobservable: an Arc<str> is immutable and nothing here compares by address.
-fn char_text(c: char) -> std::sync::Arc<str> {
+fn ascii_table() -> &'static [std::sync::Arc<str>] {
     static ASCII: std::sync::OnceLock<Vec<std::sync::Arc<str>>> = std::sync::OnceLock::new();
+    ASCII.get_or_init(|| (0u8..128).map(|b| std::sync::Arc::<str>::from((b as char).encode_utf8(&mut [0; 4]) as &str)).collect())
+}
+
+fn char_text(c: char) -> std::sync::Arc<str> {
     if c.is_ascii() {
-        let t = ASCII.get_or_init(|| (0u8..128).map(|b| std::sync::Arc::<str>::from((b as char).encode_utf8(&mut [0; 4]) as &str)).collect());
-        return t[c as usize].clone();
+        return ascii_table()[c as usize].clone();
     }
     intern_str(c.encode_utf8(&mut [0; 4]))
+}
+
+// ── fast-path helpers (emit/fast_05.rs): None means "not the plain case", and the generic builtin then runs ──
+
+/// `str_len` on a borrowed Text.
+pub fn fast_len(s: &std::sync::Arc<str>) -> i64 {
+    n_chars(s) as i64
+}
+
+/// The one-character Text at code point `idx` when it is an ASCII character in range; None otherwise.
+pub fn fast_char(s: &std::sync::Arc<str>, idx: i64) -> Option<&'static std::sync::Arc<str>> {
+    let c = char_at_idx(s, usize::try_from(idx).ok()?)?;
+    c.is_ascii().then(|| &ascii_table()[c as usize])
+}
+
+/// `str_char_code` in range, else None.
+pub fn fast_char_code(s: &std::sync::Arc<str>, idx: i64) -> Option<i64> {
+    char_at_idx(s, usize::try_from(idx).ok()?).map(|c| c as u32 as i64)
 }
 
 #[track_caller]

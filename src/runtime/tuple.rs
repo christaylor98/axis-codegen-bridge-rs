@@ -17,7 +17,14 @@ pub(crate) fn fields_from_variadic(args: Value) -> Vec<Value> {
 /// what makes the nested `list_make(value_make(a, b))` case unambiguous).
 #[track_caller]
 pub fn value_make(args: Value) -> Value {
-    Value::Ctor { tag: intern_tag("Value"), fields: fields_from_variadic(args) }
+    Value::Ctor { tag: value_tag(), fields: fields_from_variadic(args) }
+}
+
+/// The tag of an M1 compound Value, looked up once (the tag table is append-only: a tag never changes).
+#[inline]
+pub fn value_tag() -> u32 {
+    static TAG: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *TAG.get_or_init(|| intern_tag("Value"))
 }
 
 /// Field accessors for an M1 compound Value (value_0/1/2). Read the Nth field
