@@ -50,6 +50,32 @@ pub fn now_unix_nanos(_: Value) -> Value {
     Value::Int(nanos.min(i64::MAX as u128) as i64)
 }
 
+/// `rand_bytes(Int) -> Bytes` (L12, approved by Chris 2026-10-18)
+///
+/// n bytes from the operating system's CSPRNG (the getrandom syscall), for tokens, keys and nonces. Blocks only
+/// until the kernel pool is first initialised at boot. A negative n, or a syscall failure, panics: there is no
+/// weaker fallback, because a predictable "random" value is worse than none.
+#[track_caller]
+pub fn rand_bytes(n: i64) -> Value {
+    if n < 0 {
+        panic!("rand_bytes: negative length {}", n);
+    }
+    let mut buf = vec![0u8; n as usize];
+    let mut got = 0usize;
+    while got < buf.len() {
+        let r = unsafe { libc::getrandom(buf[got..].as_mut_ptr() as *mut libc::c_void, buf.len() - got, 0) };
+        if r < 0 {
+            let e = std::io::Error::last_os_error();
+            if e.kind() != std::io::ErrorKind::Interrupted {
+                panic!("rand_bytes: getrandom failed: {}", e);
+            }
+        } else {
+            got += r as usize;
+        }
+    }
+    Value::Bytes(buf.into())
+}
+
 /// A "<Key>:   <n> kB" line of a /proc file, in bytes; 0 when absent or unreadable.
 fn proc_kb(path: &str, key: &str) -> i64 {
     std::fs::read_to_string(path).ok()

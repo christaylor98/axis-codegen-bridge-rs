@@ -202,6 +202,12 @@ fn chr_w(n: Value) -> Value {
         other => panic!("chr: expected Int, got {:?}", other),
     }
 }
+fn rand_bytes_w(n: Value) -> Value {
+    match n {
+        Value::Int(i) => super::process::rand_bytes(i),
+        other => panic!("rand_bytes: expected Int, got {:?}", other),
+    }
+}
 fn proc_sleep_w(n: Value) -> Value {
     match n {
         Value::Int(i) => super::process::proc_sleep(i),
@@ -508,6 +514,7 @@ fn dispatch_table() -> &'static HashMap<&'static str, PrimFn> {
         m.insert("proc_exit",       super::process::proc_exit);
         m.insert("proc_sleep",      proc_sleep_w);
         m.insert("now_unix_nanos",  super::process::now_unix_nanos);
+        m.insert("rand_bytes",      rand_bytes_w);
         m.insert("hotwrite_batch_run",   hotwrite_batch_run_w);
         m.insert("hotwrite_batch_run_c", hotwrite_batch_run_c_w);
         m.insert("hotwrite_batch_run_c_durable", hotwrite_batch_run_c_durable_w);

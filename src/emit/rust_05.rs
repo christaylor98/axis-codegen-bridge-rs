@@ -290,6 +290,7 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("proc_run",   "axis_codegen_bridge::runtime::process::proc_run");
     m.insert("sleep",      "axis_codegen_bridge::runtime::process::sleep");
     m.insert("now_unix_nanos", "axis_codegen_bridge::runtime::process::now_unix_nanos");
+    m.insert("rand_bytes", "axis_codegen_bridge::runtime::process::rand_bytes");
     m.insert("sys_mem_available", "axis_codegen_bridge::runtime::process::sys_mem_available");
     m.insert("proc_rss", "axis_codegen_bridge::runtime::process::proc_rss");
     m.insert("argv",       "axis_codegen_bridge::runtime::process::argv");
@@ -1370,6 +1371,7 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("proc_run",          vec![Text, Value]);
     m.insert("bytes_is_utf8",     vec![Bytes]);
     m.insert("sleep",             vec![Int]);
+    m.insert("rand_bytes",        vec![Int]);
     m.insert("channel_send",      vec![Text, Value]);
     m.insert("channel_depth",     vec![Text]);
     m.insert("event_subscribe",   vec![Text]);
