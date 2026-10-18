@@ -663,6 +663,14 @@ fn symbol_map() -> HashMap<&'static str, &'static str> {
     m.insert("tcp_read",             "axis_codegen_bridge::runtime::net::tcp_read");
     m.insert("tcp_set_read_timeout", "axis_codegen_bridge::runtime::net::tcp_set_read_timeout");
     m.insert("tcp_write",            "axis_codegen_bridge::runtime::net::tcp_write");
+    m.insert("http_listen",         "axis_codegen_bridge::runtime::http::http_listen");
+    m.insert("http_port",           "axis_codegen_bridge::runtime::http::http_port");
+    m.insert("http_next",           "axis_codegen_bridge::runtime::http::http_next");
+    m.insert("http_method",         "axis_codegen_bridge::runtime::http::http_method");
+    m.insert("http_url",            "axis_codegen_bridge::runtime::http::http_url");
+    m.insert("http_body",           "axis_codegen_bridge::runtime::http::http_body");
+    m.insert("http_header",         "axis_codegen_bridge::runtime::http::http_header");
+    m.insert("http_reply",          "axis_codegen_bridge::runtime::http::http_reply");
     m.insert("tcp_close",            "axis_codegen_bridge::runtime::net::tcp_close");
     // ── AXVERITY_SLAB_TO_WIRE_BUILD_V1 — paired slab-to-wire emit + batching ──
     m.insert("pg_emit_datarow1",     "axis_codegen_bridge::runtime::net::pg_emit_datarow1");
@@ -1402,6 +1410,14 @@ fn native_call_fn_arg_types() -> HashMap<&'static str, Vec<NativeArgType>> {
     m.insert("tcp_set_read_timeout", vec![Int, Int]);
     m.insert("tcp_read",          vec![Int]);
     m.insert("tcp_write",         vec![Int, Bytes]);
+    m.insert("http_listen",       vec![Text, Int]);
+    m.insert("http_port",         vec![Int]);
+    m.insert("http_next",         vec![Int]);
+    m.insert("http_method",       vec![Int]);
+    m.insert("http_url",          vec![Int]);
+    m.insert("http_body",         vec![Int]);
+    m.insert("http_header",       vec![Int, Text]);
+    m.insert("http_reply",        vec![Int, Int, Text, Text]);
     m.insert("tcp_close",         vec![Int]);
     m.insert("pty_open",          vec![Text, Value, Int, Int]);
     m.insert("pty_read",          vec![Int, Int]);
