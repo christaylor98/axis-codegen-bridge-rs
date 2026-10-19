@@ -1,8 +1,0 @@
-def main(args: list[str]) -> None:
-    n = int(args[0])
-    i = 0
-    acc = 0.0
-    while i < n:
-        acc = acc * 0.999 + float(i % 7) / 3.0
-        i = i + 1
-    print(acc)

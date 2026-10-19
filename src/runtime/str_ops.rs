@@ -1,132 +1,8 @@
 use super::value::{Value, intern_str, get_str};
 
-// ── O(1) code-point indexing (AX146 step A) ──────────────────────────────────────────────────────────────────────
-//
-// `str_len` / `str_char` / `str_char_at` / `str_char_code` count in code points. They used to copy the whole string
-// (`get_str`) and then collect it into a Vec<char> on EVERY call, so a character loop was quadratic. Now:
-//   - a string of at most SHORT bytes is read directly (a scan of <= SHORT bytes);
-//   - a longer one (up to CACHE_MAX_BYTES) gets an index built once and kept in a small thread-local cache keyed by
-//     the Arc's pointer: its ASCII flag, its code-point count, and (non-ASCII only) the byte offset of every
-//     CKPT-th code point. An ASCII string then indexes by byte, a non-ASCII one by checkpoint + <= CKPT steps;
-//   - a string over CACHE_MAX_BYTES is not cached (so the cache pins at most SLOTS * CACHE_MAX_BYTES per thread) and is
-//     scanned per call, which is still no copy.
-// Soundness of the pointer key: the cache holds a STRONG clone of each cached Arc, so an address in the cache cannot
-// be freed and reused for another string while its entry lives; the text behind an Arc<str> is immutable.
-const SHORT: usize = 32;
-const CACHE_MAX_BYTES: usize = 32 << 20;
-const CKPT: usize = 32;
-const SLOTS: usize = 4;
-
-struct Indexed {
-    text: std::sync::Arc<str>,
-    ascii: bool,
-    nchars: usize,
-    /// byte offset of code point k * CKPT (empty when ascii)
-    ckpt: Vec<usize>,
-}
-
-impl Indexed {
-    fn build(text: std::sync::Arc<str>) -> Indexed {
-        if text.is_ascii() {
-            let nchars = text.len();
-            return Indexed { text, ascii: true, nchars, ckpt: Vec::new() };
-        }
-        let (mut ckpt, mut n) = (Vec::new(), 0usize);
-        for (b, _) in text.char_indices() {
-            if n % CKPT == 0 { ckpt.push(b); }
-            n += 1;
-        }
-        Indexed { text, ascii: false, nchars: n, ckpt }
-    }
-
-    fn char_at(&self, idx: usize) -> Option<char> {
-        if idx >= self.nchars { return None; }
-        if self.ascii { return Some(self.text.as_bytes()[idx] as char); }
-        self.text[self.ckpt[idx / CKPT]..].chars().nth(idx % CKPT)
-    }
-}
-
-struct IndexCache {
-    slots: [Option<Indexed>; SLOTS],
-    next: usize,
-}
-
-thread_local! {
-    static INDEX_CACHE: std::cell::RefCell<IndexCache> =
-        const { std::cell::RefCell::new(IndexCache { slots: [None, None, None, None], next: 0 }) };
-}
-
-/// Run `cached` on the string's index (built and cached on first sight), or `direct` on the bare text when the
-/// string is too short or too long to be worth caching. Neither closure may re-enter this module.
-fn with_index<R>(s: &std::sync::Arc<str>, direct: impl FnOnce(&str) -> R, cached: impl FnOnce(&Indexed) -> R) -> R {
-    let n = s.len();
-    if n <= SHORT || n > CACHE_MAX_BYTES { return direct(s); }
-    INDEX_CACHE.with(|c| {
-        let mut c = c.borrow_mut();
-        let key = std::sync::Arc::as_ptr(s) as *const u8;
-        let hit = c.slots.iter().position(|e| {
-            e.as_ref().is_some_and(|ix| std::ptr::eq(std::sync::Arc::as_ptr(&ix.text) as *const u8, key) && ix.text.len() == n)
-        });
-        let slot = match hit {
-            Some(i) => i,
-            None => {
-                let i = c.next;
-                c.next = (i + 1) % SLOTS;
-                c.slots[i] = Some(Indexed::build(s.clone()));
-                i
-            }
-        };
-        cached(c.slots[slot].as_ref().expect("a filled slot"))
-    })
-}
-
-fn n_chars(s: &std::sync::Arc<str>) -> usize {
-    with_index(s, |t| t.chars().count(), |ix| ix.nchars)
-}
-
-fn char_at_idx(s: &std::sync::Arc<str>, idx: usize) -> Option<char> {
-    with_index(
-        s,
-        |t| if t.is_ascii() { t.as_bytes().get(idx).map(|b| *b as char) } else { t.chars().nth(idx) },
-        |ix| ix.char_at(idx),
-    )
-}
-
-/// The one-code-point Text for `c`. The 128 ASCII ones are preallocated and shared (a refcount bump, no allocation);
-/// sharing is unobservable: an Arc<str> is immutable and nothing here compares by address.
-fn ascii_table() -> &'static [std::sync::Arc<str>] {
-    static ASCII: std::sync::OnceLock<Vec<std::sync::Arc<str>>> = std::sync::OnceLock::new();
-    ASCII.get_or_init(|| (0u8..128).map(|b| std::sync::Arc::<str>::from((b as char).encode_utf8(&mut [0; 4]) as &str)).collect())
-}
-
-fn char_text(c: char) -> std::sync::Arc<str> {
-    if c.is_ascii() {
-        return ascii_table()[c as usize].clone();
-    }
-    intern_str(c.encode_utf8(&mut [0; 4]))
-}
-
-// ── fast-path helpers (emit/fast_05.rs): None means "not the plain case", and the generic builtin then runs ──
-
-/// `str_len` on a borrowed Text.
-pub fn fast_len(s: &std::sync::Arc<str>) -> i64 {
-    n_chars(s) as i64
-}
-
-/// The one-character Text at code point `idx` when it is an ASCII character in range; None otherwise.
-pub fn fast_char(s: &std::sync::Arc<str>, idx: i64) -> Option<&'static std::sync::Arc<str>> {
-    let c = char_at_idx(s, usize::try_from(idx).ok()?)?;
-    c.is_ascii().then(|| &ascii_table()[c as usize])
-}
-
-/// `str_char_code` in range, else None.
-pub fn fast_char_code(s: &std::sync::Arc<str>, idx: i64) -> Option<i64> {
-    char_at_idx(s, usize::try_from(idx).ok()?).map(|c| c as u32 as i64)
-}
-
 #[track_caller]
 pub fn str_len(s: std::sync::Arc<str>) -> Value {
-    Value::Int(n_chars(&s) as i64)
+    Value::Int(get_str(&s).chars().count() as i64)
 }
 
 #[track_caller]
@@ -138,8 +14,9 @@ pub fn str_concat(a: std::sync::Arc<str>, b: std::sync::Arc<str>) -> Value {
 #[track_caller]
 pub fn str_char_at(s: std::sync::Arc<str>, idx: i64) -> Value {
     if idx < 0 { return super::option::option_none(); }
-    match char_at_idx(&s, idx as usize) {
-        Some(c) => super::option::option_some(Value::Str(char_text(c))),
+    let chars: Vec<char> = get_str(&s).chars().collect();
+    match chars.get(idx as usize) {
+        Some(c) => super::option::option_some(Value::Str(intern_str(&c.to_string()))),
         None    => super::option::option_none(),
     }
 }
@@ -147,20 +24,13 @@ pub fn str_char_at(s: std::sync::Arc<str>, idx: i64) -> Value {
 /// Unchecked character access. Panics on out-of-bounds.
 #[track_caller]
 pub fn str_char(s: std::sync::Arc<str>, idx: i64) -> Value {
-    if let Some(c) = usize::try_from(idx).ok().and_then(|i| char_at_idx(&s, i)) {
-        return Value::Str(char_text(c));
-    }
-    // out of range: the original Vec<char> index, so the panic message is exactly what it always was
-    let chars: Vec<char> = s.chars().collect();
+    let chars: Vec<char> = get_str(&s).chars().collect();
     Value::Str(intern_str(&chars[idx as usize].to_string()))
 }
 
 #[track_caller]
 pub fn str_char_code(s: std::sync::Arc<str>, idx: i64) -> Value {
-    if let Some(c) = usize::try_from(idx).ok().and_then(|i| char_at_idx(&s, i)) {
-        return Value::Int(c as u32 as i64);
-    }
-    let chars: Vec<char> = s.chars().collect();
+    let chars: Vec<char> = get_str(&s).chars().collect();
     Value::Int(chars[idx as usize] as u32 as i64)
 }
 
@@ -243,7 +113,7 @@ pub fn str_contains(hay: std::sync::Arc<str>, need: std::sync::Arc<str>) -> Valu
 
 #[track_caller]
 pub fn str_eq(a: std::sync::Arc<str>, b: std::sync::Arc<str>) -> Value {
-    Value::Bool(*a == *b)
+    Value::Bool(get_str(&a) == get_str(&b))
 }
 
 /// text_eq(Text, Text) -> Bool. axis-canonical alias for str_eq (different
@@ -453,90 +323,4 @@ pub fn str_pad_right(s: std::sync::Arc<str>, width: i64, pad: std::sync::Arc<str
         suffix.push(iter.next().unwrap());
     }
     Value::Str(intern_str(&format!("{}{}", s_str, suffix)))
-}
-
-#[cfg(test)]
-mod index_tests {
-    use super::*;
-    use std::sync::Arc;
-
-    fn t(s: &str) -> Arc<str> { Arc::from(s) }
-    fn txt(v: Value) -> String { match v { Value::Str(s) => s.to_string(), o => panic!("{:?}", o) } }
-    /// the reference: what the original Vec<char> implementation answered
-    fn oracle(s: &str, i: i64) -> Option<char> { if i < 0 { None } else { s.chars().nth(i as usize) } }
-
-    fn long_ascii() -> String { "abcdefgh".repeat(2000) }                         // 16000 bytes, over SHORT
-    fn long_mixed() -> String { "aé日😀z".repeat(500) }                           // 1-, 2-, 3-, 4-byte chars, over SHORT
-    const GRAB: &[&str] = &["", "a", "héllo", "ab😀cd"];
-
-    #[test]
-    fn every_index_agrees_with_the_char_vec_oracle() {
-        for s in GRAB.iter().map(|s| s.to_string()).chain([long_ascii(), long_mixed(), "é".repeat(33), "x".repeat(33)]) {
-            let a = t(&s);
-            let n = s.chars().count() as i64;
-            assert_eq!(str_len(a.clone()), Value::Int(n), "len of {:?}", &s[..s.len().min(12)]);
-            // every in-range index, the CKPT boundaries and their neighbours included, plus both ends out of range
-            for i in (-2..n + 3).filter(|i| n < 200 || i % 7 == 0 || i % CKPT as i64 <= 1 || *i >= n - 2) {
-                let want = oracle(&s, i);
-                let got = str_char_at(a.clone(), i);
-                match want {
-                    Some(c) => {
-                        assert_eq!(got, super::super::option::option_some(Value::Str(Arc::from(c.to_string().as_str()))), "str_char_at {}", i);
-                        assert_eq!(txt(str_char(a.clone(), i)), c.to_string(), "str_char {}", i);
-                        assert_eq!(str_char_code(a.clone(), i), Value::Int(c as u32 as i64), "str_char_code {}", i);
-                    }
-                    None => assert_eq!(got, super::super::option::option_none(), "str_char_at {} out of range", i),
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn out_of_range_panics_keep_their_message() {
-        let msg = |f: Box<dyn FnOnce() + std::panic::UnwindSafe>| {
-            let e = std::panic::catch_unwind(f).expect_err("must panic");
-            e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string())).unwrap()
-        };
-        let a = t(&long_ascii());
-        let (a1, a2, a3) = (a.clone(), a.clone(), a.clone());
-        assert_eq!(msg(Box::new(move || { str_char(a1, 16000); })), "index out of bounds: the len is 16000 but the index is 16000");
-        assert_eq!(msg(Box::new(move || { str_char_code(a2, 99999); })), "index out of bounds: the len is 16000 but the index is 99999");
-        assert_eq!(msg(Box::new(move || { str_char(a3, -1); })), format!("index out of bounds: the len is 16000 but the index is {}", usize::MAX));
-    }
-
-    #[test]
-    fn two_strings_with_equal_text_but_different_allocations_do_not_alias() {
-        // the cache is keyed by address: a different Arc with the SAME length must not read another's index
-        let (x, y) = (t(&"ab".repeat(100)), t(&"cd".repeat(100)));
-        assert_eq!(txt(str_char(x.clone(), 0)), "a");
-        assert_eq!(txt(str_char(y.clone(), 0)), "c");
-        assert_eq!(txt(str_char(x, 1)), "b");
-        assert_eq!(txt(str_char(y, 1)), "d");
-    }
-
-    #[test]
-    fn more_strings_than_slots_still_answer_correctly() {
-        let strs: Vec<Arc<str>> = (0..SLOTS * 3).map(|k| t(&format!("{}{}", "é".repeat(40), k))).collect();
-        for round in 0..3 {
-            for (k, s) in strs.iter().enumerate() {
-                assert_eq!(txt(str_char(s.clone(), 40)), k.to_string().chars().next().unwrap().to_string(), "round {} string {}", round, k);
-                assert_eq!(str_len(s.clone()), Value::Int(40 + k.to_string().len() as i64));
-            }
-        }
-    }
-
-    #[test]
-    fn ascii_chars_share_one_allocation_and_others_do_not_break() {
-        let (a, b) = (txt_arc(str_char(t("xyz"), 0)), txt_arc(str_char(t("x"), 0)));
-        assert!(Arc::ptr_eq(&a, &b));
-        assert_eq!(&*txt_arc(str_char(t("é"), 0)), "é");
-    }
-    fn txt_arc(v: Value) -> Arc<str> { match v { Value::Str(s) => s, o => panic!("{:?}", o) } }
-
-    #[test]
-    fn str_eq_compares_content() {
-        assert_eq!(str_eq(t("abc"), t("abc")), Value::Bool(true));
-        assert_eq!(str_eq(t("abc"), t("abd")), Value::Bool(false));
-        assert_eq!(str_eq(t(""), t("")), Value::Bool(true));
-    }
 }

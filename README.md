@@ -1,6 +1,6 @@
 # axis-codegen-bridge-rs
 
-> **Part of [axis-lang-lab](https://github.com/christaylor98/axis-lang-lab)** — not a standalone tool.
+> **Part of [axis-lang](https://github.com/christaylor98/axis-lang)** — not a standalone tool.
 
 Rust foreign function bridge for the axis-lang code generation pipeline.
 

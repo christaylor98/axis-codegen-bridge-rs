@@ -27,7 +27,6 @@ pub mod hash;
 pub mod bytes_io;
 pub mod bytes_codec;
 pub mod net;
-pub mod http;
 pub mod tty;
 pub mod pty;
 pub mod seek;

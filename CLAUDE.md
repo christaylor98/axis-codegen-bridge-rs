@@ -327,7 +327,7 @@ absent.
 ## Core IR 0.6 — where a node runs is in the IR (axm-req-r179)
 
 Landed 2026-10-13 in `src/core_ir_05/mod.rs` and `src/emit/rust_05.rs`, with
-axis-lang-lab (spec: `core_ir_spec/axis-core-ir-0.6.md`). **Both axVerity
+axis-lang (spec: `core_ir_spec/axis-core-ir-0.6.md`). **Both axVerity
 trees and every axMachina repo link this crate**, so the rule is stated here.
 
 - **Blocks.** `CBlock` (tag 3, no fields) opens a block; `CEnd { value }`

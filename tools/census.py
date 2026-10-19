@@ -28,7 +28,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-AXR = Path("/home/chris/dev/axRegistry-working")
+AXR = Path("~/dev/axRegistry-working")
 REGS = ["axis-types", "axis", "axis-bridge", "m1-builtins", "gen-working"]
 
 

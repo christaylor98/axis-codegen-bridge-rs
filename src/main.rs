@@ -16,8 +16,7 @@ fn usage() -> ! {
     eprintln!("    --lib <path.coreir>           link a library bundle (repeatable)");
     eprintln!("    --lib-dir <directory>         link all .coreir in directory (repeatable)");
     eprintln!("    --reg <path.axreg>            registry file for CCall validation (repeatable)");
-    eprintln!("    --no-fast                     emit only the generic code (no speculative fast paths; env AX_NO_FAST)
-    --dispatch <path.toml>        extra CCall dispatch table, merged with the");
+    eprintln!("    --dispatch <path.toml>        extra CCall dispatch table, merged with the");
     eprintln!("                                  bridge's built-in tables (repeatable)");
     eprintln!("    --provider-crate <name>=<path.rs>  compile <path.rs> as an rlib named <name>");
     eprintln!("                                  and link it into the generated glue (repeatable)");
@@ -184,8 +183,6 @@ fn cmd_build(args: &[String]) {
     let mut lib_dirs:    Vec<String> = Vec::new();
     let mut reg_paths:   Vec<String> = Vec::new();
     let mut dispatch_paths: Vec<String> = Vec::new();
-    // AX146: --no-fast (or env AX_NO_FAST) emits only the generic code: the reference the differential tests compare to
-    let mut no_fast = std::env::var_os("AX_NO_FAST").is_some();
     // (crate_name, path/to/lib.rs)
     let mut provider_crates: Vec<(String, String)> = Vec::new();
     let mut entry_names: Vec<String> = Vec::new();
@@ -198,7 +195,6 @@ fn cmd_build(args: &[String]) {
         match args[i].as_str() {
             "--out"              if i + 1 < args.len() => { output = args[i+1].clone(); i += 2; }
             "--exe"                                    => { exe_flag = true; i += 1; }
-            "--no-fast"                                => { no_fast = true; i += 1; }
             "--link-lib"         if i + 1 < args.len() => { link_libs.push(args[i+1].clone()); i += 2; }
             "--link-search"      if i + 1 < args.len() => { link_search.push(args[i+1].clone()); i += 2; }
             "--lib"              if i + 1 < args.len() => { lib_paths.push(args[i+1].clone()); i += 2; }
@@ -410,14 +406,6 @@ fn cmd_build(args: &[String]) {
         .chain(by_body.iter().map(|(id, pid)| (*id, format!("ax_fn_{}", hash256_to_hex(pid)))))
         .collect();
 
-    // AX146: composite bodies the speculative fast path may inline, by the identity a CCall uses.
-    let fast_opts = rust_05::FastOptions {
-        enabled: !no_fast,
-        callees: provider_map.iter().map(|(id, (_, b))| (*id, b))
-            .chain(by_body.iter().filter_map(|(id, pid)| provider_map.get(pid).map(|(_, b)| (*id, b))))
-            .collect(),
-    };
-
     // Compile each provider in the closure to its own rlib.
     //
     // Each rlib gets a UNIQUE Rust crate name (`ax_xb_<safe_pfn>`) so that
@@ -445,7 +433,7 @@ fn cmd_build(args: &[String]) {
         // covers the generated source's content, so that cannot recur.
         let pcode = match rust_05::emit_rust_lib_from_bundle_with_dispatch(
             pbundle, pfn, &registry_map, &xbundle_providers, &async_facts.channels, &pure_det_ids,
-            &dispatch_overlay, &provider_crate_names, &fast_opts,
+            &dispatch_overlay, &provider_crate_names,
         ) {
             Ok(c)  => c,
             Err(e) => { eprintln!("error (provider '{}'): {}", pfn, e); std::process::exit(1); }
@@ -475,7 +463,7 @@ fn cmd_build(args: &[String]) {
 
     let rust_code = match rust_05::emit_rust_lib_from_bundle_with_dispatch(
         &bundle, &fn_name, &registry_map, &xbundle_providers, &async_facts.channels, &pure_det_ids,
-        &dispatch_overlay, &provider_crate_names, &fast_opts,
+        &dispatch_overlay, &provider_crate_names,
     ) {
         Ok(code) => code,
         Err(e)   => { eprintln!("error: {}", e); std::process::exit(1); }

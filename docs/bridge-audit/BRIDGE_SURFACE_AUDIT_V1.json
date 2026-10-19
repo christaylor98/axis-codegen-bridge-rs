@@ -7,7 +7,7 @@
   "audited": 189
  },
  "axreg": {
-  "path": "/home/chris/dev/axRegistry-working/axis-bridge.axreg",
+  "path": "~/dev/axRegistry-working/axis-bridge.axreg",
   "declared_count": 323,
   "declared_and_used": 176,
   "declared_not_used": 147,
@@ -87,8 +87,8 @@
    "verdict_reason": "Global Mutex registry + Condvar park/unpark across threads.",
    "evidence_commands": [
     "rg -n 'fn ack_register' src/  # impl location",
-    "rg -c '\\back_register\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn ack_register$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\back_register\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn ack_register$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -152,8 +152,8 @@
    "verdict_reason": "std::env::args via OnceLock cache.",
    "evidence_commands": [
     "rg -n 'fn argv_get' src/  # impl location",
-    "rg -c '\\bargv_get\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn argv_get$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bargv_get\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn argv_get$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -194,8 +194,8 @@
    "verdict_reason": "Same argv read as argv_get, parsed to Int; zero live callers after built-src filter (src/spike1_seek.m1 is not in any build script) \u2014 retained as primitive by capability, flagged spike-only.",
    "evidence_commands": [
     "rg -n 'fn argv_int' src/  # impl location",
-    "rg -c '\\bargv_int\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn argv_int$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bargv_int\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn argv_int$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -239,8 +239,8 @@
    "verdict_reason": "Condvar wait/notify on shared VecDeque; cross-thread by construction.",
    "evidence_commands": [
     "rg -n 'fn bchan_len' src/  # impl location",
-    "rg -c '\\bbchan_len\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn bchan_len$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bbchan_len\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn bchan_len$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -284,8 +284,8 @@
    "verdict_reason": "Condvar wait/notify on shared VecDeque; cross-thread by construction.",
    "evidence_commands": [
     "rg -n 'fn bchan_send' src/  # impl location",
-    "rg -c '\\bbchan_send\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn bchan_send$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bbchan_send\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn bchan_send$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -328,8 +328,8 @@
    "verdict_reason": "Condvar wait/notify on shared VecDeque; cross-thread by construction.",
    "evidence_commands": [
     "rg -n 'fn bchan_take' src/  # impl location",
-    "rg -c '\\bbchan_take\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn bchan_take$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bbchan_take\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn bchan_take$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -373,8 +373,8 @@
    "verdict_reason": "Cross-thread shared binding cache; locking is the point.",
    "evidence_commands": [
     "rg -n 'fn bindidx_get' src/  # impl location",
-    "rg -c '\\bbindidx_get\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn bindidx_get$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bbindidx_get\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn bindidx_get$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -423,8 +423,8 @@
    "verdict_reason": "Cross-thread shared binding cache; locking is the point.",
    "evidence_commands": [
     "rg -n 'fn bindidx_put' src/  # impl location",
-    "rg -c '\\bbindidx_put\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn bindidx_put$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bbindidx_put\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn bindidx_put$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -476,8 +476,8 @@
    "verdict_reason": "M1 has native if/match; binary bool ops need no bridge. Caveat: truthy() coerces non-Bool variants.",
    "evidence_commands": [
     "rg -n 'fn bool_and' src/  # impl location",
-    "rg -c '\\bbool_and\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn bool_and$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bbool_and\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn bool_and$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -529,8 +529,8 @@
    "verdict_reason": "Same as bool_and.",
    "evidence_commands": [
     "rg -n 'fn bool_not' src/  # impl location",
-    "rg -c '\\bbool_not\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn bool_not$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bbool_not\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn bool_not$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -584,8 +584,8 @@
    "verdict_reason": "Same as bool_and.",
    "evidence_commands": [
     "rg -n 'fn bool_or' src/  # impl location",
-    "rg -c '\\bbool_or\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn bool_or$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bbool_or\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn bool_or$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -639,8 +639,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn bytes_concat' src/  # impl location",
-    "rg -c '\\bbytes_concat\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn bytes_concat$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bbytes_concat\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn bytes_concat$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -701,8 +701,8 @@
    "verdict_reason": "Pure computation (sha2 crate) but not expressible without bit ops.",
    "evidence_commands": [
     "rg -n 'fn bytes_hash' src/  # impl location",
-    "rg -c '\\bbytes_hash\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn bytes_hash$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bbytes_hash\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn bytes_hash$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -760,8 +760,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn bytes_len' src/  # impl location",
-    "rg -c '\\bbytes_len\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn bytes_len$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bbytes_len\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn bytes_len$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -815,8 +815,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn bytes_slice' src/  # impl location",
-    "rg -c '\\bbytes_slice\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn bytes_slice$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bbytes_slice\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn bytes_slice$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -873,8 +873,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn bytes_to_text' src/  # impl location",
-    "rg -c '\\bbytes_to_text\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn bytes_to_text$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bbytes_to_text\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn bytes_to_text$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -925,8 +925,8 @@
    "verdict_reason": "unsafe &*(i64 as *const AtomicI64) (rawmem.rs:135,150).",
    "evidence_commands": [
     "rg -n 'fn cell_cas_raw' src/  # impl location",
-    "rg -c '\\bcell_cas_raw\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn cell_cas_raw$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bcell_cas_raw\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn cell_cas_raw$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -970,8 +970,8 @@
    "verdict_reason": "unsafe &*(i64 as *const AtomicI64) (rawmem.rs:135,150).",
    "evidence_commands": [
     "rg -n 'fn cell_load_raw' src/  # impl location",
-    "rg -c '\\bcell_load_raw\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn cell_load_raw$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bcell_load_raw\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn cell_load_raw$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -1021,8 +1021,8 @@
    "verdict_reason": "unsafe &*(i64 as *const AtomicI64) (rawmem.rs:135,150).",
    "evidence_commands": [
     "rg -n 'fn cell_new_raw' src/  # impl location",
-    "rg -c '\\bcell_new_raw\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn cell_new_raw$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bcell_new_raw\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn cell_new_raw$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -1063,8 +1063,8 @@
    "verdict_reason": "Stub: get-or-creates channel then returns hardcoded Int(0) (channels.rs:166-171). Experiment: WAY_BACK_CONSOLIDATION depth read removal \u2014 CONCLUDED. Still called on the live insert path; callers always see 0.",
    "evidence_commands": [
     "rg -n 'fn channel_depth' src/  # impl location",
-    "rg -c '\\bchannel_depth\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn channel_depth$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bchannel_depth\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn channel_depth$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -1120,8 +1120,8 @@
    "verdict_reason": "AtomicPtr swap/unsafe intrusive queue (mpsc_intrusive.rs:158-162), condvar wait/notify.",
    "evidence_commands": [
     "rg -n 'fn channel_send' src/  # impl location",
-    "rg -c '\\bchannel_send\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn channel_send$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bchannel_send\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn channel_send$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -1182,8 +1182,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn chr' src/  # impl location",
-    "rg -c '\\bchr\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn chr$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bchr\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn chr$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -1230,8 +1230,8 @@
    "verdict_reason": "fs part is covered by existing primitives; the CDC rolling hash is the blocker.",
    "evidence_commands": [
     "rg -n 'fn chunk_file' src/  # impl location",
-    "rg -c '\\bchunk_file\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn chunk_file$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bchunk_file\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn chunk_file$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -1276,8 +1276,8 @@
    "verdict_reason": "Cross-thread shared content cache.",
    "evidence_commands": [
     "rg -n 'fn contentidx_get' src/  # impl location",
-    "rg -c '\\bcontentidx_get\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn contentidx_get$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bcontentidx_get\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn contentidx_get$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -1325,8 +1325,8 @@
    "verdict_reason": "Cross-thread shared content cache.",
    "evidence_commands": [
     "rg -n 'fn contentidx_put' src/  # impl location",
-    "rg -c '\\bcontentidx_put\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn contentidx_put$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bcontentidx_put\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn contentidx_put$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -1368,8 +1368,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own.",
    "evidence_commands": [
     "rg -n 'fn contradicts_any' src/  # impl location",
-    "rg -c '\\bcontradicts_any\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn contradicts_any$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bcontradicts_any\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn contradicts_any$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -1411,8 +1411,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own.",
    "evidence_commands": [
     "rg -n 'fn contradicts_open' src/  # impl location",
-    "rg -c '\\bcontradicts_open\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn contradicts_open$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bcontradicts_open\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn contradicts_open$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -1460,8 +1460,8 @@
    "verdict_reason": "fs sub-capability is covered by existing primitives; parsing+state are the blockers.",
    "evidence_commands": [
     "rg -n 'fn contradicts_rebuild' src/  # impl location",
-    "rg -c '\\bcontradicts_rebuild\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn contradicts_rebuild$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bcontradicts_rebuild\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn contradicts_rebuild$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -1524,8 +1524,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn ctor_field' src/  # impl location",
-    "rg -c '\\bctor_field\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn ctor_field$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bctor_field\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn ctor_field$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -1570,8 +1570,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own.",
    "evidence_commands": [
     "rg -n 'fn cursor_append' src/  # impl location",
-    "rg -c '\\bcursor_append\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn cursor_append$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bcursor_append\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn cursor_append$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -1615,8 +1615,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own.",
    "evidence_commands": [
     "rg -n 'fn cursor_close' src/  # impl location",
-    "rg -c '\\bcursor_close\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn cursor_close$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bcursor_close\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn cursor_close$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -1660,8 +1660,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own.",
    "evidence_commands": [
     "rg -n 'fn cursor_get' src/  # impl location",
-    "rg -c '\\bcursor_get\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn cursor_get$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bcursor_get\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn cursor_get$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -1705,8 +1705,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own.",
    "evidence_commands": [
     "rg -n 'fn cursor_len' src/  # impl location",
-    "rg -c '\\bcursor_len\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn cursor_len$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bcursor_len\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn cursor_len$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -1750,8 +1750,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own.",
    "evidence_commands": [
     "rg -n 'fn cursor_line' src/  # impl location",
-    "rg -c '\\bcursor_line\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn cursor_line$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bcursor_line\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn cursor_line$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -1795,8 +1795,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own.",
    "evidence_commands": [
     "rg -n 'fn cursor_load' src/  # impl location",
-    "rg -c '\\bcursor_load\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn cursor_load$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bcursor_load\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn cursor_load$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -1840,8 +1840,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own.",
    "evidence_commands": [
     "rg -n 'fn cursor_open' src/  # impl location",
-    "rg -c '\\bcursor_open\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn cursor_open$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bcursor_open\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn cursor_open$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -1882,8 +1882,8 @@
    "verdict_reason": "Genuinely pure (only pure fn in cursor family); M1 sort would be O(n^2) \u2014 perf gate for large results.",
    "evidence_commands": [
     "rg -n 'fn cursor_sort' src/  # impl location",
-    "rg -c '\\bcursor_sort\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn cursor_sort$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bcursor_sort\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn cursor_sort$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -1923,8 +1923,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn dec_div' src/  # impl location",
-    "rg -c '\\bdec_div\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn dec_div$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bdec_div\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn dec_div$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -1964,8 +1964,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn dec_to_text' src/  # impl location",
-    "rg -c '\\bdec_to_text\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn dec_to_text$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bdec_to_text\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn dec_to_text$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -2008,8 +2008,8 @@
    "verdict_reason": "Always-on derive-pool telemetry (pooldepth-*.txt dumps every 1024 items; rawblk.rs:515-525). Belongs to the memcpy/derive-pool trial (7bb6acf) \u2014 ONGOING.",
    "evidence_commands": [
     "rg -n 'fn derive_stat' src/  # impl location",
-    "rg -c '\\bderive_stat\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn derive_stat$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bderive_stat\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn derive_stat$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -2051,8 +2051,8 @@
    "verdict_reason": "Always-on derive-pool telemetry (pooldepth-*.txt dumps every 1024 items; rawblk.rs:515-525). Belongs to the memcpy/derive-pool trial (7bb6acf) \u2014 ONGOING.",
    "evidence_commands": [
     "rg -n 'fn derive_stat_flush' src/  # impl location",
-    "rg -c '\\bderive_stat_flush\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn derive_stat_flush$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bderive_stat_flush\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn derive_stat_flush$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -2102,8 +2102,8 @@
    "verdict_reason": "AtomicPtr swap/unsafe intrusive queue (mpsc_intrusive.rs:158-162), condvar wait/notify.",
    "evidence_commands": [
     "rg -n 'fn event_subscribe' src/  # impl location",
-    "rg -c '\\bevent_subscribe\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn event_subscribe$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bevent_subscribe\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn event_subscribe$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -2143,8 +2143,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own. ZERO live callers (spike/spike_get_step.m1 only); live reads go through fieldidx_res_get.",
    "evidence_commands": [
     "rg -n 'fn fieldidx_get' src/  # impl location",
-    "rg -c '\\bfieldidx_get\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn fieldidx_get$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bfieldidx_get\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn fieldidx_get$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -2187,8 +2187,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own.",
    "evidence_commands": [
     "rg -n 'fn fieldidx_open' src/  # impl location",
-    "rg -c '\\bfieldidx_open\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn fieldidx_open$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bfieldidx_open\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn fieldidx_open$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -2238,8 +2238,8 @@
    "verdict_reason": "fs sub-capability is covered by existing primitives; parsing+state are the blockers.",
    "evidence_commands": [
     "rg -n 'fn fieldidx_rebuild' src/  # impl location",
-    "rg -c '\\bfieldidx_rebuild\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn fieldidx_rebuild$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bfieldidx_rebuild\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn fieldidx_rebuild$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -2286,8 +2286,8 @@
    "verdict_reason": "fs sub-capability is covered by existing primitives; parsing+state are the blockers.",
    "evidence_commands": [
     "rg -n 'fn fieldidx_res_get' src/  # impl location",
-    "rg -c '\\bfieldidx_res_get\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn fieldidx_res_get$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bfieldidx_res_get\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn fieldidx_res_get$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -2328,8 +2328,8 @@
    "verdict_reason": "Byte-identical twins (only IDX/FIDX differ); residency dial frozen to 'query' \u2014 AXVERITY_WALIDX_RESIDENCY / AXVERITY_FIELDIDX_RESIDENCY no longer read (dead mode plumbing inside a live fn).",
    "evidence_commands": [
     "rg -n 'fn fieldidx_res_scope' src/  # impl location",
-    "rg -c '\\bfieldidx_res_scope\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn fieldidx_res_scope$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bfieldidx_res_scope\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn fieldidx_res_scope$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -2371,8 +2371,8 @@
    "verdict_reason": "fs_write_bytes already provides the durable-write sequence these reimplement (write_durable is duplicated in walindex.rs, fieldidx.rs AND bytes_io.rs).",
    "evidence_commands": [
     "rg -n 'fn fieldidx_snapshot' src/  # impl location",
-    "rg -c '\\bfieldidx_snapshot\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn fieldidx_snapshot$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bfieldidx_snapshot\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn fieldidx_snapshot$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -2421,8 +2421,8 @@
    "verdict_reason": "Direct std::fs syscalls in body; no lower primitive exists.",
    "evidence_commands": [
     "rg -n 'fn fs_append_text' src/  # impl location",
-    "rg -c '\\bfs_append_text\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn fs_append_text$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bfs_append_text\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn fs_append_text$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -2466,8 +2466,8 @@
    "verdict_reason": "Direct std::fs syscalls in body; no lower primitive exists.",
    "evidence_commands": [
     "rg -n 'fn fs_file_exists' src/  # impl location",
-    "rg -c '\\bfs_file_exists\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn fs_file_exists$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bfs_file_exists\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn fs_file_exists$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -2527,8 +2527,8 @@
    "verdict_reason": "Direct std::fs syscalls in body; no lower primitive exists.",
    "evidence_commands": [
     "rg -n 'fn fs_mkdir_p' src/  # impl location",
-    "rg -c '\\bfs_mkdir_p\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn fs_mkdir_p$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bfs_mkdir_p\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn fs_mkdir_p$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -2581,8 +2581,8 @@
    "verdict_reason": "Direct std::fs syscalls in body; no lower primitive exists.",
    "evidence_commands": [
     "rg -n 'fn fs_read_bytes' src/  # impl location",
-    "rg -c '\\bfs_read_bytes\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn fs_read_bytes$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bfs_read_bytes\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn fs_read_bytes$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -2622,8 +2622,8 @@
    "verdict_reason": "Body is fs_read_text + pure scan; the fs capability is already a primitive. Current impl is O(file) anyway.",
    "evidence_commands": [
     "rg -n 'fn fs_read_last_line' src/  # impl location",
-    "rg -c '\\bfs_read_last_line\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn fs_read_last_line$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bfs_read_last_line\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn fs_read_last_line$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -2680,8 +2680,8 @@
    "verdict_reason": "Direct std::fs syscalls in body; no lower primitive exists.",
    "evidence_commands": [
     "rg -n 'fn fs_read_range' src/  # impl location",
-    "rg -c '\\bfs_read_range\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn fs_read_range$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bfs_read_range\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn fs_read_range$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -2723,8 +2723,8 @@
    "verdict_reason": "Direct std::fs syscalls in body; no lower primitive exists.",
    "evidence_commands": [
     "rg -n 'fn fs_read_text' src/  # impl location",
-    "rg -c '\\bfs_read_text\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn fs_read_text$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bfs_read_text\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn fs_read_text$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -2779,8 +2779,8 @@
    "verdict_reason": "Direct std::fs syscalls in body; no lower primitive exists.",
    "evidence_commands": [
     "rg -n 'fn fs_write_bytes' src/  # impl location",
-    "rg -c '\\bfs_write_bytes\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn fs_write_bytes$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bfs_write_bytes\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn fs_write_bytes$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -2822,8 +2822,8 @@
    "verdict_reason": "Pure validation; performs no hashing.",
    "evidence_commands": [
     "rg -n 'fn hash256_parse' src/  # impl location",
-    "rg -c '\\bhash256_parse\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn hash256_parse$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bhash256_parse\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn hash256_parse$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -2864,8 +2864,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own.",
    "evidence_commands": [
     "rg -n 'fn hotblk_dir_guard' src/  # impl location",
-    "rg -c '\\bhotblk_dir_guard\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn hotblk_dir_guard$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bhotblk_dir_guard\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn hotblk_dir_guard$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -2916,8 +2916,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own.",
    "evidence_commands": [
     "rg -n 'fn hotblk_get' src/  # impl location",
-    "rg -c '\\bhotblk_get\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn hotblk_get$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bhotblk_get\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn hotblk_get$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -2962,8 +2962,8 @@
    "verdict_reason": "Cross-thread handoff of arena addresses with blocking backpressure.",
    "evidence_commands": [
     "rg -n 'fn hotblk_pool_put' src/  # impl location",
-    "rg -c '\\bhotblk_pool_put\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn hotblk_pool_put$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bhotblk_pool_put\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn hotblk_pool_put$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -3006,8 +3006,8 @@
    "verdict_reason": "Cross-thread handoff of arena addresses with blocking backpressure.",
    "evidence_commands": [
     "rg -n 'fn hotblk_pool_take' src/  # impl location",
-    "rg -c '\\bhotblk_pool_take\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn hotblk_pool_take$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bhotblk_pool_take\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn hotblk_pool_take$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -3049,8 +3049,8 @@
    "verdict_reason": "Same dump/oracle role for the hotblk (blockfile) substrate recovery gate (src/hotblk_recover_dump.m1).",
    "evidence_commands": [
     "rg -n 'fn hotblk_recover_dump_hashes' src/  # impl location",
-    "rg -c '\\bhotblk_recover_dump_hashes\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn hotblk_recover_dump_hashes$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bhotblk_recover_dump_hashes\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn hotblk_recover_dump_hashes$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -3092,8 +3092,8 @@
    "verdict_reason": "Same dump/oracle role for the hotblk (blockfile) substrate recovery gate (src/hotblk_recover_dump.m1).",
    "evidence_commands": [
     "rg -n 'fn hotblk_recover_dump_pk' src/  # impl location",
-    "rg -c '\\bhotblk_recover_dump_pk\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn hotblk_recover_dump_pk$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bhotblk_recover_dump_pk\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn hotblk_recover_dump_pk$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -3135,8 +3135,8 @@
    "verdict_reason": "fs sub-capability is covered by existing primitives; parsing+state are the blockers.",
    "evidence_commands": [
     "rg -n 'fn hotblk_recover_open' src/  # impl location",
-    "rg -c '\\bhotblk_recover_open\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn hotblk_recover_open$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bhotblk_recover_open\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn hotblk_recover_open$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -3182,8 +3182,8 @@
    "verdict_reason": "fs sub-capability is covered by existing primitives; parsing+state are the blockers.",
    "evidence_commands": [
     "rg -n 'fn hotblk_recover_rebuild' src/  # impl location",
-    "rg -c '\\bhotblk_recover_rebuild\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn hotblk_recover_rebuild$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bhotblk_recover_rebuild\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn hotblk_recover_rebuild$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -3223,8 +3223,8 @@
    "verdict_reason": "Same dump/oracle role for the hotblk (blockfile) substrate recovery gate (src/hotblk_recover_dump.m1).",
    "evidence_commands": [
     "rg -n 'fn hotblk_recover_stats' src/  # impl location",
-    "rg -c '\\bhotblk_recover_stats\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn hotblk_recover_stats$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bhotblk_recover_stats\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn hotblk_recover_stats$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -3267,8 +3267,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own.",
    "evidence_commands": [
     "rg -n 'fn hotblk_set' src/  # impl location",
-    "rg -c '\\bhotblk_set\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn hotblk_set$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bhotblk_set\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn hotblk_set$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -3308,8 +3308,8 @@
    "verdict_reason": "Staleness telemetry probes over hotmem_read's thread-local (epoch,missed) record. Diagnostic reads; no functional consumer.",
    "evidence_commands": [
     "rg -n 'fn hotmem_epoch' src/  # impl location",
-    "rg -c '\\bhotmem_epoch\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn hotmem_epoch$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bhotmem_epoch\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn hotmem_epoch$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -3349,8 +3349,8 @@
    "verdict_reason": "Staleness telemetry probes over hotmem_read's thread-local (epoch,missed) record. Diagnostic reads; no functional consumer.",
    "evidence_commands": [
     "rg -n 'fn hotmem_missed' src/  # impl location",
-    "rg -c '\\bhotmem_missed\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn hotmem_missed$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bhotmem_missed\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn hotmem_missed$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -3395,8 +3395,8 @@
    "verdict_reason": "non_blocking_memory read protocol; irreducibly atomic.",
    "evidence_commands": [
     "rg -n 'fn hotmem_read' src/  # impl location",
-    "rg -c '\\bhotmem_read\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn hotmem_read$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bhotmem_read\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn hotmem_read$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -3438,8 +3438,8 @@
    "verdict_reason": "non_blocking_memory read protocol; irreducibly atomic.",
    "evidence_commands": [
     "rg -n 'fn hotmem_reader_start' src/  # impl location",
-    "rg -c '\\bhotmem_reader_start\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn hotmem_reader_start$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bhotmem_reader_start\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn hotmem_reader_start$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -3477,8 +3477,8 @@
    "verdict_reason": "Bench scaffold: pure CPU/RAM batch synthesizer with black_box DCE guards; callers only in lib_hotwrite_workload/selftest. Experiment: hotwrite substrate bake-off \u2014 status per bench docs.",
    "evidence_commands": [
     "rg -n 'fn hotwrite_batch_run' src/  # impl location",
-    "rg -c '\\bhotwrite_batch_run\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn hotwrite_batch_run$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bhotwrite_batch_run\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn hotwrite_batch_run$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -3519,8 +3519,8 @@
    "verdict_reason": "Bench scaffold crossing FFI to hotwrite_batch.c (SHA-NI dispatch, volatile sink). Selftest-only callers. One of only two FFI-boundary fns in the audited set.",
    "evidence_commands": [
     "rg -n 'fn hotwrite_batch_run_c' src/  # impl location",
-    "rg -c '\\bhotwrite_batch_run_c\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn hotwrite_batch_run_c$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bhotwrite_batch_run_c\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn hotwrite_batch_run_c$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -3563,8 +3563,8 @@
    "verdict_reason": "Bench scaffold: C-side durable write loop (open/write/fsync/rename + manifest for hotwrite-workload-verify.py). Selftest-only callers.",
    "evidence_commands": [
     "rg -n 'fn hotwrite_batch_run_c_durable' src/  # impl location",
-    "rg -c '\\bhotwrite_batch_run_c_durable\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn hotwrite_batch_run_c_durable$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bhotwrite_batch_run_c_durable\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn hotwrite_batch_run_c_durable$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -3606,8 +3606,8 @@
    "verdict_reason": "Directory enumeration and file reads inline.",
    "evidence_commands": [
     "rg -n 'fn idxseg_lookup' src/  # impl location",
-    "rg -c '\\bidxseg_lookup\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn idxseg_lookup$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bidxseg_lookup\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn idxseg_lookup$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -3655,8 +3655,8 @@
    "verdict_reason": "fs reads/appends plus unsafe &*(i64 as *const AtomicI64) compare_exchange (indexer.rs:230-231).",
    "evidence_commands": [
     "rg -n 'fn index_build_batch' src/  # impl location",
-    "rg -c '\\bindex_build_batch\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn index_build_batch$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bindex_build_batch\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn index_build_batch$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -3702,8 +3702,8 @@
    "verdict_reason": "Directory enumeration and file reads inline.",
    "evidence_commands": [
     "rg -n 'fn index_rebuild_dir' src/  # impl location",
-    "rg -c '\\bindex_rebuild_dir\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn index_rebuild_dir$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bindex_rebuild_dir\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn index_rebuild_dir$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -3743,8 +3743,8 @@
    "verdict_reason": "Would collapse to trivial composites over two new smaller atoms; today not composable.",
    "evidence_commands": [
     "rg -n 'fn int16_be_decode' src/  # impl location",
-    "rg -c '\\bint16_be_decode\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn int16_be_decode$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bint16_be_decode\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn int16_be_decode$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -3793,8 +3793,8 @@
    "verdict_reason": "Would collapse to trivial composites over two new smaller atoms; today not composable.",
    "evidence_commands": [
     "rg -n 'fn int16_be_encode' src/  # impl location",
-    "rg -c '\\bint16_be_encode\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn int16_be_encode$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bint16_be_encode\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn int16_be_encode$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -3841,8 +3841,8 @@
    "verdict_reason": "Would collapse to trivial composites over two new smaller atoms; today not composable.",
    "evidence_commands": [
     "rg -n 'fn int32_be_decode' src/  # impl location",
-    "rg -c '\\bint32_be_decode\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn int32_be_decode$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bint32_be_decode\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn int32_be_decode$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -3895,8 +3895,8 @@
    "verdict_reason": "Would collapse to trivial composites over two new smaller atoms; today not composable.",
    "evidence_commands": [
     "rg -n 'fn int32_be_encode' src/  # impl location",
-    "rg -c '\\bint32_be_encode\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn int32_be_encode$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bint32_be_encode\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn int32_be_encode$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -3934,8 +3934,8 @@
    "verdict_reason": "Pure.",
    "evidence_commands": [
     "rg -n 'fn int_abs' src/  # impl location",
-    "rg -c '\\bint_abs\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn int_abs$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bint_abs\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn int_abs$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -3996,8 +3996,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn int_add' src/  # impl location",
-    "rg -c '\\bint_add\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn int_add$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bint_add\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn int_add$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -4040,8 +4040,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn int_div' src/  # impl location",
-    "rg -c '\\bint_div\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn int_div$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bint_div\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn int_div$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -4099,8 +4099,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn int_eq' src/  # impl location",
-    "rg -c '\\bint_eq\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn int_eq$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bint_eq\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn int_eq$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -4157,8 +4157,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn int_gt' src/  # impl location",
-    "rg -c '\\bint_gt\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn int_gt$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bint_gt\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn int_gt$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -4210,8 +4210,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn int_gte' src/  # impl location",
-    "rg -c '\\bint_gte\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn int_gte$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bint_gte\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn int_gte$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -4272,8 +4272,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn int_lt' src/  # impl location",
-    "rg -c '\\bint_lt\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn int_lt$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bint_lt\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn int_lt$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -4316,8 +4316,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn int_lte' src/  # impl location",
-    "rg -c '\\bint_lte\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn int_lte$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bint_lte\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn int_lte$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -4355,8 +4355,8 @@
    "verdict_reason": "Pure max over two Ints; native M1 if + int_gt suffice. NOTE: not declared in axis-bridge.axreg (only registry/axis.axreg).",
    "evidence_commands": [
     "rg -n 'fn int_max' src/  # impl location",
-    "rg -c '\\bint_max\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn int_max$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bint_max\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn int_max$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -4402,8 +4402,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn int_mod' src/  # impl location",
-    "rg -c '\\bint_mod\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn int_mod$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bint_mod\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn int_mod$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -4448,8 +4448,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn int_mul' src/  # impl location",
-    "rg -c '\\bint_mul\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn int_mul$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bint_mul\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn int_mul$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -4510,8 +4510,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn int_sub' src/  # impl location",
-    "rg -c '\\bint_sub\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn int_sub$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bint_sub\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn int_sub$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -4552,8 +4552,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn int_to_dec' src/  # impl location",
-    "rg -c '\\bint_to_dec\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn int_to_dec$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bint_to_dec\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn int_to_dec$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -4614,8 +4614,8 @@
    "verdict_reason": "Pure.",
    "evidence_commands": [
     "rg -n 'fn int_to_str' src/  # impl location",
-    "rg -c '\\bint_to_str\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn int_to_str$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bint_to_str\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn int_to_str$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -4657,8 +4657,8 @@
    "verdict_reason": "Writes process-global stdout/stderr.",
    "evidence_commands": [
     "rg -n 'fn io_eprint' src/  # impl location",
-    "rg -c '\\bio_eprint\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn io_eprint$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bio_eprint\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn io_eprint$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -4725,8 +4725,8 @@
    "verdict_reason": "Writes process-global stdout/stderr.",
    "evidence_commands": [
     "rg -n 'fn io_println' src/  # impl location",
-    "rg -c '\\bio_println\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn io_println$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bio_println\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn io_println$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -4764,8 +4764,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn list_get' src/  # impl location",
-    "rg -c '\\blist_get\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn list_get$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\blist_get\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn list_get$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -4817,8 +4817,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own.",
    "evidence_commands": [
     "rg -n 'fn logbuf_append' src/  # impl location",
-    "rg -c '\\blogbuf_append\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn logbuf_append$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\blogbuf_append\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn logbuf_append$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -4863,8 +4863,8 @@
    "verdict_reason": "Holds an OS file descriptor in cross-call state and issues write/fsync syscalls.",
    "evidence_commands": [
     "rg -n 'fn logbuf_flush' src/  # impl location",
-    "rg -c '\\blogbuf_flush\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn logbuf_flush$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\blogbuf_flush\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn logbuf_flush$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -4904,8 +4904,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own. ZERO live callers after built-src filter (src/spike1_logbuf.m1 is not built).",
    "evidence_commands": [
     "rg -n 'fn logbuf_len' src/  # impl location",
-    "rg -c '\\blogbuf_len\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn logbuf_len$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\blogbuf_len\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn logbuf_len$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -4956,8 +4956,8 @@
    "verdict_reason": "Holds an OS file descriptor in cross-call state and issues write/fsync syscalls.",
    "evidence_commands": [
     "rg -n 'fn logbuf_open' src/  # impl location",
-    "rg -c '\\blogbuf_open\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn logbuf_open$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\blogbuf_open\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn logbuf_open$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -4999,8 +4999,8 @@
    "verdict_reason": "Direct file reopen+seek+read; ZERO live callers after built-src filter (spike1_logbuf only) \u2014 primitive by capability, unused on live paths.",
    "evidence_commands": [
     "rg -n 'fn logbuf_read' src/  # impl location",
-    "rg -c '\\blogbuf_read\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn logbuf_read$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\blogbuf_read\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn logbuf_read$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -5053,8 +5053,8 @@
    "verdict_reason": "Holds an OS file descriptor in cross-call state and issues write/fsync syscalls.",
    "evidence_commands": [
     "rg -n 'fn logbuf_sync' src/  # impl location",
-    "rg -c '\\blogbuf_sync\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn logbuf_sync$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\blogbuf_sync\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn logbuf_sync$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -5109,8 +5109,8 @@
    "verdict_reason": "The only iteration capability in the language; body is trivial but the capability is irreducible.",
    "evidence_commands": [
     "rg -n 'fn loop_count' src/  # impl location",
-    "rg -c '\\bloop_count\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn loop_count$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bloop_count\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn loop_count$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -5171,8 +5171,8 @@
    "verdict_reason": "The only iteration capability in the language; body is trivial but the capability is irreducible.",
    "evidence_commands": [
     "rg -n 'fn loop_while' src/  # impl location",
-    "rg -c '\\bloop_while\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn loop_while$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bloop_while\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn loop_while$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -5214,8 +5214,8 @@
    "verdict_reason": "unsafe alloc/dealloc/copy_nonoverlapping on M1-supplied addresses.",
    "evidence_commands": [
     "rg -n 'fn mem_free_raw' src/  # impl location",
-    "rg -c '\\bmem_free_raw\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn mem_free_raw$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bmem_free_raw\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn mem_free_raw$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -5257,8 +5257,8 @@
    "verdict_reason": "unsafe alloc/dealloc/copy_nonoverlapping on M1-supplied addresses.",
    "evidence_commands": [
     "rg -n 'fn mem_read_raw' src/  # impl location",
-    "rg -c '\\bmem_read_raw\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn mem_read_raw$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bmem_read_raw\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn mem_read_raw$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -5304,8 +5304,8 @@
    "verdict_reason": "unsafe alloc/dealloc/copy_nonoverlapping on M1-supplied addresses.",
    "evidence_commands": [
     "rg -n 'fn mem_reserve_raw' src/  # impl location",
-    "rg -c '\\bmem_reserve_raw\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn mem_reserve_raw$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bmem_reserve_raw\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn mem_reserve_raw$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -5347,8 +5347,8 @@
    "verdict_reason": "unsafe alloc/dealloc/copy_nonoverlapping on M1-supplied addresses.",
    "evidence_commands": [
     "rg -n 'fn mem_write_raw' src/  # impl location",
-    "rg -c '\\bmem_write_raw\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn mem_write_raw$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bmem_write_raw\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn mem_write_raw$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -5391,8 +5391,8 @@
    "verdict_reason": "Env-dial probes for AXVERITY_MEMCPY_HOTPATH_TRIAL_V1 (commit 7bb6acf) \u2014 trial ONGOING; dials select experimental write-path arms.",
    "evidence_commands": [
     "rg -n 'fn memcpy_canon_mode' src/  # impl location",
-    "rg -c '\\bmemcpy_canon_mode\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn memcpy_canon_mode$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bmemcpy_canon_mode\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn memcpy_canon_mode$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -5438,8 +5438,8 @@
    "verdict_reason": "Env-dial probes for AXVERITY_MEMCPY_HOTPATH_TRIAL_V1 (commit 7bb6acf) \u2014 trial ONGOING; dials select experimental write-path arms.",
    "evidence_commands": [
     "rg -n 'fn memcpy_hotpath_mode' src/  # impl location",
-    "rg -c '\\bmemcpy_hotpath_mode\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn memcpy_hotpath_mode$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bmemcpy_hotpath_mode\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn memcpy_hotpath_mode$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -5479,8 +5479,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own.",
    "evidence_commands": [
     "rg -n 'fn nameptr_get' src/  # impl location",
-    "rg -c '\\bnameptr_get\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn nameptr_get$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bnameptr_get\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn nameptr_get$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -5521,8 +5521,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own.",
    "evidence_commands": [
     "rg -n 'fn nameptr_set' src/  # impl location",
-    "rg -c '\\bnameptr_set\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn nameptr_set$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bnameptr_set\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn nameptr_set$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -5574,8 +5574,8 @@
    "verdict_reason": "SystemTime::now.",
    "evidence_commands": [
     "rg -n 'fn now_unix_nanos' src/  # impl location",
-    "rg -c '\\bnow_unix_nanos\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn now_unix_nanos$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bnow_unix_nanos\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn now_unix_nanos$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -5620,8 +5620,8 @@
    "verdict_reason": "Global Mutex registry + Condvar park/unpark across threads.",
    "evidence_commands": [
     "rg -n 'fn oneshot_wait' src/  # impl location",
-    "rg -c '\\boneshot_wait\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn oneshot_wait$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\boneshot_wait\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn oneshot_wait$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -5663,8 +5663,8 @@
    "verdict_reason": "Global Mutex registry + Condvar park/unpark across threads.",
    "evidence_commands": [
     "rg -n 'fn oneshot_wait_timeout' src/  # impl location",
-    "rg -c '\\boneshot_wait_timeout\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn oneshot_wait_timeout$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\boneshot_wait_timeout\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn oneshot_wait_timeout$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -5713,8 +5713,8 @@
    "verdict_reason": "Frame build (net.rs:406-417) is pure value work; only the terminal raw_write touches the socket. Exists as a hot-path fusion.",
    "evidence_commands": [
     "rg -n 'fn pg_emit_datarow1' src/  # impl location",
-    "rg -c '\\bpg_emit_datarow1\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn pg_emit_datarow1$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bpg_emit_datarow1\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn pg_emit_datarow1$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -5760,8 +5760,8 @@
    "verdict_reason": "Same separability; was created to replace an O(M^2) M1 loop \u2014 repatriation regresses that without a cursor/split primitive. Note: its slab_to_wire coalescing branch is dead, so it currently does one write+flush per row anyway.",
    "evidence_commands": [
     "rg -n 'fn pg_stream_rows' src/  # impl location",
-    "rg -c '\\bpg_stream_rows\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn pg_stream_rows$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bpg_stream_rows\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn pg_stream_rows$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -5801,8 +5801,8 @@
    "verdict_reason": "Pure byte parsing + cross-call state used only to pass data to pgb_payload \u2014 M1 value threading replaces the state.",
    "evidence_commands": [
     "rg -n 'fn pgb_bind_capture' src/  # impl location",
-    "rg -c '\\bpgb_bind_capture\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn pgb_bind_capture$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bpgb_bind_capture\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn pgb_bind_capture$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -5843,8 +5843,8 @@
    "verdict_reason": "Crude substring SQL parse (pure str ops) + durable append. Gap: no fs_append-with-fsync primitive (fs_append_text does not fsync; fs_write_bytes rewrites whole file).",
    "evidence_commands": [
     "rg -n 'fn pgb_parse_shape' src/  # impl location",
-    "rg -c '\\bpgb_parse_shape\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn pgb_parse_shape$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bpgb_parse_shape\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn pgb_parse_shape$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -5884,8 +5884,8 @@
    "verdict_reason": "Ignores its argument and reads thread-local state \u2014 a workaround for M1 dataflow, not a capability.",
    "evidence_commands": [
     "rg -n 'fn pgb_payload' src/  # impl location",
-    "rg -c '\\bpgb_payload\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn pgb_payload$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bpgb_payload\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn pgb_payload$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -5926,8 +5926,8 @@
    "verdict_reason": "fs touch is a read-only shapes.log load (fs_read_text suffices).",
    "evidence_commands": [
     "rg -n 'fn pgb_record' src/  # impl location",
-    "rg -c '\\bpgb_record\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn pgb_record$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bpgb_record\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn pgb_record$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -5969,8 +5969,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own.",
    "evidence_commands": [
     "rg -n 'fn pkidx_get' src/  # impl location",
-    "rg -c '\\bpkidx_get\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn pkidx_get$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bpkidx_get\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn pkidx_get$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -6012,8 +6012,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own.",
    "evidence_commands": [
     "rg -n 'fn pkidx_open' src/  # impl location",
-    "rg -c '\\bpkidx_open\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn pkidx_open$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bpkidx_open\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn pkidx_open$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -6061,8 +6061,8 @@
    "verdict_reason": "fs sub-capability is covered by existing primitives; parsing+state are the blockers.",
    "evidence_commands": [
     "rg -n 'fn pkidx_rebuild' src/  # impl location",
-    "rg -c '\\bpkidx_rebuild\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn pkidx_rebuild$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bpkidx_rebuild\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn pkidx_rebuild$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -6102,8 +6102,8 @@
    "verdict_reason": "std::process::exit.",
    "evidence_commands": [
     "rg -n 'fn proc_exit' src/  # impl location",
-    "rg -c '\\bproc_exit\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn proc_exit$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bproc_exit\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn proc_exit$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -6149,8 +6149,8 @@
    "verdict_reason": "Epoch fetch_add + unsafe raw-pointer publication (qhm.rs:328-336).",
    "evidence_commands": [
     "rg -n 'fn qhm_flush' src/  # impl location",
-    "rg -c '\\bqhm_flush\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn qhm_flush$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bqhm_flush\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn qhm_flush$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -6193,8 +6193,8 @@
    "verdict_reason": "Epoch fetch_add + unsafe raw-pointer publication (qhm.rs:328-336).",
    "evidence_commands": [
     "rg -n 'fn qhm_get' src/  # impl location",
-    "rg -c '\\bqhm_get\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn qhm_get$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bqhm_get\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn qhm_get$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -6242,8 +6242,8 @@
    "verdict_reason": "Epoch fetch_add + unsafe raw-pointer publication (qhm.rs:328-336).",
    "evidence_commands": [
     "rg -n 'fn qhm_put' src/  # impl location",
-    "rg -c '\\bqhm_put\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn qhm_put$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bqhm_put\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn qhm_put$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -6282,8 +6282,8 @@
    "verdict_reason": "Pure RAWF1 frame encoding; on the ARM-B insert hot path, so perf-sensitive.",
    "evidence_commands": [
     "rg -n 'fn rawblk_frame' src/  # impl location",
-    "rg -c '\\brawblk_frame\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn rawblk_frame$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\brawblk_frame\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn rawblk_frame$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -6323,8 +6323,8 @@
    "verdict_reason": "Diagnostic dumps/counters for the kill-9 recovery verification gate (verify-slice4-kill9.sh; src/rawblk_recover_dump.m1 is a built CLI). Ops-verification tooling, not minimum surface.",
    "evidence_commands": [
     "rg -n 'fn rawblk_recover_dump_hashes' src/  # impl location",
-    "rg -c '\\brawblk_recover_dump_hashes\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn rawblk_recover_dump_hashes$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\brawblk_recover_dump_hashes\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn rawblk_recover_dump_hashes$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -6364,8 +6364,8 @@
    "verdict_reason": "Diagnostic dumps/counters for the kill-9 recovery verification gate (verify-slice4-kill9.sh; src/rawblk_recover_dump.m1 is a built CLI). Ops-verification tooling, not minimum surface.",
    "evidence_commands": [
     "rg -n 'fn rawblk_recover_dump_pk' src/  # impl location",
-    "rg -c '\\brawblk_recover_dump_pk\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn rawblk_recover_dump_pk$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\brawblk_recover_dump_pk\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn rawblk_recover_dump_pk$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -6406,8 +6406,8 @@
    "verdict_reason": "fs sub-capability is covered by existing primitives; parsing+state are the blockers.",
    "evidence_commands": [
     "rg -n 'fn rawblk_recover_open' src/  # impl location",
-    "rg -c '\\brawblk_recover_open\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn rawblk_recover_open$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\brawblk_recover_open\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn rawblk_recover_open$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -6448,8 +6448,8 @@
    "verdict_reason": "fs sub-capability is covered by existing primitives; parsing+state are the blockers.",
    "evidence_commands": [
     "rg -n 'fn rawblk_recover_rebuild' src/  # impl location",
-    "rg -c '\\brawblk_recover_rebuild\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn rawblk_recover_rebuild$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\brawblk_recover_rebuild\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn rawblk_recover_rebuild$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -6489,8 +6489,8 @@
    "verdict_reason": "Diagnostic dumps/counters for the kill-9 recovery verification gate (verify-slice4-kill9.sh; src/rawblk_recover_dump.m1 is a built CLI). Ops-verification tooling, not minimum surface.",
    "evidence_commands": [
     "rg -n 'fn rawblk_recover_stats' src/  # impl location",
-    "rg -c '\\brawblk_recover_stats\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn rawblk_recover_stats$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\brawblk_recover_stats\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn rawblk_recover_stats$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -6546,8 +6546,8 @@
    "verdict_reason": "sync_all per batch + per-name-log (reclog.rs:295,311); drains bounded channel.",
    "evidence_commands": [
     "rg -n 'fn reclog_flush_once' src/  # impl location",
-    "rg -c '\\breclog_flush_once\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn reclog_flush_once$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\breclog_flush_once\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn reclog_flush_once$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -6598,8 +6598,8 @@
    "verdict_reason": "Cross-thread durability handoff; the live INSERT ack path.",
    "evidence_commands": [
     "rg -n 'fn reclog_submit' src/  # impl location",
-    "rg -c '\\breclog_submit\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn reclog_submit$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\breclog_submit\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn reclog_submit$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -6656,8 +6656,8 @@
    "verdict_reason": "Slab shadow-write measurement experiment: env-gated (AXVERITY_SLAB_SHADOW, default off); flush body exists to emit R/T measurement TSV lines. ONGOING/paused; pg_slab_shadow_janitor is a built binary.",
    "evidence_commands": [
     "rg -n 'fn slab_shadow_flush_once' src/  # impl location",
-    "rg -c '\\bslab_shadow_flush_once\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn slab_shadow_flush_once$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bslab_shadow_flush_once\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn slab_shadow_flush_once$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -6707,8 +6707,8 @@
    "verdict_reason": "Slab shadow-write measurement experiment: env-gated (AXVERITY_SLAB_SHADOW, default off); flush body exists to emit R/T measurement TSV lines. ONGOING/paused; pg_slab_shadow_janitor is a built binary.",
    "evidence_commands": [
     "rg -n 'fn slab_shadow_submit' src/  # impl location",
-    "rg -c '\\bslab_shadow_submit\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn slab_shadow_submit$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bslab_shadow_submit\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn slab_shadow_submit$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -6748,8 +6748,8 @@
    "verdict_reason": "Probe over a hardcoded-false flag (net.rs:278). Experiment: AXVERITY_WAY_BACK_CONSOLIDATION_V1 slab-to-wire batching \u2014 CONCLUDED (measured no-win, DROPPED). Every M1 branch keyed on it is permanently selected.",
    "evidence_commands": [
     "rg -n 'fn slab_to_wire_enabled' src/  # impl location",
-    "rg -c '\\bslab_to_wire_enabled\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn slab_to_wire_enabled$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bslab_to_wire_enabled\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn slab_to_wire_enabled$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -6799,8 +6799,8 @@
    "verdict_reason": "OS sleep primitive with zero live callers after built-src filter \u2014 only lib_hotwrite_workload/hrw_maybe_pause.m1 (workload pacing). Trivially P-L-B if the workload ships; today it is bench scaffolding. Duplicate of declared-but-unused proc_sleep (seconds).",
    "evidence_commands": [
     "rg -n 'fn sleep' src/  # impl location",
-    "rg -c '\\bsleep\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn sleep$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bsleep\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn sleep$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -6843,8 +6843,8 @@
    "verdict_reason": "Dials for the slice4 block-durability bundle. Default flipped on in commit be69bec (AXVERITY_HOTPATH_UNBLOCK_V1 item 4) \u2014 experiment CONCLUDED, dial retained as rollback switch; timeout dial's measured optimum is the default 0.",
    "evidence_commands": [
     "rg -n 'fn slice4_ack_timeout_ms' src/  # impl location",
-    "rg -c '\\bslice4_ack_timeout_ms\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn slice4_ack_timeout_ms$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bslice4_ack_timeout_ms\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn slice4_ack_timeout_ms$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -6888,8 +6888,8 @@
    "verdict_reason": "Dials for the slice4 block-durability bundle. Default flipped on in commit be69bec (AXVERITY_HOTPATH_UNBLOCK_V1 item 4) \u2014 experiment CONCLUDED, dial retained as rollback switch; timeout dial's measured optimum is the default 0.",
    "evidence_commands": [
     "rg -n 'fn slice4_mode' src/  # impl location",
-    "rg -c '\\bslice4_mode\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn slice4_mode$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bslice4_mode\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn slice4_mode$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -6950,8 +6950,8 @@
    "verdict_reason": "Pure. NOTE: not declared in axis-bridge.axreg (only registry/axis.axreg). Same for str_before.",
    "evidence_commands": [
     "rg -n 'fn str_after' src/  # impl location",
-    "rg -c '\\bstr_after\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn str_after$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bstr_after\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn str_after$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -7012,8 +7012,8 @@
    "verdict_reason": "Pure.",
    "evidence_commands": [
     "rg -n 'fn str_before' src/  # impl location",
-    "rg -c '\\bstr_before\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn str_before$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bstr_before\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn str_before$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -7056,8 +7056,8 @@
    "verdict_reason": "Pure single-char slice.",
    "evidence_commands": [
     "rg -n 'fn str_char' src/  # impl location",
-    "rg -c '\\bstr_char\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn str_char$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bstr_char\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn str_char$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -7118,8 +7118,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn str_concat' src/  # impl location",
-    "rg -c '\\bstr_concat\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn str_concat$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bstr_concat\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn str_concat$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -7171,8 +7171,8 @@
    "verdict_reason": "Pure.",
    "evidence_commands": [
     "rg -n 'fn str_contains' src/  # impl location",
-    "rg -c '\\bstr_contains\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn str_contains$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bstr_contains\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn str_contains$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -7215,8 +7215,8 @@
    "verdict_reason": "Pure.",
    "evidence_commands": [
     "rg -n 'fn str_ends_with' src/  # impl location",
-    "rg -c '\\bstr_ends_with\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn str_ends_with$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bstr_ends_with\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn str_ends_with$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -7276,8 +7276,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn str_eq' src/  # impl location",
-    "rg -c '\\bstr_eq\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn str_eq$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bstr_eq\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn str_eq$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -7316,8 +7316,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn str_gt' src/  # impl location",
-    "rg -c '\\bstr_gt\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn str_gt$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bstr_gt\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn str_gt$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -7355,8 +7355,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn str_gte' src/  # impl location",
-    "rg -c '\\bstr_gte\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn str_gte$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bstr_gte\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn str_gte$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -7408,8 +7408,8 @@
    "verdict_reason": "Composable but O(n*m) as an M1 loop vs Rust's optimized str::find; hot-path perf unmeasured.",
    "evidence_commands": [
     "rg -n 'fn str_index_of' src/  # impl location",
-    "rg -c '\\bstr_index_of\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn str_index_of$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bstr_index_of\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn str_index_of$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -7469,8 +7469,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn str_len' src/  # impl location",
-    "rg -c '\\bstr_len\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn str_len$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bstr_len\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn str_len$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -7509,8 +7509,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn str_lt' src/  # impl location",
-    "rg -c '\\bstr_lt\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn str_lt$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bstr_lt\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn str_lt$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -7548,8 +7548,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn str_lte' src/  # impl location",
-    "rg -c '\\bstr_lte\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn str_lte$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bstr_lte\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn str_lte$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -7595,8 +7595,8 @@
    "verdict_reason": "Pure loop composite.",
    "evidence_commands": [
     "rg -n 'fn str_pad_left' src/  # impl location",
-    "rg -c '\\bstr_pad_left\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn str_pad_left$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bstr_pad_left\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn str_pad_left$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -7640,8 +7640,8 @@
    "verdict_reason": "Pure loop composite.",
    "evidence_commands": [
     "rg -n 'fn str_pad_right' src/  # impl location",
-    "rg -c '\\bstr_pad_right\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn str_pad_right$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bstr_pad_right\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn str_pad_right$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -7693,8 +7693,8 @@
    "verdict_reason": "Pure loop composite.",
    "evidence_commands": [
     "rg -n 'fn str_replace' src/  # impl location",
-    "rg -c '\\bstr_replace\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn str_replace$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bstr_replace\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn str_replace$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -7751,8 +7751,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn str_slice' src/  # impl location",
-    "rg -c '\\bstr_slice\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn str_slice$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bstr_slice\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn str_slice$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -7804,8 +7804,8 @@
    "verdict_reason": "Pure.",
    "evidence_commands": [
     "rg -n 'fn str_starts_with' src/  # impl location",
-    "rg -c '\\bstr_starts_with\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn str_starts_with$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bstr_starts_with\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn str_starts_with$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -7866,8 +7866,8 @@
    "verdict_reason": "Pure; silent-0-on-garbage semantics must be preserved.",
    "evidence_commands": [
     "rg -n 'fn str_to_int' src/  # impl location",
-    "rg -c '\\bstr_to_int\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn str_to_int$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bstr_to_int\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn str_to_int$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -7910,8 +7910,8 @@
    "verdict_reason": "Pure but blocked on Unicode data.",
    "evidence_commands": [
     "rg -n 'fn str_to_lower' src/  # impl location",
-    "rg -c '\\bstr_to_lower\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn str_to_lower$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bstr_to_lower\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn str_to_lower$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -7963,8 +7963,8 @@
    "verdict_reason": "Pure but blocked on Unicode data.",
    "evidence_commands": [
     "rg -n 'fn str_to_upper' src/  # impl location",
-    "rg -c '\\bstr_to_upper\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn str_to_upper$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bstr_to_upper\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn str_to_upper$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -8016,8 +8016,8 @@
    "verdict_reason": "ASCII whitespace trivially; full Unicode whitespace set would be tabular but finite.",
    "evidence_commands": [
     "rg -n 'fn str_trim' src/  # impl location",
-    "rg -c '\\bstr_trim\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn str_trim$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bstr_trim\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn str_trim$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -8067,8 +8067,8 @@
    "verdict_reason": "Direct std::net socket syscalls; the wire capability of the server.",
    "evidence_commands": [
     "rg -n 'fn tcp_accept' src/  # impl location",
-    "rg -c '\\btcp_accept\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn tcp_accept$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\btcp_accept\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn tcp_accept$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -8115,8 +8115,8 @@
    "verdict_reason": "Direct std::net socket syscalls; the wire capability of the server.",
    "evidence_commands": [
     "rg -n 'fn tcp_close' src/  # impl location",
-    "rg -c '\\btcp_close\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn tcp_close$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\btcp_close\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn tcp_close$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -8162,8 +8162,8 @@
    "verdict_reason": "Direct std::net socket syscalls; the wire capability of the server.",
    "evidence_commands": [
     "rg -n 'fn tcp_listen' src/  # impl location",
-    "rg -c '\\btcp_listen\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn tcp_listen$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\btcp_listen\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn tcp_listen$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -8211,8 +8211,8 @@
    "verdict_reason": "Direct std::net socket syscalls; the wire capability of the server.",
    "evidence_commands": [
     "rg -n 'fn tcp_read' src/  # impl location",
-    "rg -c '\\btcp_read\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn tcp_read$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\btcp_read\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn tcp_read$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -8275,8 +8275,8 @@
    "verdict_reason": "Direct std::net socket syscalls; the wire capability of the server.",
    "evidence_commands": [
     "rg -n 'fn tcp_write' src/  # impl location",
-    "rg -c '\\btcp_write\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn tcp_write$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\btcp_write\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn tcp_write$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -8318,8 +8318,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn text_lt' src/  # impl location",
-    "rg -c '\\btext_lt\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn text_lt$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\btext_lt\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn text_lt$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -8383,8 +8383,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn text_to_bytes' src/  # impl location",
-    "rg -c '\\btext_to_bytes\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn text_to_bytes$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\btext_to_bytes\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn text_to_bytes$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -8429,8 +8429,8 @@
    "verdict_reason": "AXVERITY_HOTPATH_MEASUREMENT_V1 telemetry instruments (thread-local mark buffers, TSV dumps, WRITEPROBE/SPLITPROBE gates). Measurement harness \u2014 ongoing but not part of a minimum functional surface. ts_mark's buffer push is UNGATED on the live insert path.",
    "evidence_commands": [
     "rg -n 'fn ts_flush' src/  # impl location",
-    "rg -c '\\bts_flush\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn ts_flush$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bts_flush\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn ts_flush$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -8489,8 +8489,8 @@
    "verdict_reason": "AXVERITY_HOTPATH_MEASUREMENT_V1 telemetry instruments (thread-local mark buffers, TSV dumps, WRITEPROBE/SPLITPROBE gates). Measurement harness \u2014 ongoing but not part of a minimum functional surface. ts_mark's buffer push is UNGATED on the live insert path.",
    "evidence_commands": [
     "rg -n 'fn ts_mark' src/  # impl location",
-    "rg -c '\\bts_mark\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn ts_mark$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bts_mark\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn ts_mark$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -8531,8 +8531,8 @@
    "verdict_reason": "AXVERITY_HOTPATH_MEASUREMENT_V1 telemetry instruments (thread-local mark buffers, TSV dumps, WRITEPROBE/SPLITPROBE gates). Measurement harness \u2014 ongoing but not part of a minimum functional surface. ts_mark's buffer push is UNGATED on the live insert path.",
    "evidence_commands": [
     "rg -n 'fn ts_mark_val' src/  # impl location",
-    "rg -c '\\bts_mark_val\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn ts_mark_val$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bts_mark_val\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn ts_mark_val$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -8581,8 +8581,8 @@
    "verdict_reason": "AXVERITY_HOTPATH_MEASUREMENT_V1 telemetry instruments (thread-local mark buffers, TSV dumps, WRITEPROBE/SPLITPROBE gates). Measurement harness \u2014 ongoing but not part of a minimum functional surface. ts_mark's buffer push is UNGATED on the live insert path.",
    "evidence_commands": [
     "rg -n 'fn ts_markp' src/  # impl location",
-    "rg -c '\\bts_markp\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn ts_markp$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bts_markp\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn ts_markp$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -8628,8 +8628,8 @@
    "verdict_reason": "Pure body, but removing it leaves no way to express the operation in M1 at all.",
    "evidence_commands": [
     "rg -n 'fn tuple_field' src/  # impl location",
-    "rg -c '\\btuple_field\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn tuple_field$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\btuple_field\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn tuple_field$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -8689,8 +8689,8 @@
    "verdict_reason": "AtomicPtr swap/unsafe intrusive queue (mpsc_intrusive.rs:158-162), condvar wait/notify.",
    "evidence_commands": [
     "rg -n 'fn wait' src/  # impl location",
-    "rg -c '\\bwait\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn wait$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bwait\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn wait$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -8735,8 +8735,8 @@
    "verdict_reason": "Live callers (lib/field_lookup.m1, lib/wal_find_shard.m1); functional shard-count config, not a residue dial.",
    "evidence_commands": [
     "rg -n 'fn wal_shard_count' src/  # impl location",
-    "rg -c '\\bwal_shard_count\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn wal_shard_count$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bwal_shard_count\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn wal_shard_count$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -8791,8 +8791,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own.",
    "evidence_commands": [
     "rg -n 'fn wal_shard_get' src/  # impl location",
-    "rg -c '\\bwal_shard_get\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn wal_shard_get$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bwal_shard_get\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn wal_shard_get$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -8834,8 +8834,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own. ZERO live callers (spike/spike_residency.m1 only); shard selection on the live path uses wal_shard_get default. Borderline DEAD.",
    "evidence_commands": [
     "rg -n 'fn wal_shard_set' src/  # impl location",
-    "rg -c '\\bwal_shard_set\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn wal_shard_set$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bwal_shard_set\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn wal_shard_set$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -8885,8 +8885,8 @@
    "verdict_reason": "unsafe libc::fallocate (prealloc.rs:47) plus fs existence scan.",
    "evidence_commands": [
     "rg -n 'fn wal_write_seg' src/  # impl location",
-    "rg -c '\\bwal_write_seg\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn wal_write_seg$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bwal_write_seg\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn wal_write_seg$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -8926,8 +8926,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own.",
    "evidence_commands": [
     "rg -n 'fn walidx_insert' src/  # impl location",
-    "rg -c '\\bwalidx_insert\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn walidx_insert$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bwalidx_insert\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn walidx_insert$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -8971,8 +8971,8 @@
    "verdict_reason": "Body is HashMap/Vec manipulation over thread-local state; no OS capability of its own.",
    "evidence_commands": [
     "rg -n 'fn walidx_open' src/  # impl location",
-    "rg -c '\\bwalidx_open\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn walidx_open$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bwalidx_open\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn walidx_open$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -9023,8 +9023,8 @@
    "verdict_reason": "fs sub-capability is covered by existing primitives; parsing+state are the blockers.",
    "evidence_commands": [
     "rg -n 'fn walidx_rebuild' src/  # impl location",
-    "rg -c '\\bwalidx_rebuild\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn walidx_rebuild$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bwalidx_rebuild\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn walidx_rebuild$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -9074,8 +9074,8 @@
    "verdict_reason": "fs sub-capability is covered by existing primitives; parsing+state are the blockers.",
    "evidence_commands": [
     "rg -n 'fn walidx_res_get' src/  # impl location",
-    "rg -c '\\bwalidx_res_get\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn walidx_res_get$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bwalidx_res_get\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn walidx_res_get$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -9116,8 +9116,8 @@
    "verdict_reason": "Byte-identical twins (only IDX/FIDX differ); residency dial frozen to 'query' \u2014 AXVERITY_WALIDX_RESIDENCY / AXVERITY_FIELDIDX_RESIDENCY no longer read (dead mode plumbing inside a live fn).",
    "evidence_commands": [
     "rg -n 'fn walidx_res_scope' src/  # impl location",
-    "rg -c '\\bwalidx_res_scope\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn walidx_res_scope$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bwalidx_res_scope\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn walidx_res_scope$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   },
   {
@@ -9159,8 +9159,8 @@
    "verdict_reason": "fs_write_bytes already provides the durable-write sequence these reimplement (write_durable is duplicated in walindex.rs, fieldidx.rs AND bytes_io.rs).",
    "evidence_commands": [
     "rg -n 'fn walidx_snapshot' src/  # impl location",
-    "rg -c '\\bwalidx_snapshot\\s*\\(' --glob '*.m1' /home/chris/dev/axVerity-working /home/chris/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
-    "rg -n '^fn walidx_snapshot$' /home/chris/dev/axRegistry-working/axis-bridge.axreg  # declaration"
+    "rg -c '\\bwalidx_snapshot\\s*\\(' --glob '*.m1' ~/dev/axVerity-working ~/dev/axis-lang-lab-working  # M1 census (comments stripped in scripted pass)",
+    "rg -n '^fn walidx_snapshot$' ~/dev/axRegistry-working/axis-bridge.axreg  # declaration"
    ]
   }
  ],

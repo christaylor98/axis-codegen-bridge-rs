@@ -18,7 +18,7 @@
   `rawmem.rs:145-155`, `walindex.rs:733-743`, `str_ops.rs:1-30`, `value.rs:120-140`,
   `bytes_io.rs:44-57`). Names/comments were not accepted as behavioural evidence.
 - **Caller census:** scripted comment-stripped scan (pattern `\b<sym>\s*\(`, definitions
-  excluded) over all `.m1` in axVerity-working + axis-lang-lab-working, all `.rs` under
+  excluded) over all `.m1` in axVerity-working + axis-lang, all `.rs` under
   `axis-codegen-bridge-rs/src`, and all `.axreg` in the three repos + axis-bridge.axreg.
   axSemantica `calls` edges were NOT used.
 - **Liveness:** an M1 call site counts as live iff its file is in `lib/`, `lib_async/`,

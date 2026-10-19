@@ -2,14 +2,12 @@ use super::value::{Value, intern_tag, get_tag_name};
 
 #[track_caller]
 pub fn option_none() -> Value {
-    static TAG: std::sync::OnceLock<u32> = std::sync::OnceLock::new();   // the tag table is append-only: a tag never changes
-    Value::Ctor { tag: *TAG.get_or_init(|| intern_tag("None")), fields: vec![] }
+    Value::Ctor { tag: intern_tag("None"), fields: vec![] }
 }
 
 #[track_caller]
 pub fn option_some(v: Value) -> Value {
-    static TAG: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    Value::Ctor { tag: *TAG.get_or_init(|| intern_tag("Some")), fields: vec![v] }
+    Value::Ctor { tag: intern_tag("Some"), fields: vec![v] }
 }
 
 #[track_caller]
