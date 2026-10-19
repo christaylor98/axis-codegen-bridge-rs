@@ -1,4 +1,4 @@
-//! F24 — the frame command stream (axMachina, approved by Chris 2026-10-12). A program draws by building a frame: a byte string of
+//! F24 — the frame command stream (axMachina). A program draws by building a frame: a byte string of
 //! drawing commands handed to the bridge. The frame is plain data (version 1: magic AXFR, version u16, sequence u32, command count
 //! u32, then the commands: op u8 and arguments, f32 pixels with the origin at the top left, RGBA u32 as 0xRRGGBBAA; clear(rgba) is
 //! op 1, rect(x, y, w, h, rgba) op 2). This module owns the frame RULES; the renderer only draws commands.

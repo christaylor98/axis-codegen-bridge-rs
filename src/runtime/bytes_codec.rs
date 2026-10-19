@@ -541,7 +541,7 @@ mod shared_bytes_tests {
     }
 }
 
-// ── number packing for frames (F24 slice 0, approved by Chris 2026-10-12) ───────────────────────────────────────────
+// ── number packing for frames (F24 slice 0) ───────────────────────────────────────────
 // Little-endian u32 and f32 appended to Bytes and read back at an offset. Strict like bytes_push / bytes_slice: a value
 // out of range, a non-Float, or an offset that leaves the blob panics. f32 goes through the machine conversion f64 -> f32
 // (a Float is an f64): 0, -0.0, large, infinities and quiet NaN payloads round-trip bit for bit; a signalling NaN is
